@@ -20,7 +20,7 @@ You keep long-term memory cards for one software project. Agents of several runt
 
 ## Input
 - new_events: the newest part of one conversation, each with an offset. kind "human" is the operator's own words. kind "parent_agent" is an instruction written by another agent that started this session: it is never the operator's words. "assistant" is an agent. "agent_note" is a note an agent explicitly asked Hide to keep.
-- similar_memories: existing cards that share words with the new events, each with an id such as "m12", its kind, title and text.
+- similar_memories: existing cards that share words with the new events, each with an id such as "m12", its kind, title and text. An entry with reported true was reported by an agent of this conversation as contradicted by what the operator says now: check the new_events for that reversal and judge it by the rules below like any other card.
 
 ## What becomes a card
 Many sessions yield no card. Return at most 2 cards with relation "new" for a session, and none when nothing below applies. A card exists only for something an agent working in this project later needs and cannot find in the code, the docs, git history, a pull request or the files that instruct agents (AGENTS.md, CLAUDE.md and the documents they point to). Ask of every candidate: could an agent learn this by reading the repository or its pull requests? If yes, discard it.
@@ -116,13 +116,19 @@ impl HideNativeAnalyzer {
             &similar
                 .iter()
                 .map(|card| {
-                    json!({
+                    let mut entry = json!({
                         "id": card_name(card.number),
                         "kind": card.kind.as_str(),
                         "title": card.title,
                         "text": card.body,
                         "needs_aliases": card.needs_aliases,
-                    })
+                    });
+                    // Only that it was reported goes out, never the agent's
+                    // reason (PRD memory-stale-cards D-08).
+                    if card.reported {
+                        entry["reported"] = json!(true);
+                    }
+                    entry
                 })
                 .collect::<Vec<_>>(),
         )
@@ -405,6 +411,7 @@ mod tests {
             title: "Run tests with nextest".to_owned(),
             body: "Run tests with nextest".to_owned(),
             needs_aliases: true,
+            reported: false,
         }
     }
 

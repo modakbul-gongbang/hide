@@ -1023,6 +1023,15 @@ fn walk_project(
     store
         .prune_receipts(project_id, now_ms())
         .map_err(|error| error.to_string())?;
+    // A hold whose session was not analyzed within its seven days ends here,
+    // reason and all; the hooks already stopped honoring it (PRD
+    // memory-stale-cards D-07).
+    for ended in store
+        .expire_holds(project_id, now_ms())
+        .map_err(|error| error.to_string())?
+    {
+        log_ended_hold(project_id, &ended, "expired");
+    }
     // Memory analyzes the sessions of agents the node holding them reads for
     // Memory (the JSONL ones: Claude Code, Codex, Grok, Pi, omp), which it
     // does through their conversation reader; an OpenCode session, kept in
@@ -1035,7 +1044,7 @@ fn walk_project(
             .is_some_and(|readers| readers.supports(session.agent.as_str(), feature))
     };
     let mut sessions = Vec::new();
-    for session in project_sessions(sessions_node, &identity)? {
+    for session in project_sessions(sessions_node, &identity, SESSION_CALL_TIMEOUT)? {
         if reads(&session, ReaderFeature::Memory) && reads(&session, ReaderFeature::Conversation) {
             sessions.push(session);
         } else if session.agent == hide_session::Agent::OpenCode
@@ -1108,7 +1117,7 @@ fn walk_project(
             }
             continue;
         }
-        let Ok(stat) = session_stat(sessions_node, &session) else {
+        let Ok(stat) = session_stat(sessions_node, &session, SESSION_CALL_TIMEOUT) else {
             continue;
         };
         let version = (stat.size, stat.modified_unix_ms);
@@ -1452,6 +1461,7 @@ fn read_receipts(
                 operator_events: 0,
                 updated_at_unix_ms: now_ms(),
             },
+            &[],
         )
         .map_err(|error| error.to_string())?;
     log_skipped("receipts.records_skipped", project_id, session, &read);
@@ -1570,8 +1580,10 @@ fn read_database_receipts(
                     session.updated_at_unix_ms
                 },
             },
+            &[],
         )
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 /// Records one receipt a session carried, when its tag is the one this
@@ -1753,6 +1765,7 @@ fn analyze_session(
         .collect::<Vec<_>>();
     let checkout = session.checkout_path.to_string_lossy().into_owned();
     let mut learned = 0;
+    let mut left_out = BTreeMap::new();
     let (mut last_hash, earlier) = saved.map_or((None, 0), |record| {
         (record.last_content_hash, record.operator_events)
     });
@@ -1791,11 +1804,24 @@ fn analyze_session(
             admit,
         )?;
         last_hash = Some(written.content_hash);
+        for card in written.left_out {
+            left_out.insert(card.id, card.number);
+        }
         if !written.summary.duplicate_batch {
             learned += written.summary.created + written.summary.superseded;
         }
     }
-    store
+    for number in left_out.values() {
+        crate::diagnostic!(json!({
+            "component": "memory",
+            "kind": "stale.hint_left_out",
+            "project_id": project_id,
+            "card": number,
+            "session_id": session.id,
+        }));
+    }
+    let unsent = left_out.into_keys().collect::<Vec<_>>();
+    let settled = store
         .save_cursor(
             CursorReader::Analysis,
             &SessionCursorRecord {
@@ -1808,10 +1834,28 @@ fn analyze_session(
                 operator_events,
                 updated_at_unix_ms: now_ms(),
             },
+            &unsent,
         )
         .map_err(|error| local(error.to_string()))?;
+    for ended in &settled {
+        log_ended_hold(project_id, ended, "analyzed");
+    }
     log_skipped("analysis.records_skipped", project_id, session, &read);
     Ok(learned)
+}
+
+/// One hold that ended, by card and reporting session; never its reason
+/// (PRD memory-stale-cards B16).
+pub(crate) fn log_ended_hold(project_id: &str, ended: &hide_memory::EndedHold, cause: &str) {
+    crate::diagnostic!(json!({
+        "component": "memory",
+        "kind": "stale.released",
+        "project_id": project_id,
+        "card": ended.number,
+        "runtime": ended.runtime,
+        "session_id": ended.session_id,
+        "cause": cause,
+    }));
 }
 
 /// Where a batch of new text came from.
@@ -1836,6 +1880,8 @@ pub(crate) struct WrittenCards {
     pub(crate) summary: ApplySummary,
     pub(crate) batch_id: String,
     content_hash: String,
+    /// Reported cards this group's comparison set had no room for.
+    left_out: Vec<hide_memory::ComparisonCard>,
 }
 
 /// The content hash and batch id one group from one source is written
@@ -1876,6 +1922,10 @@ pub(crate) fn write_cards(
     let local = |error: String| AnalysisFailure::Local(error);
     let serialized = serde_json::to_string(group).map_err(|error| local(error.to_string()))?;
     let (content_hash, batch_id) = batch_identity(source, &serialized);
+    let ComparisonSet {
+        cards: similar,
+        left_out,
+    } = comparison_set(store, source, group).map_err(|error| local(error.to_string()))?;
     if store
         .has_batch(&batch_id)
         .map_err(|error| local(error.to_string()))?
@@ -1887,16 +1937,9 @@ pub(crate) fn write_cards(
             },
             batch_id,
             content_hash,
+            left_out,
         });
     }
-    let similar = store
-        .similar(
-            source.project_id,
-            &comparison_text(group),
-            hide_memory::COMPARISON_LIMIT,
-            COMPARISON_INPUT_LIMIT_BYTES,
-        )
-        .map_err(|error| local(error.to_string()))?;
     let analyzer = HideNativeAnalyzer;
     let request_id = digest(&[
         "memory-request",
@@ -2145,7 +2188,62 @@ pub(crate) fn write_cards(
         summary,
         batch_id,
         content_hash,
+        left_out,
     })
+}
+
+/// The cards one group is compared against, and the reported cards that did
+/// not fit beside them.
+pub(super) struct ComparisonSet {
+    pub(super) cards: Vec<hide_memory::ComparisonCard>,
+    /// Reported cards left out for the byte bound: the analysis never saw
+    /// them, so saving its cursor keeps their holds (PRD memory-stale-cards
+    /// D-06).
+    pub(super) left_out: Vec<hide_memory::ComparisonCard>,
+}
+
+/// The cards a group is compared against: first the held cards an agent of
+/// this session reported stale, so the analysis checks each for the reversal
+/// (PRD memory-stale-cards D-06), then the cards most like the group's words,
+/// within the same card and byte bounds.
+pub(super) fn comparison_set(
+    store: &MemoryStore,
+    source: &BatchSource<'_>,
+    group: &[Value],
+) -> Result<ComparisonSet, hide_memory::MemoryError> {
+    // A reported card is charged like any other, so the set and one event
+    // group still fit one request; one that does not fit is named back, and
+    // its hold outlives this pass.
+    let mut cards = Vec::new();
+    let mut left_out = Vec::new();
+    let mut bytes = 0;
+    for card in store.reported_cards(
+        source.project_id,
+        source.provider,
+        source.session_id,
+        now_ms(),
+    )? {
+        let card_bytes = card.body.len() + card.title.len() + 64;
+        if bytes + card_bytes > COMPARISON_INPUT_LIMIT_BYTES {
+            left_out.push(card);
+            continue;
+        }
+        bytes += card_bytes;
+        cards.push(card);
+    }
+    let similar = store.similar(
+        source.project_id,
+        &comparison_text(group),
+        hide_memory::COMPARISON_LIMIT.saturating_sub(cards.len()),
+        COMPARISON_INPUT_LIMIT_BYTES.saturating_sub(bytes),
+    )?;
+    cards.extend(
+        similar
+            .into_iter()
+            .filter(|card| !cards.iter().any(|reported| reported.id == card.id))
+            .collect::<Vec<_>>(),
+    );
+    Ok(ComparisonSet { cards, left_out })
 }
 
 /// The text the comparison set is chosen by: the group's words, bounded.
@@ -2881,6 +2979,83 @@ mod tests {
         assert_eq!(fixture.calls(), 1);
     }
 
+    #[test]
+    fn a_reported_card_is_named_to_its_sessions_analysis_and_comes_back_after_it() {
+        // PRD memory-stale-cards B6-B8, B10, D-06, D-08, D-14.
+        let fixture = Fixture::new();
+        // The walk records the prompt's receipt for m1; Hide AI is off.
+        assert!(
+            fixture
+                .run(("claude", SESSION.to_owned()), false, false, &[], false)
+                .0
+                .is_empty()
+        );
+        let size = std::fs::metadata(&fixture.locator).unwrap().len();
+        let mut store = fixture.store();
+        let reason = "The operator said the hook may take 300 ms now";
+        assert!(matches!(
+            store
+                .report_stale(
+                    &fixture.project_id,
+                    1,
+                    &hide_memory::StaleReporter {
+                        runtime: "claude",
+                        session_id: SESSION,
+                        report_offset: Some(size),
+                    },
+                    reason,
+                    now_ms(),
+                )
+                .unwrap(),
+            hide_memory::StaleOutcome::Held(_)
+        ));
+        drop(store);
+        let mut lines = fixture.lines.clone();
+        lines.push(
+            json!({"type": "user", "sessionId": SESSION, "cwd": fixture.root,
+            "timestamp": "2026-10-11T00:02:00Z", "origin": {"kind": "human"},
+            "message": {"role": "user", "content": "Thanks"}}),
+        );
+        fixture.write(&lines);
+
+        fixture.answer(&[]);
+        assert_eq!(fixture.pass(false, true), ["analyzing", "learned one"]);
+        let inputs = fixture.backend.inputs.lock().unwrap().clone();
+        let sent: Value = serde_json::from_str(&inputs[0]).unwrap();
+        let reported = sent["similar_memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|card| card["id"] == "m1")
+            .expect("the reported card is compared");
+        assert_eq!(reported["reported"], true);
+        assert!(
+            !inputs[0].contains("300 ms"),
+            "the reason never leaves the machine"
+        );
+        let store = fixture.store();
+        assert_eq!(
+            store.hold(&fixture.project_id, 1, now_ms()).unwrap(),
+            None,
+            "the analysis read past the report and no reversal replaced m1"
+        );
+        let given = store
+            .retrieve(&hide_memory::RetrievalQuery::prompt(
+                &fixture.project_id,
+                "hook 100 ms",
+                vec![],
+            ))
+            .unwrap();
+        assert_eq!(
+            given
+                .items
+                .iter()
+                .map(|item| item.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
+    }
+
     /// Runtime admission and the pass share one store for both directions;
     /// closed sessions wait for the device's own reader to reconnect.
     #[test]
@@ -3411,6 +3586,7 @@ mod tests {
                         updated_at_unix_ms: 1,
                         operator_events: 0,
                     },
+                    &[],
                 )
                 .unwrap();
         }

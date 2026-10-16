@@ -1241,6 +1241,83 @@ fn an_agent_on_either_machine_reads_the_one_memory_the_core_owns() -> Result<()>
                 )
             })?;
             ensure!(answer["ok"] == true, "the node's prompt ask: {answer}");
+            // PRD memory-stale-cards: a card an agent reported stale is held
+            // out of a prompt, `show` says so through the real CLI, and
+            // `release` gives it back; a caller with no agent session cannot
+            // report one.
+            let words = "Which rule does the node's checkout keep?";
+            let gives_m1 = |answer: &Value| {
+                answer["result"]["context"]
+                    .as_str()
+                    .is_some_and(|context| context.contains("The node's checkout keeps its rule"))
+            };
+            let (answer, _) = tokio::task::block_in_place(|| {
+                ask_memory_for(fixture.screen_command(&hide), &node_project, "UserPromptSubmit", Some(words))
+            })?;
+            ensure!(gives_m1(&answer), "the prompt did not match m1: {answer}");
+            ensure!(
+                answer["result"]["context"]
+                    .as_str()
+                    .is_some_and(|context| context.starts_with("<hide-memory-instruction>")),
+                "the prompt's cards follow the report instruction: {answer}"
+            );
+            let memory_cli = |args: &[&str]| {
+                tokio::task::block_in_place(|| {
+                    let mut command = fixture.screen_command(&hide);
+                    command.arg("memory").args(args).current_dir(&node_project);
+                    command.output()
+                })
+            };
+            let refused = memory_cli(&["stale", "m1", "the operator changed it"])?;
+            ensure!(
+                !refused.status.success()
+                    && String::from_utf8_lossy(&refused.stdout).contains("memory_stale_session_required"),
+                "a caller with no session reported a card: {}",
+                String::from_utf8_lossy(&refused.stdout)
+            );
+            {
+                let project = hide_project::resolve(&node_project, &node)?;
+                let mut store = hide_memory::MemoryStore::open(&hide_memory::database_path(&fixture.core_state))?;
+                store.record_receipt(&project.id, "codex", "reporter", "event:1", "m1@1", 1)?;
+                let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
+                let outcome = store.report_stale(
+                    &project.id,
+                    1,
+                    &hide_memory::StaleReporter { runtime: "codex", session_id: "reporter", report_offset: None },
+                    "the operator changed it",
+                    now,
+                )?;
+                ensure!(matches!(outcome, hide_memory::StaleOutcome::Held(_)), "{outcome:?}");
+            }
+            let (answer, _) = tokio::task::block_in_place(|| {
+                ask_memory_for(fixture.screen_command(&hide), &node_project, "UserPromptSubmit", Some(words))
+            })?;
+            ensure!(answer["ok"] == true && !gives_m1(&answer), "a held card was given: {answer}");
+            let shown = memory_cli(&["show", "m1"])?;
+            let text = String::from_utf8_lossy(&shown.stdout);
+            ensure!(
+                shown.status.success()
+                    && text.contains("Held: an agent reported it stale")
+                    && text.contains("\"the operator changed it\""),
+                "show did not say the card is held: {text}"
+            );
+            let released = memory_cli(&["release", "m1"])?;
+            ensure!(
+                released.status.success()
+                    && String::from_utf8_lossy(&released.stdout).contains("Released m1"),
+                "release: {}",
+                String::from_utf8_lossy(&released.stdout)
+            );
+            let again = memory_cli(&["release", "m1"])?;
+            ensure!(
+                String::from_utf8_lossy(&again.stdout).contains("memory_card_not_held"),
+                "a second release: {}",
+                String::from_utf8_lossy(&again.stdout)
+            );
+            let (answer, _) = tokio::task::block_in_place(|| {
+                ask_memory_for(fixture.screen_command(&hide), &node_project, "UserPromptSubmit", Some(words))
+            })?;
+            ensure!(gives_m1(&answer), "a released card was not given again: {answer}");
             // `hide memory` from the node's agent reads the same store, for
             // the node's Project.
             let shown = tokio::task::block_in_place(|| {
