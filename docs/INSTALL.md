@@ -162,7 +162,7 @@ Unverified on Windows and Linux (the macOS assumptions below are left as they ar
 - Terminal programs that expect macOS text-editing keys; Windows and Linux send `Ctrl+U`, `Home` and `End` as typed.
 - Whether Alt+Shift also switches the input language on a Windows or Linux layout; hide's chord still runs.
 - A real Grok or Cursor session: each needs an account, so their Windows and Linux hook forms rest on each CLI's source and package, not on a run.
-- A real agy turn on any CI system: the nightly `agy contract` lane runs one signed in only when the repository holds a CI account's key (`HIDE_AGY_API_KEY`), and says "not configured" until it does; which variable agy reads that key from is unproven until the first configured run, so until then the hook block's events are proven on this Mac's signed-in agy alone, and a signed-out agy on CI proves only that it loads the block.
+- A real agy turn on any CI system: the nightly `agy contract` lane runs one signed in only when the repository holds a CI account's key (`HIDE_AGY_API_KEY`), and says "not configured" until it does; the lane hands agy the key as `GEMINI_API_KEY` with `"modelProvider": "gemini"` in agy's settings, the API-key mode agy 1.4.0's own changelog names, because a run on 2026-10-16 with `GEMINI_API_KEY` alone asked for a browser sign-in on every system; no run with both has passed yet, so until one does the hook block's events are proven on this Mac's signed-in agy 1.4.0 alone, and a signed-out agy on CI proves only that it loads the block.
 - A notification reaching the screen, on any system: the desktop e2e replaces the system's notification, and a moved Windows folder has not been tried.
 
 ### Make the command available in a new shell
