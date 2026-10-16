@@ -112,7 +112,7 @@ test("Comment on a page: the operator picks an element in the page and its agent
     return answer.out;
   };
   const url = `${origin}/login`;
-  const opened = JSON.parse(ok(await agent(["browser", "open", url, "--reveal", "--wait"])).trim().split("\n").at(-1)!) as { result: { view_id: string } };
+  const opened = JSON.parse(ok(await agent(["browser", "open", url, "--wait"])).trim().split("\n").at(-1)!) as { result: { view_id: string } };
   const display = opened.result.view_id;
 
   // B1: the page's tab wears the agent's mark.
@@ -218,7 +218,7 @@ test(`A note written over a page takes the keyboard from the page and gives it b
   await enterWorkspace(shell, "fixture");
   const agent = await agentPane(herdr, run.env.HIDE_STATE_DIR!, herdr.panes[0]!);
   const url = `${origin}/focus`;
-  const opened = await agent(["browser", "open", url, "--reveal", "--wait"]);
+  const opened = await agent(["browser", "open", url, "--wait"]);
   expect(opened.status, opened.out).toBe(0);
   await focusPage(app, { url });
 

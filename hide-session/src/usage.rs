@@ -21,6 +21,9 @@ const DISCOVERY_ENTRY_LIMIT: usize = 100_000;
 const DISCOVERY_DEPTH_LIMIT: usize = 16;
 const PATH_BYTES_LIMIT: usize = 4096;
 pub const PARSER_VERSION: u32 = 3;
+/// The model of a call whose records name none (agy's): a ledger key that
+/// is never shown as a model's name.
+pub const UNNAMED_MODEL: &str = "unnamed";
 const STEP_TIME: Duration = Duration::from_millis(10);
 const STEP_EVENTS: usize = 8192;
 const WITNESS_BYTES: u64 = 256;
@@ -208,6 +211,12 @@ pub fn list(home: &Path, agent: Agent, since_ms: u64) -> Result<Candidates, Refu
                     break;
                 }
                 match entry {
+                    // agy keeps tool output and artifacts beside each
+                    // transcript; only the transcript is a candidate.
+                    Ok(entry) if agent == Agent::Antigravity && depth == 0 => pending.push((
+                        crate::antigravity::transcript(home, &entry.file_name().to_string_lossy()),
+                        depth + 1,
+                    )),
                     Ok(entry) => pending.push((entry.path(), depth + 1)),
                     Err(_) => out.skipped += 1,
                 }
@@ -215,7 +224,9 @@ pub fn list(home: &Path, agent: Agent, since_ms: u64) -> Result<Candidates, Refu
         } else if metadata.is_file()
             && (agent == Agent::OpenCode
                 || (agent == Agent::Grok && path.file_name().is_some_and(|n| n == "updates.jsonl"))
-                || (agent != Agent::Grok && path.extension().is_some_and(|n| n == "jsonl")))
+                || (agent == Agent::Antigravity && crate::antigravity::id_of(&path).is_some())
+                || (!matches!(agent, Agent::Grok | Agent::Antigravity)
+                    && path.extension().is_some_and(|n| n == "jsonl")))
         {
             let modified_ms = metadata
                 .modified()
@@ -331,6 +342,17 @@ pub fn read(
     }
     checkpoint.identity = Some(identity);
     checkpoint.parser_version = PARSER_VERSION;
+    if agent == Agent::Antigravity {
+        let id = crate::antigravity::id_of(path).ok_or(Refusal::OutsideRoot)?;
+        // The checkout attributes the calls; a conversation the index does
+        // not place yet is still counted, under no project until it does. An
+        // index that cannot be read now (agy holding it) refuses the read,
+        // which the next pass repeats, rather than losing the project.
+        let cwd = crate::antigravity::checkout(home, id)
+            .map_err(|crate::antigravity::IndexBusy| Refusal::Database)?
+            .and_then(|cwd| cwd.to_str().map(str::to_owned));
+        records::antigravity_context(&mut checkpoint.context, id, cwd);
+    }
     if summary.as_ref().is_some_and(|s| s.is_child()) {
         checkpoint.offset = size;
         checkpoint.finished = true;

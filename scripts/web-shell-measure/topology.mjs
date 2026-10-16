@@ -31,7 +31,7 @@ const ALT = 1;
 const SHIFT = 8;
 const CHORDS = {
   split: { code: "KeyD", key: "d", keyCode: 68, modifiers: META },
-  zoom: { code: "Enter", key: "Enter", keyCode: 13, modifiers: META | ALT },
+  zoom: { code: "Enter", key: "Enter", keyCode: 13, modifiers: META | SHIFT },
   close: { code: "KeyW", key: "w", keyCode: 87, modifiers: ALT | SHIFT },
   new_tab: { code: "KeyT", key: "t", keyCode: 84, modifiers: ALT },
 };

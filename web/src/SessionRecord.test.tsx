@@ -34,7 +34,8 @@ const BASE: RecordValue = {
   tasks: [task("t1", "Write the record", AT + 1, true), task("t2", "Check the search", AT + 2, false, "unfinished")],
   requests: [request(1, "Please write the record", ["t1"]), request(2, "Check the search too", ["t2"]), request(3, "How is it going?", [])],
   missed: [missed("m-open", "Retry the failed draft", 2), missed("m-closed", "Spacing of the heading", 2, "resolved")],
-  outputs: [output(1100, "review", "t2", SESSION), output(1093, "merged", null, CHILD)],
+  // The child's output carries the parent's task id: ids name turn offsets, which repeat across sessions.
+  outputs: [output(1100, "review", "t2", SESSION), output(1093, "merged", "t2", CHILD)],
   children: [child],
 };
 
@@ -66,20 +67,19 @@ it("asks for the record once when the slot draws one nothing has read, as after 
   try { expect(read.sent).toEqual([]); } finally { await read.unmount(); }
 });
 
-it("draws the PRs first, then the checklist with its count, a task's PR on its line and no status words", async () => {
+it("draws no PR list: a task's PR stands on its line, a child's on the child's row, and no status words (B15)", async () => {
   const { container, unmount } = await mount(BASE);
   try {
-    const outputs = Array.from(container.querySelectorAll('[data-record-outputs] [data-record-output="pr"]'));
-    // Only the child's PR names its maker, at the row's end.
-    expect(outputs.map(text)).toEqual(["#" + "1100PR title 1100", "#" + "1093PR title 1093Child work"]);
-    expect(text(container.querySelector("[data-record-outputs] h3"))).toBe("PR 2");
+    expect(container.querySelector("[data-record-outputs]")).toBeNull();
+    expect(Array.from(container.querySelectorAll('[data-record-output="pr"]')).map((node) => node.getAttribute("data-record-output-number"))).toEqual(["1100", "1093"]);
+    expect(container.querySelector('[data-record-child="child"] [data-record-output-number="1093"]')).not.toBeNull();
     expect(text(container.querySelector("[data-record-work] h3"))).toBe("Assigned work 1/2");
     const tasks = Array.from(container.querySelectorAll("[data-record-task]"));
     expect(tasks.map((row) => row.getAttribute("data-record-task"))).toEqual(["t1", "t2"]);
     expect(tasks.map((row) => row.querySelector("[data-task-state]")?.getAttribute("aria-label"))).toEqual(["Done", null]);
     expect(text(tasks[1]!.querySelector("[data-record-task-pr]"))).toBe("#" + "1100");
     // A PR-bound task's slot is empty and its PR mark says the state, never a word on the line.
-    expect(tasks[1]!.querySelector("[data-record-task-pr]")?.getAttribute("aria-label")).toMatch(new RegExp("^#" + "1100 "));
+    expect(tasks[1]!.querySelector("[data-record-task-pr] [aria-label]")?.getAttribute("aria-label")).toMatch(new RegExp("^#" + "1100 "));
     expect(text(tasks[1]!)).not.toContain("Review pending");
     expect(container.querySelector("[data-record-verdict]")).toBeNull();
   } finally { await unmount(); }
@@ -121,19 +121,29 @@ it("shows the newest unjudged request as Now whatever the words button says, and
   const unjudged = { ...BASE, requests: [...BASE.requests, request(4, "Install and measure again", [], "operator", false)] };
   const working = await mount({ ...unjudged, state: "working" });
   try {
-    expect(text(working.container.querySelector("[data-record-now]"))).toBe("NowInstall and measure again");
+    expect(text(working.container.querySelector("[data-record-now-request]"))).toBe("NowInstall and measure again");
   } finally { await working.unmount(); }
   const idle = await mount({ ...unjudged, state: "idle" });
   try {
-    expect(idle.container.querySelector("[data-record-now]")).toBeNull();
+    expect(idle.container.querySelector("[data-record-now-request]")).toBeNull();
   } finally { await idle.unmount(); }
 });
 
-it("draws no PR head or list for a session with no outputs", async () => {
+it("draws an output no task claims beside the title, and none for a session with no outputs", async () => {
+  const loose = await mount({ ...BASE, outputs: [output(1200, "open", null, SESSION)] });
+  try {
+    expect(loose.container.querySelector('h2 [data-record-output-number="1200"]')).not.toBeNull();
+  } finally { await loose.unmount(); }
   const { container, unmount } = await mount({ ...BASE, outputs: [] });
   try {
-    expect(container.querySelector("[data-record-outputs]")).toBeNull();
+    expect(container.querySelector("[data-record-output]")).toBeNull();
   } finally { await unmount(); }
+  // With Agent summaries off no task line is drawn, so a task's PR stands beside the title instead.
+  const off = await mount(BASE, { summaries: false });
+  try {
+    expect(off.container.querySelector('h2 [data-record-output-number="1100"]')).not.toBeNull();
+    expect(off.container.querySelector('[data-record-child="child"] [data-record-output-number="1093"]')).not.toBeNull();
+  } finally { await off.unmount(); }
 });
 
 it("with Hide AI off shows the PRs and the requests oldest first, the newest five open, and no checklist", async () => {
@@ -154,7 +164,7 @@ it("draws a descendant's missed item once, named, at the end of the top record, 
   const withMissed = { ...BASE, children: [{ ...child, tasks: [task("ct", "Child task", AT, true)], missed: [missed("m-child", "Child found this", 99)] }] };
   const { container, unmount } = await mount(withMissed);
   try {
-    expect(container.querySelector('[data-record-child="child"]')?.tagName).toBe("BUTTON");
+    expect(container.querySelector('[data-record-child="child"]')?.getAttribute("role")).toBe("button");
     const items = container.querySelectorAll('[data-missed-work="m-child"]');
     expect(items).toHaveLength(1);
     expect(items[0]!.closest("[data-record-other]")?.textContent).toContain("Child found this · Child work");
@@ -177,7 +187,7 @@ it("gives a task's PR button the last read time while GitHub cannot be read", as
   const stale = { ...BASE, outputs: [{ ...output(1100, "review", "t2", SESSION), stale: true, last_read_at_unix_ms: AT }] };
   const { container, unmount } = await mount(stale);
   try {
-    const label = container.querySelector("[data-record-task-pr]")!.getAttribute("aria-label")!;
+    const label = container.querySelector("[data-record-task-pr] [data-record-output]")!.getAttribute("aria-label")!;
     expect(label).toContain(new Date(AT).toLocaleString());
   } finally { await unmount(); }
 });
@@ -191,14 +201,14 @@ it("says so when the only requests were not tasks and the words button is off, a
   } finally { await unmount(); }
 });
 
-it("ends an idle record with the last thing its agent said, and a working one with its Now line instead (B17)", async () => {
-  const { container, unmount } = await mount(BASE);
+it("heads the record with the now box: ended with the elapsed time and no button, working with the last words and a pane button (B14)", async () => {
+  const { container, unmount } = await mount({ ...BASE, ended_at_unix_ms: AT });
   try {
-    await act(async () => useShellStore.setState({ agents: [{ pane_id: "w1:p1", session_id: "root", message: "Fix the header\nRan the tests\nAll green, ready for review" } as never] }));
-    expect(text(container.querySelector("[data-record-last-words]"))).toContain("All green, ready for review");
-    await act(async () => useShellStore.setState({ sessionRecord: { session: SESSION, loading: false, failure: null, record: { ...BASE, state: "working", requests: [...BASE.requests, request(99, "Keep going", [], "operator", false)] } } }));
-    expect(container.querySelector("[data-record-now]")).not.toBeNull();
-    expect(container.querySelector("[data-record-last-words]")).toBeNull();
+    const box = container.querySelector("[data-record-now]")!;
+    expect(box.getAttribute("data-record-now")).toBe("ended");
+    expect(box.getAttribute("data-state-box")).toBe("done");
+    expect(text(box)).toContain("Done");
+    expect(box.querySelector("[data-record-now-button]")).toBeNull();
   } finally { await unmount(); }
 });
 

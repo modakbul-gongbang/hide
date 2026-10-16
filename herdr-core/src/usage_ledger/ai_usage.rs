@@ -67,9 +67,6 @@ impl Feature {
             | "project_memory_promote_check"
             | "project_memory_creation_docs" => (Self::Memory, true),
             "worktree_name" => (Self::Issue, true),
-            // A pull request card's summary (PRD work-tab-pr-lens D-29) has
-            // no group of its own in the list; it is counted as other work.
-            "pr_summary" => (Self::Other, true),
             id if id == "factory" || id.starts_with("factory_") => (Self::Factory, true),
             _ => (Self::Other, false),
         }

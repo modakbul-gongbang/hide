@@ -589,7 +589,22 @@ fn usage_pins_are_bounded_shared_and_survive_restart_and_stale_saves() {
         }))
         .unwrap()
     };
-    assert_eq!(runtime.snapshot.ui_state.usage.pinned.len(), 2);
+    let defaults: Vec<_> = runtime
+        .snapshot
+        .ui_state
+        .usage
+        .pinned
+        .iter()
+        .map(|pin| (pin.agent.as_str(), pin.window))
+        .collect();
+    assert_eq!(
+        defaults,
+        [
+            ("claude", hide_agent_adapter::usage::WindowKind::Weekly),
+            ("codex", hide_agent_adapter::usage::WindowKind::Weekly)
+        ],
+        "the first agents on by default with a weekly window, one slot left"
+    );
     let pin = event(
         "usage_pin_set",
         serde_json::json!({"agent":"claude","window":"five_hour","enabled":true}),

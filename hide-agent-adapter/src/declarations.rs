@@ -20,6 +20,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookInstall::Runtime(HookDialect::ClaudeCode),
         herdr: HerdrIntegration {
             name: "claude",
+            target: "claude",
             folder: &[".claude"],
         },
         default_on: true,
@@ -83,6 +84,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookInstall::Runtime(HookDialect::Codex),
         herdr: HerdrIntegration {
             name: "codex",
+            target: "codex",
             folder: &[".codex"],
         },
         default_on: true,
@@ -146,6 +148,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookInstall::Guidance(GuidanceDialect::Grok),
         herdr: HerdrIntegration {
             name: "grok",
+            target: "grok",
             folder: &[".grok"],
         },
         default_on: false,
@@ -216,6 +219,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookInstall::Plugin(PluginDialect::OpenCode),
         herdr: HerdrIntegration {
             name: "opencode",
+            target: "opencode",
             folder: &[".config", "opencode"],
         },
         default_on: false,
@@ -293,6 +297,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookInstall::Plugin(PluginDialect::Pi),
         herdr: HerdrIntegration {
             name: "pi",
+            target: "pi",
             folder: &[".pi", "agent"],
         },
         default_on: false,
@@ -371,6 +376,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookInstall::Plugin(PluginDialect::Omp),
         herdr: HerdrIntegration {
             name: "omp",
+            target: "omp",
             folder: &[".omp", "agent"],
         },
         default_on: false,
@@ -449,6 +455,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookInstall::Guidance(GuidanceDialect::Cursor),
         herdr: HerdrIntegration {
             name: "cursor",
+            target: "cursor",
             folder: &[".cursor"],
         },
         default_on: false,
@@ -533,6 +540,91 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             startup_guidance: Available(HookInstall::Guidance(GuidanceDialect::Cursor)),
             resume: Available(LaunchDialect::Cursor),
             next_prompt_letters: Unavailable,
+        },
+    },
+    AgentAdapter {
+        key: AgentId::Antigravity,
+        id: "antigravity",
+        label: "Antigravity",
+        picker_label: "Antigravity",
+        sidebar_label: Some("Antigravity"),
+        terminal_click: false,
+        aliases: &["agy", "antigravity-cli", "antigravity_cli"],
+        executables: &["agy"],
+        skill_location: SkillLocation::Antigravity,
+        hook: HookInstall::Guidance(GuidanceDialect::Antigravity),
+        herdr: HerdrIntegration {
+            name: "agy",
+            target: "antigravity-cli",
+            folder: &[".gemini", "config"],
+        },
+        // On by default like Claude Code and Codex: the operator's amendment
+        // to PRD antigravity-first-class B1/D-14 (2026-10-16).
+        default_on: true,
+        prompt_hook: Some(HookDialect::Antigravity),
+        spawn_guard: Some(HookDialect::Antigravity),
+        subagent_counts: Some(HookDialect::Antigravity),
+        memory: Some(HookDialect::Antigravity),
+        // Herdr 0.9.3 reads agy's permission question as an approval, but
+        // its folder-trust question is unmeasured, and a bell's Enter into a
+        // dialog Herdr reads as `idle` would answer it; letters reach agy on
+        // its next prompt instead (PRD antigravity-first-class D-06).
+        bell: false,
+        session: Some(SessionFormat::Antigravity),
+        sleep: Some(LaunchDialect::Antigravity),
+        fork: Some(LaunchDialect::Antigravity),
+        resume: Some(LaunchDialect::Antigravity),
+        conversation: Some(SessionFormat::Antigravity),
+        titles: Some(SessionFormat::Antigravity),
+        start: Some(LaunchDialect::Antigravity),
+        find: None,
+        usage: UsageDeclaration {
+            limits: LimitDeclaration {
+                five_hour: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+                weekly: Support::Supported(LimitSource::AntigravityUsage),
+                scoped: Support::Supported(LimitSource::AntigravityUsage),
+                monthly: absent(
+                    AbsenceKind::NoSuchData,
+                    "The agent has no independent subscription window.",
+                    "The agent exposes its own subscription limits.",
+                ),
+            },
+            tokens: Support::Supported(TokenSource::AntigravityTranscript),
+            cost: absent(
+                AbsenceKind::NoSuchData,
+                "Google publishes no price table for the agent's models.",
+                "A public price table for the agent's models.",
+            ),
+            models: absent(
+                AbsenceKind::NoSuchData,
+                "The transcript does not name the model of a call.",
+                "The agent records the model beside each call's tokens.",
+            ),
+            attribution: Attribution {
+                session: Support::Supported(AttributionFrom::UsageRecord),
+                project: Support::Supported(AttributionFrom::UsageRecord),
+            },
+        },
+        doc_url: "https://antigravity.google/docs/skills/",
+        install_url: "https://antigravity.google/docs/install?tab=cli",
+        logo_id: "antigravity",
+        factory: FactoryCapabilities {
+            direct_ask: Available(DirectAsk {
+                tools: &["ask_question"],
+                denial: HookDialect::Antigravity,
+            }),
+            // agy's transcript names no call on a tool step and no record of
+            // a question still waiting was measured, so the wait cannot be
+            // read; Factory still gets the question through `direct_ask`.
+            user_turn: Unconfirmed,
+            turn_end_and_answer: Available(SessionFormat::Antigravity),
+            startup_guidance: Available(HookInstall::Guidance(GuidanceDialect::Antigravity)),
+            resume: Available(LaunchDialect::Antigravity),
+            next_prompt_letters: Available(HookDialect::Antigravity),
         },
     },
 ];

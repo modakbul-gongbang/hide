@@ -93,7 +93,7 @@ export function OpenerMark({ opener, actions }: { opener: ViewOpener; actions: A
           if (opener.pane_id) actions.openAgent(opener.pane_id);
         }}
       >
-        {mark ? (
+        {mark?.logo ? (
           <img src={mark.logo} alt="" aria-hidden="true" className={cn("size-full rounded-xs object-contain", mark.plated ? "bg-(--logo-plate)" : "")} />
         ) : (
           <span aria-hidden="true" className="size-full rounded-xs bg-muted-foreground" />
@@ -510,7 +510,7 @@ function AgentLine({ agent, logos }: { agent: AgentRow; logos: boolean }) {
   return (
     <>
       <StatusMark mark={agent.mark} className={markTone(agent)} />
-      {logos && mark ? <img src={mark.logo} alt="" aria-hidden="true" className="size-(--size-icon-sm) shrink-0 rounded-xs object-contain" /> : null}
+      {logos && mark?.logo ? <img src={mark.logo} alt="" aria-hidden="true" className="size-(--size-icon-sm) shrink-0 rounded-xs object-contain" /> : null}
       <span className="min-w-0 flex-1 truncate">{agent.identity_label}</span>
     </>
   );
@@ -558,7 +558,7 @@ function SendButton({ group, display, workspace, actions, again = false }: { gro
             ) : (
               <>
                 <span className="shrink-0">{t("feedback.send", { count })} →</span>
-                {mark ? <img src={mark.logo} alt="" aria-hidden="true" className="size-(--size-icon-sm) shrink-0 rounded-xs object-contain" /> : null}
+                {mark?.logo ? <img src={mark.logo} alt="" aria-hidden="true" className="size-(--size-icon-sm) shrink-0 rounded-xs object-contain" /> : null}
                 <span className="min-w-0 truncate">{recipient.name}</span>
               </>
             )}

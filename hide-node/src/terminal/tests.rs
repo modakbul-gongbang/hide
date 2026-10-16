@@ -328,7 +328,6 @@ fn an_attach_without_a_size_waits_for_one_then_attaches_at_it() {
             rows: 30,
             cols: 100,
         },
-        force: false,
     });
     let opened = harness.opened();
     assert_eq!(
@@ -511,7 +510,6 @@ fn an_observed_view_that_changes_size_reattaches_once_the_size_settles() {
         harness.service.control(TerminalControl::Resize {
             pane: "w1:p1".into(),
             size: GridSize { rows: 33, cols },
-            force: false,
         });
     }
     observer.frame(SIZE, false, b"old");
@@ -551,7 +549,6 @@ fn a_rebuilt_view_for_an_attached_pane_is_given_a_frame_to_draw() {
         harness.service.control(TerminalControl::Resize {
             pane: "w1:p1".into(),
             size: SIZE,
-            force: false,
         })
     };
     resize();

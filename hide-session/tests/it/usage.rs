@@ -19,7 +19,11 @@ fn declared_usage_sources_have_native_accounting_contracts() {
             continue;
         };
         assert_eq!(source.format(), agent.format());
-        assert!(matches!(row.usage.cost, Support::Supported(_)));
+        // Google publishes no price for agy's calls, and agy records none.
+        assert_eq!(
+            matches!(row.usage.cost, Support::Supported(_)),
+            agent != Agent::Antigravity
+        );
         // An added declaration must choose an actual fixture here. These
         // assertions read each source through the public usage boundary.
         match source {
@@ -34,8 +38,124 @@ fn declared_usage_sources_have_native_accounting_contracts() {
                 usage_opencode_reads_steps_not_overwritten_message_tokens_or_accumulated_cost()
             }
             TokenSource::PiSession | TokenSource::OmpSession => pi_or_omp_usage(agent),
+            TokenSource::AntigravityTranscript => antigravity_usage(),
         }
     }
+}
+
+/// Each planner step is one call; its input count already leaves out the
+/// cache read, and the index row places the conversation in its checkout.
+fn antigravity_usage() {
+    let home = tempfile::tempdir().unwrap();
+    let id = "a9c0e2f4-0000-4000-8000-000000000008";
+    let file = hide_session::antigravity::transcript(home.path(), id);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, concat!(
+        "{\"step_index\":0,\"source\":\"USER_EXPLICIT\",\"type\":\"USER_INPUT\",\"status\":\"DONE\",\"created_at\":\"2026-10-01T12:00:00Z\",\"content\":\"PRIVATE_BODY_SENTINEL\"}\n",
+        "{\"step_index\":1,\"source\":\"MODEL\",\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"created_at\":\"2026-10-01T12:00:01Z\",\"input_tokens\":2525,\"cache_read_tokens\":15528,\"output_tokens\":100,\"content\":\"PRIVATE_BODY_SENTINEL\"}\n",
+    )).unwrap();
+    let listed = usage::list(home.path(), Agent::Antigravity, 0).unwrap();
+    assert_eq!(listed.files.len(), 1);
+    let (events, checkpoint) = usage_drain(home.path(), Agent::Antigravity, &file, None);
+    assert_eq!(events.len(), 1);
+    let event = &events[0];
+    assert_eq!(
+        (
+            event.tokens.input,
+            event.tokens.cache_read,
+            event.tokens.output
+        ),
+        (2525, 15528, 100)
+    );
+    assert_eq!(event.session, id);
+    assert_eq!(event.recorded_cost_micro_usd, None);
+    assert!(!format!("{event:?}").contains("PRIVATE_BODY_SENTINEL"));
+    assert!(
+        usage::read(home.path(), Agent::Antigravity, &file, Some(checkpoint))
+            .unwrap()
+            .events
+            .is_empty()
+    );
+}
+
+/// agy's index in `home`, from the recorded 1.3.6 schema, with conversation
+/// `id` placed by `uris` (agy's JSON list of workspace URIs).
+fn agy_index(home: &std::path::Path, id: &str, uris: &str) {
+    let folder = home.join(".gemini/antigravity-cli");
+    fs::create_dir_all(&folder).unwrap();
+    let database = rusqlite::Connection::open(folder.join("conversation_summaries.db")).unwrap();
+    database
+        .execute_batch(
+            &fs::read_to_string(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/adapters/antigravity-1.3.6/summaries.sql"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    database
+        .execute(
+            "INSERT INTO conversation_summaries (conversation_id, title, last_modified_time, \
+             workspace_uris, parent_conversation_id, last_user_input_time, app_data_dir) \
+             VALUES (?1, 't', '2026-10-01 12:00:00+00:00', ?2, '', '2026-10-01 12:00:00+00:00', 'antigravity-cli')",
+            rusqlite::params![id, uris],
+        )
+        .unwrap();
+}
+
+fn agy_transcript(home: &std::path::Path, id: &str) -> std::path::PathBuf {
+    let file = hide_session::antigravity::transcript(home, id);
+    fs::create_dir_all(file.parent().unwrap()).unwrap();
+    fs::write(&file, "{\"step_index\":1,\"source\":\"MODEL\",\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"created_at\":\"2026-10-01T12:00:01Z\",\"input_tokens\":7,\"output_tokens\":3}\n").unwrap();
+    file
+}
+
+#[test]
+fn an_agy_conversation_the_index_cannot_place_is_counted_under_no_project() {
+    let home = tempfile::tempdir().unwrap();
+    let id = "a9c0e2f4-0000-4000-8000-000000000009";
+    agy_index(home.path(), id, "[]");
+    let file = agy_transcript(home.path(), id);
+
+    let (events, _) = usage_drain(home.path(), Agent::Antigravity, &file, None);
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].cwd, None);
+}
+
+#[test]
+fn a_busy_agy_index_refuses_the_read_and_the_next_read_places_the_checkout() {
+    let home = tempfile::tempdir().unwrap();
+    let id = "a9c0e2f4-0000-4000-8000-00000000000a";
+    let checkout = fs::canonicalize(home.path()).unwrap().join("repo");
+    fs::create_dir(&checkout).unwrap();
+    let wire = hide_platform::path::to_wire(&checkout).unwrap();
+    let slash = if wire.starts_with('/') { "" } else { "/" };
+    agy_index(
+        home.path(),
+        id,
+        &serde_json::json!([format!("file://{slash}{wire}")]).to_string(),
+    );
+    let file = agy_transcript(home.path(), id);
+    // agy holding its index for a write.
+    let holder = rusqlite::Connection::open(
+        home.path()
+            .join(".gemini/antigravity-cli/conversation_summaries.db"),
+    )
+    .unwrap();
+    holder.execute_batch("BEGIN EXCLUSIVE").unwrap();
+
+    assert_eq!(
+        usage::read(home.path(), Agent::Antigravity, &file, None).unwrap_err(),
+        usage::Refusal::Database
+    );
+
+    drop(holder);
+    let (events, _) = usage_drain(home.path(), Agent::Antigravity, &file, None);
+    assert_eq!(events.len(), 1);
+    // The checkout as the index names it, in this system's spelling.
+    let placed = hide_platform::path::from_wire(&wire).unwrap();
+    assert_eq!(events[0].cwd.as_deref(), placed.to_str());
 }
 
 fn pi_or_omp_usage(agent: Agent) {

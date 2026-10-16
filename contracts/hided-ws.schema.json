@@ -57,7 +57,7 @@
         "type": { "const": "factory_question_guard" },
         "request_id": { "$ref": "#/$defs/workspaceRequestId" },
         "session": { "type": "string", "minLength": 1, "maxLength": 4096 },
-        "runtime": { "enum": ["claude-code", "codex", "opencode", "omp"] }
+        "runtime": { "enum": ["claude-code", "codex", "opencode", "omp", "antigravity"] }
       }
     },
     "memoryHookAsk": {
@@ -69,7 +69,7 @@
         "type": { "const": "memory_hook" },
         "request_id": { "$ref": "#/$defs/workspaceRequestId" },
         "event": { "enum": ["SessionStart", "UserPromptSubmit"] },
-        "runtime": { "enum": ["claude", "codex", "opencode", "pi", "omp"] },
+        "runtime": { "enum": ["claude", "codex", "opencode", "pi", "omp", "antigravity"] },
         "session": { "type": "string", "minLength": 1, "maxLength": 4096 },
         "prompt": { "type": "string", "maxLength": 8192 }
       }
@@ -119,10 +119,10 @@
     },
     "workspaceCommand": {
       "oneOf": [
-        { "type": "object", "additionalProperties": false, "required": ["action", "path", "beside", "reveal"], "properties": { "action": { "const": "open_file" }, "path": { "type": "string" }, "beside": { "type": "boolean" }, "reveal": { "type": "boolean" } } },
-        { "type": "object", "additionalProperties": false, "required": ["action", "path", "beside", "reveal"], "properties": { "action": { "const": "open_diff" }, "path": { "type": "string" }, "beside": { "type": "boolean" }, "reveal": { "type": "boolean" } } },
-        { "type": "object", "additionalProperties": false, "required": ["action", "url", "reveal"], "properties": { "action": { "const": "open_browser" }, "url": { "type": "string" }, "reveal": { "type": "boolean" } } },
-        { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "reveal"], "properties": { "action": { "const": "select" }, "view_id": { "type": "string" }, "reveal": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "path", "beside"], "properties": { "action": { "const": "open_file" }, "path": { "type": "string" }, "beside": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "path", "beside"], "properties": { "action": { "const": "open_diff" }, "path": { "type": "string" }, "beside": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "url"], "properties": { "action": { "const": "open_browser" }, "url": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "view_id"], "properties": { "action": { "const": "select" }, "view_id": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id"], "properties": { "action": { "const": "close" }, "view_id": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "area_id", "edge"], "properties": { "action": { "const": "split" }, "view_id": { "type": "string" }, "area_id": { "type": "string" }, "edge": { "enum": ["left", "right", "up", "down"] } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "area_id", "index"], "properties": { "action": { "const": "move" }, "view_id": { "type": "string" }, "area_id": { "type": "string" }, "index": { "type": "integer", "minimum": 0 } } }

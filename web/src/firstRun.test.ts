@@ -37,6 +37,9 @@ describe("a tile's line (B8, B9)", () => {
     expect(tileStatus(agent("codex"), [provider("codex", "usage_limited")])).toBe("ready");
     expect(tileStatus(agent("grok"), [provider("grok", "needs_login")])).toBe("not_signed_in");
     expect(tileStatus(agent("opencode"), [provider("opencode", "needs_login")])).toBe("installed");
+    expect(tileStatus(agent("antigravity"), [provider("antigravity", "needs_login")])).toBe("not_signed_in");
+    // Until the kit has made Hide AI's folder for agy, its provider is dimmed: signed in or not is unknown.
+    expect(tileStatus(agent("antigravity"), [provider("antigravity", "unsupported")])).toBe("installed");
     expect(tileStatus(agent("cursor", { availability: "not_installed" }), undefined)).toBe("not_installed");
   });
 });

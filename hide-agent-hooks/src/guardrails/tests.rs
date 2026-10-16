@@ -947,6 +947,36 @@ fn the_scripts_tools_read_as_their_actions() {
 }
 
 #[test]
+fn an_agy_write_cut_before_its_name_is_refused_where_writes_are_guarded() {
+    let content = "x".repeat(4096);
+    let payload = format!(
+        r#"{{"conversationId":"c","toolCall":{{"args":{{"CodeContent":"{content}","TargetFile":"/r/.env"}},"name":"write_to_file"}},"workspacePaths":["/r"]}}"#
+    );
+    let cut = &payload.as_bytes()[..payload.len() / 2];
+    let call = payload::read_hook(cut, true, HookDialect::Antigravity).unwrap();
+    assert_eq!(call.action, Action::UnreadWrite);
+    let fixture = Fixture::new();
+    fixture.policy(rules(|rules| rules.files = true), None);
+    assert_eq!(
+        refused(fixture.decide_in(&fixture.repo, call.action.clone(), Some(false))),
+        Some(Rule::Files)
+    );
+    fixture.policy(rules(|_| {}), None);
+    assert_eq!(
+        refused(fixture.decide_in(&fixture.repo, call.action, Some(false))),
+        None
+    );
+    // A cut call with no write content is not judged.
+    let view = format!(
+        r#"{{"toolCall":{{"args":{{"AbsolutePath":"/r/{content}"}},"name":"view_file"}}}}"#
+    );
+    assert_eq!(
+        payload::read_hook(&view.as_bytes()[..100], true, HookDialect::Antigravity),
+        None
+    );
+}
+
+#[test]
 fn a_payload_cut_at_the_limit_still_names_its_file() {
     let content = "x".repeat(4096);
     let payload = format!(

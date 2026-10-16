@@ -2101,7 +2101,6 @@ mod tests {
         let open = crate::workspace_control::Action::OpenFile {
             path: path.into(),
             beside: false,
-            reveal: false,
         };
         runtime.stamp_control_opener(&key, "recipient", &open, &view);
         view
@@ -2174,7 +2173,6 @@ mod tests {
         let open = crate::workspace_control::Action::OpenFile {
             path: "src/login.ts".into(),
             beside: false,
-            reveal: false,
         };
         assert!(guard.opener_of_pane("sender").is_none());
         guard.stamp_control_opener(&key(), &checkout, &open, &view);

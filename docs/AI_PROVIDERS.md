@@ -32,10 +32,7 @@ END waits for a known ledger context instead of treating missing parent authorit
 
 The Start dialog of the Overview uses feature id `worktree_name` (`herdr-core/src/ai.rs::suggest_worktree_name`): it sends the issue's title and at most 2,000 characters of its body, asks for `{slug}` against a schema, and the core keeps only lowercase ASCII words joined by hyphens, at most 48 characters, behind the issue-number prefix the dialog passed; the deadline is 30 seconds, a failure leaves the dialog's own name in place, and Settings › Issues turns the feature off.
 
-A pull request's card uses feature id `pr_summary` (`herdr-core/src/ai.rs::summarize_pull_request`, PRD work-tab-pr-lens D-04, D-29): it sends the title, at most 4,000 characters of the body, at most 100 changed files with their added and removed counts, and the names of the failed checks and the number of running ones, every text redacted again at the provider boundary, and asks for one `{summary}` of at most 600 characters in two or three plain sentences in the operator's output language, quoting the title, file names and check names as they are written.
-It never sends a diff, and the title, body, file names and check names are marked untrusted content in the instruction.
-The core asks once per head commit when a card with its parts read is open, keeps the answer for that head (at most 64 summaries), and drops it when the head moves, the switch turns off or the card's project stops showing; it runs on the label router, so the usage limit that pauses agent summaries pauses this too, and a paused, disabled or failed ask leaves the card without a summary and writes the class to the diagnostic log (`invalid_output` for an answer that does not fit the schema).
-The summary is drawn under the card's reason box with an `AI 요약` mark and changes neither the list's groups nor its second lines.
+A pull request's card asks Hide AI nothing: the `pr_summary` feature was retired (PRD pr-card-and-session-record-redesign D-19), and a `pr_summary` field an older Hide left in the settings file is read past and not written back.
 
 Project Memory uses feature id `project_memory` with Hide's own extraction prompt (`hide-memory/src/engine.rs`, under 8 KiB) and strict schema: each card's text, a one-line title, aliases, kind, extraction confidence and salience, source offsets, cited repository paths, and a `new`, `same`, `supersedes`, `conflicts` or `discard` relation to one of the cards it was shown, plus titles and aliases for shown cards that have none.
 No third-party memory engine or prompt asset is part of it.
@@ -68,7 +65,7 @@ The background AI boundary reads no token file: the codex backend references the
 It sets two environment variables: that `CODEX_HOME`, pointing the app-server at the private directory, and `MAX_THINKING_TOKENS=0` on a claude model turn (see the claude bullet).
 `hide-ai` is also the only code that starts a background AI child of any agent: the Weekly Usage reader below asks the same `ClaudeCliBackend` for its `/usage` text rather than running the CLI itself.
 
-The providers are a registry (`hide-ai/src/registry.rs`), in this fixed order: `claude`, `codex`, `gemini-cli`, `grok`, `opencode`, `pi`, `cursor`.
+The providers are a registry (`hide-ai/src/registry.rs`), in this fixed order: `claude`, `codex`, `gemini-cli`, `grok`, `opencode`, `pi`, `cursor`, `antigravity`.
 `ProviderId` is a copyable name for one entry, written in `ai.json` as its id; `PROVIDERS` lists them, `ProviderId::descriptor()` gives the label, the program names looked up on the login `PATH`, the default model and `agent`, the id of the same agent in the install kit (`claude-code`, `codex`, `grok`, `opencode`, `pi`, `cursor`) or `gemini-cli` for Gemini CLI, which the kit no longer lists and whose id only names its logo, and `build_backend` makes the backend of one entry.
 An empty model means the CLI's own default: no `--model` flag is sent.
 There is one place that finds a CLI and says what it is run with (`hide-ai/src/program.rs`): a program is looked for on the account's search (`hide_platform::programs`: the login shell's folders, the daemon's own `PATH`, the usual install folders), and the child is started with that same value as its `PATH`.
@@ -141,12 +138,12 @@ A request reports progress once a second while it runs, and a cancel in the core
   The same response carries the logged-in account, which the parser never reads and nothing logs, stores or snapshots.
   The list is held for ten minutes (a menu opening is not a child start) and the child is bounded at twenty seconds; a list the CLI could not give is `ModelCatalog::Unknown` with `claude_models_unreadable:<stage>`, never a guess.
   The shape was observed on 2026-10-06 against the installed, logged-in CLI; the observed values (`opus`, `fable`, `sonnet`, `haiku` and full names) are the account's, not a contract, which is why they are read each time.
-- `gemini-cli`, `grok` and `pi` answer in text through one shared one-shot runner (`hide-ai/src/runner.rs`, `text_cli.rs`), and `opencode` and `cursor` are registered but unsupported.
+- `gemini-cli`, `grok`, `pi` and `antigravity` answer in text through one shared one-shot runner (`hide-ai/src/runner.rs`, `text_cli.rs`), and `opencode` and `cursor` are registered but unsupported.
   See [The text-mode CLIs](#the-text-mode-clis).
 
 ## The text-mode CLIs
 
-Gemini CLI, Grok and Pi have no output-schema surface the way Claude Code and Codex do.
+Gemini CLI, Grok, Pi and Antigravity have no output-schema surface the way Claude Code and Codex do (agy's `--json-schema` cannot be used; see [Antigravity](#antigravity)).
 Each is asked, in its system prompt, for exactly one JSON object matching the feature's schema, and the object is read back from the text it printed: the whole text, the body of a code fence, or the span from the first `{` to the last `}`, in that order.
 The router validates every answer against the feature's schema, so a wrong shape is `InvalidOutput` whatever the CLI said.
 A failure is classified from the CLI's documented exit codes and what it printed to stderr: an authentication word or HTTP 401 or 403 is `NotAuthenticated`, a rate or quota word or 429 is `UsageLimited`, an overload word or 5xx is `Transient`, and anything else is `CompletionUnknown`, because the child ran and the prompt may have been submitted.
@@ -172,7 +169,27 @@ Neither CLI documents a mode that guarantees a one-shot, tool-free, read-only ru
 Settings shows them as installed and not selectable, with that reason.
 Making either selectable is a change to its backend and to this table, with a documented read-only mode cited, not a setting.
 
-Proof level, as of 2026-10-06: Claude and Codex have been run live; Gemini CLI, Grok and Pi are proven by scripted stand-ins (`hide-ai/tests/it/text_clis.rs`, which records the argument vector, the standard input, the working directory, the environment and the file contents the child received) because none is installed on the machine that built this, so their flags, exit codes, output shapes and login probes follow the CLIs' published documentation and are not yet observed.
+### Antigravity
+
+agy (`hide-ai/src/antigravity.rs`) has no switch that turns its tools off, so a request runs in a folder Hide keeps for it, `~/.hide/ai/antigravity-read-only`, whose own `.agents/hooks.json` refuses every tool call: one `PreToolUse` hook with matcher `.*` whose command is `exit 1` (PRD antigravity-first-class D-09).
+agy refuses a tool call whose `PreToolUse` hook exits nonzero, prints what agy cannot read, times out or is missing, so that hook is fail-closed, and agy 1.4.0 loads a folder's own hooks only when the folder is in `trustedWorkspaces` of `~/.gemini/antigravity-cli/settings.json`.
+The install kit makes the folder, writes the hook file and adds the folder's exact path to that list when it installs agy's hook, and a pass repairs any of the three that went missing or changed; switching agy off removes the folder and that trust entry ([agent-hooks.md](agent-hooks.md#antigravity-hides-hook-block)).
+The backend refuses a request unless the folder, its hook file byte for byte and its trust are all as the kit wrote them, and availability says why while they are not (`Unsupported`, with `antigravity_read_only_missing`, `antigravity_read_only_hook_changed`, `antigravity_read_only_untrusted` or `antigravity_settings_unreadable`), so the provider stays dimmed rather than running with tools.
+An answer whose stream shows a tool step that finished (`step_update` with `step_type` `tool` and state `DONE`) is refused as `InvalidOutput("antigravity_tool_ran")` as a second line.
+Measured against agy 1.4.0 on 2026-10-16 with a real account and the real home: in that trusted folder every tool call the model tried (`view_file`, `run_command`, `write_to_file`, `manage_task`) ended refused and the proof file was never written, and in an untrusted folder the folder's hook was not loaded.
+
+The command is `agy --input-format stream-json --output-format stream-json --disable-slash-commands --print-timeout <deadline>s [--model <m>] -p ""`, run in that folder.
+The transcript and the schema request go on stdin as agy's one input message, `{"event":"user","message":{"content":...}}`; plain `-p` ignores stdin, and the transcript never reaches an argument vector.
+`--json-schema` is not used: agy ends such a turn through a `finish` tool, which the folder's hook refuses, so the schema is asked for in the prompt as for the other text CLIs and the object is read from the `result` event's `response`.
+A `result` whose `status` is not `SUCCESS` is classified from its `error` text by the shared rules.
+Every child gets the login variables, `AGY_CLI_DISABLE_AUTO_UPDATE=1`, and a `PATH` naming a folder that does not exist: a signed-out agy would open the operator's browser to sign in through a program it finds on `PATH`, and with nothing there every hook, the operator's global ones included, fails to start its shell, which agy also reads as a refused tool (B32).
+
+Availability is `NotInstalled` when no `agy` is found, `NeedsLogin` while `~/.gemini/antigravity-cli` does not exist (agy has never been signed in there), `Unsupported` while the read-only folder is not ready, and otherwise what `agy models` answers: its `id<TAB>label` lines are the model list and make the provider `Ready`, a sign-in answer is `NeedsLogin`, and anything else is `Unavailable` with the reason.
+The default model is the CLI's own, so no `--model` is sent until the operator picks one.
+The result's `usage.input_tokens` and `output_tokens` are the call's counts; no model is attributed here, because the request's conversation is also in agy's history, where the session usage reader counts it under no project.
+Each request leaves a conversation in agy's history, because agy has no flag that skips it; it is filed under the read-only folder, which no checkout reads, so no project's Sessions, labels or usage page shows it.
+
+Proof level, as of 2026-10-16: Claude, Codex and Antigravity have been run live (Antigravity's tool-free turn, above, and its `/usage` read); Gemini CLI, Grok and Pi are proven by scripted stand-ins (`hide-ai/tests/it/text_clis.rs`, which records the argument vector, the standard input, the working directory, the environment and the file contents the child received) because none is installed on the machine that built this, so their flags, exit codes, output shapes and login probes follow the CLIs' published documentation and are not yet observed.
 Grok's `--tools ""` giving a tool-free run, where the validated object sits in Grok's JSON output, and the format of `pi --list-models` are the unobserved parts; the parsers accept more than one shape and an unreadable list is `Unknown`, not empty.
 
 ## The operator's choice
@@ -195,7 +212,6 @@ The file names a provider, a model per provider, whether Hide AI is on, an order
   "enabled": true,
   "fallback": [{ "provider": "codex", "model": "gpt-5.6-luna" }],
   "agent_summary": true,
-  "pr_summary": true,
   "usage_limit": 95
 }
 ```
@@ -211,8 +227,6 @@ A provider the registry does not know is ignored wherever it appears, so a file 
 `agent_summary` is the Settings › Hide AI › Features Agent summaries switch (PRD overview-request-view D-11), on when the field is absent.
 Off, the label analyzer asks nothing and cancels the request it is running, and no surface shows a label; worktree naming and Project Memory keep their own switches.
 Turning it does not rebuild the router, because it is not part of the router's choice.
-`pr_summary` is the Settings › Hide AI › Features PR summaries switch, on when the field is absent; off, the core asks nothing for a card and drops the summaries it holds, and the rest of the card stands.
-It is not part of the router's choice either, and the usage limit applies to it as to every background feature.
 
 The defaults are the registry's own constants: `claude` with `sonnet`, `codex` with `gpt-5.6-luna`, and the CLI's own model for every other agent.
 `provider` is in the file only once it was chosen (`AiSettings.chosen`), so a file that only turned a switch makes no choice for the operator, and a settings value with nothing chosen asks no model anything (`router_config().enabled` is `enabled && chosen`).
@@ -230,9 +244,9 @@ A session with no home directory to write to reports that on the tab for the sam
 Choosing a provider changes which provider is asked first and nothing else.
 Every feature, Project Memory included, asks the chosen provider and then the fallback list under the policy below, while the router's retry, cooldown, cancellation, duplicate-suppression, process, and budget rules apply to all of them.
 
-The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, `pr_summary`, one `providers` row per registered agent in the fixed order (`agent` is the shared agent adapter id, or `gemini-cli` for Gemini CLI, which names only its logo; `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `login_checked`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
+The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, one `providers` row per registered agent in the fixed order (`agent` is the shared agent adapter id, or `gemini-cli` for Gemini CLI, which names only its logo; `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `login_checked`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
 Every reason in it is a code the shell turns into words, never prose, an account, a path or a conversation, and the cause of a failed model-list read stays in the diagnostic log (B68) as an `ai.models.unavailable` record with the agent and a `reason=` code, written when the reason first appears or changes and not on every read.
-`ai_settings` carries `enabled`, `provider` (Runs on), `model` (for Runs on, or for an agent in the fallback list, which keeps its own), `fallback_add`, `fallback_remove`, `agent_summary`, `pr_summary` and the two observation hints; the core refuses an agent that the last read did not find selectable (`ai_settings.provider_not_selectable`), an unknown one (`ai_settings.unknown_provider`), the Runs on agent as its own fallback (`ai_settings.fallback_is_runs_on`) and a listed one twice (`ai_settings.fallback_listed`).
+`ai_settings` carries `enabled`, `provider` (Runs on), `model` (for Runs on, or for an agent in the fallback list, which keeps its own), `fallback_add`, `fallback_remove`, `agent_summary` and the two observation hints; the core refuses an agent that the last read did not find selectable (`ai_settings.provider_not_selectable`), an unknown one (`ai_settings.unknown_provider`), the Runs on agent as its own fallback (`ai_settings.fallback_is_runs_on`) and a listed one twice (`ai_settings.fallback_listed`).
 `refusal` is how the label analyzer last found the chosen agent (`AiStanding`, written on the analyzer's thread after each job): its reason class, the end of a usage limit when the agent said, and the listed agent a request made now would run on (`using`), or none when no listed agent can answer, which is the Runs on row's reason (B41, B42).
 It is absent while the chosen agent answers and while Hide AI is off.
 
@@ -303,7 +317,7 @@ Because the routers are independent, they share the account's usage and the mach
 `hide-agent-adapter/src/usage.rs` declares all nine usage cells for every adapter: four limit scopes, tokens, cost, model breakdown, session attribution and project attribution.
 Every unsupported cell names its reason and the condition that would change it; `NotBuilt { layer }` is refused by the contract test once that layer ships.
 `UsageDeclaration::cells()` destructures every field exhaustively and is the source of `contracts/usage-coverage.json`; `export_usage_coverage` regenerates that contract, while `export_web_contract` includes the same declaration in the shell's adapter catalog.
-The independent `hide-agent-adapter/tests/fixtures/support.json` matrix pins the expected support for all seven agents.
+The independent `hide-agent-adapter/tests/fixtures/support.json` matrix pins the expected support for all eight agents.
 Layer 4 includes the six historical token and cost readers, with model and source attribution retained from each native usage record; Cursor stays excluded.
 The table is generated by `export_usage_coverage --markdown`; the adapter contract test compares it byte for byte.
 
@@ -317,6 +331,7 @@ The table is generated by `export_usage_coverage --markdown`; the adapter contra
 | Pi | No such data | No such data | No such data | No such data | Supported | Supported | Supported | Supported | Supported |
 | omp | No such data | No such data | No such data | No such data | Supported | Supported | Supported | Supported | Supported |
 | Cursor | Excluded | Excluded | Excluded | Excluded | No such data | No such data | No such data | No such data | No such data |
+| Antigravity | No such data | Supported | Supported | No such data | Supported | No such data | No such data | Supported | Supported |
 <!-- usage-coverage:end -->
 
 ## Usage limits
@@ -353,6 +368,10 @@ The observed 2.1.274 output is fixed as a scrubbed fixture under `herdr-core/tes
 Only English output is parsed; an unrecognized response is unavailable.
 A `/cost` response with no `Current` line means signed out; transport failures and timeouts retain a recent success for up to fifteen minutes.
 The snapshot carries cause codes, not screen wording: the web gives a sign-in action only for an authentication failure and keeps network diagnostics out of the screen.
+
+For Antigravity, the core's own node runs `agy -p /usage --output-format json` through `AntigravityCliBackend::usage_text`, with the same environment as a request and no model turn (`hide-host/src/usage.rs`).
+The parser (`herdr-core/src/usage/limits/antigravity.rs`) reads `/command/data/groups`: each group of models shares weekly buckets that say what fraction is left and when it refills, the `gemini-weekly` bucket is the account's weekly window, and every other group's weekly bucket is a window scoped to that group's models; agy has no five-hour or monthly window.
+A sign-in answer is `NotAuthenticated`, and a frame with no groups is `FormatChanged`.
 
 The child runs on a `BackgroundRead` worker, so the coordinator thread that applies every Herdr pane event never waits on it; one child runs at a time, and dropping the reader cancels a child still running at shutdown.
 The failure event carries the provider and the failure kind only; no terminal text, token, or account identifier is logged or placed in a snapshot.
@@ -573,6 +592,8 @@ A backend's events are produced on the node; the node holds at most 256 of them 
 - Gemini CLI, Grok and Pi have not been run live by this repository's checks; see the proof level under [The text-mode CLIs](#the-text-mode-clis).
   Gemini's login is learned only from a failed request: its row says `login_checked: false` (so `ready` there means only that the program was found), the first-run choice never picks it, and a sign-in failure is kept for the router's cooldown instead of being tried again every availability window.
 - Cursor and OpenCode cannot be selected until a read-only one-shot mode is documented for them.
+- Antigravity's read-only rule rests on Hide's own folder and its trust in the operator's agy settings, not on a flag of agy's: if the operator takes that trust out, the provider dims until the kit's next pass puts it back, and a future agy that loads a folder's hooks differently would show as tool steps refused by the second check rather than as a silent tool run.
+  Each request also leaves a conversation in agy's history under that folder; this closes when agy offers a print mode without tools or without history.
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.
 - Hide AI's counting is partial by design.

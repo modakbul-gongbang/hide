@@ -35,11 +35,12 @@
 # 2026-09-28 one run held all five for 26 minutes, so a second pull request
 # waited up to 70 minutes before its lanes started. A pull request therefore
 # asks for a macOS runner only for what a macOS runner alone proves: `desktop
-# e2e` for a change to the desktop app or the web code it drives, `os
-# contract (macos)` for a change to `hide-platform` or `hide-herdr-client`, and
-# `package`'s macOS job for a change to what goes into a package, the one job
-# that starts the packaged app such a change builds.
-# Core and daemon changes run on Linux and Windows and leave the macOS
+# e2e` for a change to what the app runs (the desktop host, the web shell and
+# every crate, issue #1288), `os contract (macos)` for a change to
+# `hide-platform` or `hide-herdr-client`, and `package`'s macOS job for a
+# change to what goes into a package, the one job that starts the packaged app
+# such a change builds.
+# Core and daemon changes add only `desktop e2e` there and leave the macOS web
 # `@platform` tests, the macOS mailbox lane and the rest of the OS contract to
 # `nightly.yml`.
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
@@ -71,8 +72,9 @@ name: verify
 
 on:
   pull_request:
-    # `ready_for_review` starts the run that plans and runs the lanes.
-    types: [opened, synchronize, reopened, ready_for_review]
+    # `ready_for_review` starts the run that plans and runs the lanes; `edited`
+    # reruns the body's checks (`policy` alone when the last green run stands).
+    types: [opened, synchronize, reopened, ready_for_review, edited]
   push:
     branches: [main]
   # nightly.yml runs every lane on main once a day.
@@ -81,7 +83,9 @@ on:
 permissions:
   contents: read
 
-# A new push to a pull request replaces that pull request's run. Main's runs
+# A new push to a pull request replaces that pull request's run; a body edit
+# waits for it instead, since the lanes it would cancel are the ones its plan
+# reuses. Main's runs
 # are not cancelled once they start: each merge's full run is the net under the
 # lanes a plan left out. GitHub keeps one pending run per group, so in a burst
 # of merges a newer run replaces the pending one and checks their combined
@@ -89,7 +93,7 @@ permissions:
 # a push run's place.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' && github.event.action != 'edited' }}
 
 jobs:
   plan:
@@ -139,6 +143,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The merge commit and the base it merges into, for the paths a
+          # pull request changes.
+          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -157,6 +165,16 @@ jobs:
           zsh scripts/check-herdr-pin-single-source.sh
           python3 scripts/check-core-touches-no-machine.py
           python3 scripts/check-ai-prompt-language.py
+
+      # Reads the pull request's body, which no merge result carries, so it is
+      # the one policy check `premerge-check.py` does not repeat.
+      - name: A pull request that changes a screen shows it
+        if: github.event_name == 'pull_request'
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr-body.md"
+          python3 scripts/check-pr-screenshots.py --pr-body "$RUNNER_TEMP/pr-body.md" --range HEAD^1..HEAD
 
   rust:
     name: rust workspace
@@ -540,8 +558,24 @@ jobs:
       contents: read
       issues: write
 
+  # agy against stand-ins and its installed binary on Windows, for a change
+  # to a crate that writes agy's files, reads its conversations or drives it
+  # for Hide AI. `rust` runs the same agy tests on Linux; the nightly runs the
+  # whole contract on all three systems.
+  agy-contract:
+    name: agy contract
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'agy-contract')
+    uses: ./.github/workflows/agy-contract.yml
+    with:
+      systems: '["windows"]'
+    permissions:
+      contents: read
+      issues: write
+
   # The Electron app on macOS, the system it is written against: the whole
-  # suite, for a change to the desktop app or the web code it drives.
+  # suite, for a change to what the app runs: the desktop host, the web shell
+  # or a crate.
   desktop-e2e:
     name: desktop e2e
     needs: plan
@@ -590,7 +624,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, windows-desktop, web-e2e, remote-mailbox, desktop-e2e, package]
+    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, agy-contract, windows-check, windows-e2e, windows-desktop, web-e2e, remote-mailbox, desktop-e2e, package]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

@@ -241,9 +241,12 @@ pub fn find_cli_with(
 }
 
 /// The folders installers put a CLI in that a daemon's `PATH` may not reach.
-fn usual_install_folders(home: &Path) -> [PathBuf; 8] {
+fn usual_install_folders(home: &Path) -> [PathBuf; 9] {
     [
         home.join(".local/bin"),
+        // agy's Windows installer: `%LOCALAPPDATA%\agy\bin`, whose default is
+        // under the profile folder.
+        home.join("AppData").join("Local").join("agy").join("bin"),
         // pnpm's global bin folder: `$PNPM_HOME` up to pnpm 10 and
         // `$PNPM_HOME/bin` from pnpm 11, with `$PNPM_HOME` defaulting to
         // `~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux.

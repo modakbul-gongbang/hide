@@ -1,40 +1,21 @@
 import { CircleDashedIcon, CircleDotIcon, FolderGit2Icon, Link2Icon } from "lucide-react";
-import { useRef, type ReactNode } from "react";
-import { Button } from "./components/ui/button";
+import { useRef, useState, type ReactNode } from "react";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandSeparator } from "./components/ui/command";
 import { Popover, PopoverAnchor, PopoverContent } from "./components/ui/popover";
 import { Hint } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
-import { cn } from "./lib/utils";
 import { folderName, sameIssue } from "./linkPanel";
 import type { Checkout, LinkIssueSource, LinkPanel, Task, Workspace } from "./snapshot";
 import { TaskGlyph } from "./issueMarks";
 import { useUiStore } from "./ui";
 import type { Actions } from "./actions";
 
-/** Where the parts of a pull request's links go. */
-export type LinkHandlers = {
-  /** A checkout: its Workspace. */
-  openCheckout: (project: Workspace, checkout: Checkout) => void;
-  /** An issue of the project's source: its card or backlog item (PRD overview-device-tasks B60). */
-  openIssue: (project: Workspace, task: Task) => void;
-  /** A link out: the page on GitHub. */
-  openGitHub: (url: string, deviceId: string) => void;
-};
-
-export function linkHandlers(actions: Actions): LinkHandlers {
-  return {
-    openCheckout: (project, checkout) => actions.openWorkspace(project.device_id, checkout.workspace_id, checkout.id),
-    openIssue: (project, task) => actions.openBacklogItem(project.device_id, project.id, task.key),
-    openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
-  };
-}
-
-// What a pull request is linked to (PRD link-graph B4, B5; work-tab-pr-lens
-// D-06): its issues with where each link came from, the worktrees of its
-// branch, and the Link issue picker the card and a list row's menu open. What
-// is true now (the board's issue, the checkout) wins over the record.
+// What a pull request is linked to (PRD link-graph B4, B5; PRD pr-card-and-
+// session-record-redesign D-04, B2): its issues with where each link came
+// from and the worktrees of its branch, in one quiet line under the card's
+// meta line, and the Link issue picker the card and a list row's menu open.
+// What is true now (the board's issue, the checkout) wins over the record.
 
 const SOURCE_WORD: Record<LinkIssueSource, MessageKey> = { closes: "links.source.closes", hide: "links.source.hide" };
 
@@ -49,12 +30,13 @@ function issueLabel(key: string): string {
 }
 
 /**
- * The links section (B4, B5): each issue with where the link came from, then
- * the worktrees of its branch, a gone one dim with `Cleaned up`; with no issue,
- * `No linked issue` and Link issue.
+ * The links line (B2): each issue with its glyph, `#N 제목` and where the link
+ * came from, or `연결된 이슈 없음` with `이슈 잇기`; then the worktree of the
+ * branch, a gone one dim with `정리됨`.
  */
-export function PrLinks({ number, issue: boardIssue, checkout: boardCheckout, linkable, record, project, handlers, linking, onLinking }: { number: number; issue: { key: string } | null; checkout: Checkout | null; linkable: boolean; record: LinkPanel | null; project: Workspace; handlers: LinkHandlers; linking: boolean; onLinking: (open: boolean) => void }) {
+export function PrLinks({ number, issue: boardIssue, checkout: boardCheckout, linkable, record, project, actions }: { number: number; issue: { key: string } | null; checkout: Checkout | null; linkable: boolean; record: LinkPanel | null; project: Workspace; actions: Actions }) {
   const { t } = useInterfaceTranslation();
+  const [linking, setLinking] = useState(false);
   const tasks = project.tasks?.tasks ?? [];
   const issues: { key: string; source: LinkIssueSource | null }[] = [...(record?.pr?.issues ?? [])];
   // The board's issue is GitHub's or the branch's link now; the record may not have it yet (B5).
@@ -63,43 +45,43 @@ export function PrLinks({ number, issue: boardIssue, checkout: boardCheckout, li
   if (boardCheckout && !paths.includes(boardCheckout.path)) paths.unshift(boardCheckout.path);
   const checkouts = project.checkouts;
   return (
-    <section className="flex flex-col gap-xs" aria-label={t("links.connections")} data-pr-panel-links="true">
+    <p className="flex min-w-0 flex-wrap items-center gap-x-md gap-y-xxs text-caption text-muted-foreground" data-pr-panel-links="true">
       {issues.length === 0 ? (
-        <span className="flex min-h-(--size-control) items-center gap-sm text-body text-muted-foreground" data-pr-panel-issue="none">
-          <CircleDashedIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
-          <span className="flex-1">{t("links.noIssue")}</span>
+        <span className="inline-flex min-w-0 items-center gap-xs" data-pr-panel-issue="none">
+          <CircleDashedIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+          <span>{t("links.noIssue")}</span>
           {linkable ? (
-            <IssuePicker number={number} project={project} open={linking} onOpenChange={onLinking}>
-              <Button variant="secondary" size="sm" onClick={() => onLinking(true)} data-pr-link-open={number}>
-                <Link2Icon aria-hidden="true" />
+            <IssuePicker number={number} project={project} open={linking} onOpenChange={setLinking}>
+              <button type="button" className="inline-flex items-center gap-xxs rounded-xs text-primary outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => setLinking(true)} data-pr-link-open={number}>
+                <Link2Icon aria-hidden="true" className="size-(--size-icon-sm)" />
                 {t("prList.linkIssue")}
-              </Button>
+              </button>
             </IssuePicker>
           ) : null}
         </span>
       ) : (
         issues.map((issue) => {
           const task = tasks.find((candidate) => sameIssue(candidate.key, issue.key)) ?? null;
-          return <IssueLine key={issue.key} issueKey={issue.key} source={issue.source} task={task} project={project} handlers={handlers} />;
+          return <IssueLine key={issue.key} issueKey={issue.key} source={issue.source} task={task} project={project} actions={actions} />;
         })
       )}
       {paths.map((path) => {
         const here = checkouts.find((checkout) => checkout.path === path && checkout.exists) ?? null;
         return (
-          <span key={path} className="flex min-h-(--size-control) min-w-0 items-center gap-sm text-body" data-pr-panel-worktree={path} data-removed={here ? undefined : "true"}>
-            <FolderGit2Icon aria-hidden="true" className={cn("size-(--size-icon) shrink-0", here ? "text-subtle-foreground" : "text-muted-foreground")} />
+          <span key={path} className="inline-flex min-w-0 items-center gap-xs" data-pr-panel-worktree={path} data-removed={here ? undefined : "true"}>
+            <FolderGit2Icon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
             {here ? (
               <Hint label={path}>
-                <button type="button" className="min-w-0 truncate rounded-xs text-left text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => handlers.openCheckout(project, here)}>
+                <button type="button" className="min-w-0 truncate rounded-xs font-mono text-subtle-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => actions.openWorkspace(project.device_id, here.workspace_id, here.id)}>
                   {folderName(path)}
                 </button>
               </Hint>
             ) : (
               <>
                 <Hint label={path} reveals>
-                  <span className="min-w-0 truncate text-muted-foreground">{folderName(path)}</span>
+                  <span className="min-w-0 truncate font-mono">{folderName(path)}</span>
                 </Hint>
-                <span className="shrink-0 text-caption text-muted-foreground" data-pr-panel-cleaned="true">
+                <span className="shrink-0 text-micro" data-pr-panel-cleaned="true">
                   {t("links.cleaned")}
                 </span>
               </>
@@ -107,29 +89,29 @@ export function PrLinks({ number, issue: boardIssue, checkout: boardCheckout, li
           </span>
         );
       })}
-    </section>
+    </p>
   );
 }
 
-/** One linked issue (B4): its panel on the Issues tab when the project lists it, else GitHub. */
-function IssueLine({ issueKey, source, task, project, handlers }: { issueKey: string; source: LinkIssueSource | null; task: Task | null; project: Workspace; handlers: LinkHandlers }) {
+/** One linked issue (B4): its item in the Overview's 백로그 when the project lists it, else GitHub. */
+function IssueLine({ issueKey, source, task, project, actions }: { issueKey: string; source: LinkIssueSource | null; task: Task | null; project: Workspace; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const label = task ? `${task.id ?? issueLabel(issueKey)} ${task.title}` : issueLabel(issueKey);
   const url = task?.url ?? issueUrl(issueKey);
-  const open = task ? () => handlers.openIssue(project, task) : url ? () => handlers.openGitHub(url, project.device_id) : null;
+  const open = task ? () => actions.openBacklogItem(project.device_id, project.id, task.key) : url ? () => actions.openPullRequest(url, project.device_id, true) : null;
   return (
-    <span className="flex min-h-(--size-control) min-w-0 items-center gap-sm text-body" data-pr-panel-issue={issueKey} data-pr-panel-source={source ?? undefined}>
-      {task ? <TaskGlyph task={task} className="size-(--size-icon) text-subtle-foreground" /> : <CircleDotIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-subtle-foreground" />}
+    <span className="inline-flex min-w-0 items-center gap-xs" data-pr-panel-issue={issueKey} data-pr-panel-source={source ?? undefined}>
+      {task ? <TaskGlyph task={task} className="size-(--size-icon-sm) shrink-0" /> : <CircleDotIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />}
       {open ? (
         <Hint label={task ? t("links.openIssue", { issue: label }) : t("prList.openIssue", { issue: label })} reveals>
-          <button type="button" className="min-w-0 flex-1 truncate rounded-xs text-left text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={open}>
+          <button type="button" className="min-w-0 truncate rounded-xs text-left text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={open}>
             {label}
           </button>
         </Hint>
       ) : (
-        <span className="min-w-0 flex-1 truncate">{label}</span>
+        <span className="min-w-0 truncate text-foreground">{label}</span>
       )}
-      {source ? <span className="shrink-0 text-caption text-muted-foreground">{t(SOURCE_WORD[source])}</span> : null}
+      {source ? <span className="shrink-0 text-micro">{t(SOURCE_WORD[source])}</span> : null}
     </span>
   );
 }

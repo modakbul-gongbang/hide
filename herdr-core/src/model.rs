@@ -2604,12 +2604,6 @@ pub struct TerminalPaneSnapshot {
     /// from the wire while false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub scroll_held_elsewhere: bool,
-    /// The pane's tab is drawn ahead of Herdr (a split, close, zoom or resize
-    /// Herdr has not confirmed), so its PTY keeps its size: the core sends no
-    /// resize for it and the shell keeps its terminal grid until Herdr
-    /// confirms (PRD instant-pane-topology D-08). Absent while false.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub grid_held: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -4176,10 +4170,15 @@ pub struct PrCardSnapshot {
     pub merge: Option<PrCardMerge>,
     /// `body`, `files` or `threads`, whichever the last read could not get.
     pub failed: Vec<&'static str>,
-    /// hide-ai's summary of the pull request at `head`; absent while it is
-    /// off, paused by the usage limit, failed or not made yet (B37).
+    /// When the head commit's checks last completed, for the card's
+    /// timeline (PRD pr-card-and-session-record-redesign D-15); absent while
+    /// unread, none completed or the read lacked it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub summary: Option<String>,
+    pub checks_completed_at_unix_ms: Option<u64>,
+    /// When the standing review (the latest approval or change request) was
+    /// submitted; absent without one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub review_at_unix_ms: Option<u64>,
     /// The Merge or branch update asked for from this card, and how it went.
     pub write: Option<PrWriteSnapshot>,
 }
@@ -4966,9 +4965,10 @@ impl PullRequestSnapshot {
 impl Serialize for PullRequestSnapshot {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        // The head commit, the repository and the created and closed times
-        // stay off the wire: only the core compares them.
-        let mut out = serializer.serialize_struct("PullRequestSnapshot", 14)?;
+        // The head commit, the repository and the closed time stay off the
+        // wire: only the core compares them. The created time is the card's
+        // `PR 열림` milestone (PRD pr-card-and-session-record-redesign B5).
+        let mut out = serializer.serialize_struct("PullRequestSnapshot", 15)?;
         out.serialize_field("closing_issues", &self.closing_issues)?;
         out.serialize_field("title", &self.title)?;
         out.serialize_field("checks", &self.checks)?;
@@ -4980,6 +4980,7 @@ impl Serialize for PullRequestSnapshot {
         out.serialize_field("review", &self.review)?;
         out.serialize_field("is_draft", &self.is_draft)?;
         out.serialize_field("merged_at_unix_ms", &self.merged_at_unix_ms)?;
+        out.serialize_field("created_at_unix_ms", &self.created_at_unix_ms)?;
         out.serialize_field("updated_at_unix_ms", &self.updated_at_unix_ms)?;
         out.serialize_field("state", &self.state())?;
         out.serialize_field("work", &self.work)?;
@@ -5539,8 +5540,6 @@ pub struct BackgroundAiSnapshot {
     pub chosen: bool,
     /// The `에이전트 요약` switch: agent labels are asked for and shown.
     pub agent_summary: bool,
-    /// The `PR 요약` switch: a pull request's card asks for a summary.
-    pub pr_summary: bool,
     /// One row per agent Hide AI knows, in the fixed order. An agent that is
     /// not on this Mac is still a row, because "not here" and "not signed in"
     /// are different answers.
@@ -5572,7 +5571,6 @@ impl BackgroundAiSnapshot {
                 .map(|provider| BackgroundAiProviderSnapshot::unread(*provider))
                 .collect(),
             agent_summary: true,
-            pr_summary: true,
             usage_limit: Some(hide_ai::DEFAULT_LIMIT_PERCENT),
             ..Self::default()
         }

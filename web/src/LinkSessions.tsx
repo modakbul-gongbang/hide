@@ -1,47 +1,55 @@
-import { ChevronDownIcon, ChevronRightIcon, CopyIcon, CornerLeftUpIcon, LoaderCircleIcon, MessageSquareIcon, PlayIcon, CircleHelpIcon, SquareTerminalIcon } from "lucide-react";
+import { CopyIcon, LoaderCircleIcon, MessageSquareIcon, PlayIcon, CircleHelpIcon, SquareTerminalIcon, ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { agentProductName } from "./agentAdapters";
-import { rowLine } from "./agentRow";
-import { Badge } from "./components/ui/badge";
+import { markTone, rowLine } from "./agentRow";
+import { statusText } from "./agentStatus";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
+import { Elapsed } from "./components/elapsed";
+import { MilestoneMark, SessionRow } from "./components/session-row";
+import { StatusMark } from "./components/status-mark";
+import { summariesEnabled } from "./hideAi";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { deviceLabel, failureKey, foldLines, resumeProvider, resumeBlock, resumeCheckout, sessionLines, spanText, viewBlock, type Blocked, type SessionLine } from "./linkPanel";
+import { deviceLabel, failureKey, foldTimeline, resumeProvider, resumeBlock, resumeCheckout, sessionLines, spanText, timeText, viewBlock, type Blocked, type SessionLine } from "./linkPanel";
 import { allAgents } from "./navigation";
-import { catalogOf, localDeviceId, type LinkPanel, type Workspace } from "./snapshot";
+import { timeline, type Milestone, type TimelineEntry } from "./prCardModel";
+import { recordTitle } from "./sessionWork";
+import { catalogOf, localDeviceId, type LinkPanel, type PullRequest, type Workspace } from "./snapshot";
 import { startAnswer, startRequestId } from "./startAnswer";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
-// The sessions section of the PR and Issue panels (PRD link-graph B6-B25,
-// B34): the record's session lines joined with what is live now, the live
-// ones first, a fold past five, and the line's two ways back into the work,
-// `View conversation` and `Resume`. The record's failure and its first read
-// stand in the section's own place; the rest of the panel never moves.
+// The PR card's timeline (PRD link-graph B6-B25, B34; PRD pr-card-and-
+// session-record-redesign D-03, D-05 to D-09, B3-B10): the record's session
+// lines joined with what is live now and the pull request's milestones, one
+// list oldest first, each row in the sidebar's agent-row shape. A live row
+// keeps the one button its state needs under its line; an ended row shows
+// `View conversation` and `Resume` only while the pointer or the keyboard is
+// on it. The record's failure, its first read and its empty line stand in
+// the section's own place; the rest of the card never moves.
 
 /** How long a resume waits for the core's answer before it says so; a device start can take a Home sync and a tab. */
 const RESUME_TIMEOUT_MS = 90_000;
 
-export function LinkSessions({
+export function LinkTimeline({
   panel,
   project,
+  pr,
+  milestones,
   branchOf,
   onRetry,
-  onOpenPr,
-  empty,
   actions,
 }: {
   panel: LinkPanel;
   project: Workspace;
+  /** The list's row for the pull request, or none while it is unlisted (then only sessions are drawn). */
+  pr: PullRequest | null;
+  milestones: readonly Milestone[];
   /** The branch of a pull request the line belongs to, for where it resumes when its folder is gone. */
   branchOf: (pr: number) => string | null;
   onRetry: () => void;
-  /** The Issue panel names each line's pull request; its chip opens that PR's panel. */
-  onOpenPr?: (pr: number) => void;
-  /** What stands under the heading when no session is recorded (B23). */
-  empty: ReactNode;
   actions: Actions;
 }) {
   const { t } = useInterfaceTranslation();
@@ -52,20 +60,22 @@ export function LinkSessions({
   const filling = useShellStore((s) => s.linkSummaries?.filling === true);
   const [unfolded, setUnfolded] = useState(false);
   const agents = useMemo(() => allAgents(remote, navigatorAgents ?? [], agentScope, devices).map((entry) => entry.agent), [remote, navigatorAgents, agentScope, devices]);
-  const lines = sessionLines(panel.sessions, agents);
-  const { shown, earlier } = foldLines(lines, unfolded);
+  const lines = useMemo(() => sessionLines(panel.sessions, agents), [panel.sessions, agents]);
+  const entries = useMemo<TimelineEntry<SessionLine>[]>(() => {
+    const sessions = lines.map((session) => ({ session, at: session.line.started_at_unix_ms }));
+    return pr ? timeline(sessions, milestones, pr) : sessions.map(({ session, at }) => ({ kind: "session", session, at }));
+  }, [lines, milestones, pr]);
+  const { shown, earlier } = foldTimeline(entries, (entry) => entry.kind === "session", (entry) => entry.kind === "session" && entry.session.live !== null, unfolded);
   const finding = panel.loading || filling;
-  const heading = panel.total > 0 ? t("links.sessionsCount", { count: panel.total }) : t("links.sessions");
+  const empty = lines.length === 0 && !panel.failure && !panel.loading;
   return (
-    <section className="flex flex-col gap-sm" aria-label={heading} data-link-sessions={panel.total} data-link-loading={finding ? "true" : undefined}>
-      <h3 className="flex items-center gap-xs text-caption text-muted-foreground">
-        {heading}
-        {finding ? (
-          <span role="status" aria-label={t("links.finding")} data-link-finding="true">
-            <LoaderCircleIcon aria-hidden="true" className="size-(--size-icon-sm) animate-spin" />
-          </span>
-        ) : null}
-      </h3>
+    <div className="flex flex-col gap-xs" data-link-sessions={panel.total} data-link-loading={finding ? "true" : undefined}>
+      {finding ? (
+        <p role="status" className="flex items-center gap-xs text-caption text-muted-foreground" data-link-finding="true">
+          <LoaderCircleIcon aria-hidden="true" className="size-(--size-icon-sm) animate-spin" />
+          {t("links.finding")}
+        </p>
+      ) : null}
       {panel.failure ? (
         <p role="alert" className="flex items-center gap-sm text-caption text-warning" data-link-failure={panel.failure}>
           {t(failureKey(panel.failure))}
@@ -73,22 +83,6 @@ export function LinkSessions({
             {t("common.retry")}
           </Button>
         </p>
-      ) : null}
-      {lines.length === 0 && !panel.failure && !panel.loading ? empty : null}
-      {shown.length > 0 ? (
-        <ol className="flex flex-col" aria-label={heading}>
-          {shown.map((entry, index) => (
-            <SessionLineView
-              key={entry.line.id}
-              entry={entry}
-              last={index === shown.length - 1}
-              project={project}
-              checkoutBranch={branchOf(entry.line.pr)}
-              onOpenPr={onOpenPr}
-              actions={actions}
-            />
-          ))}
-        </ol>
       ) : null}
       {earlier > 0 ? (
         <button
@@ -102,8 +96,63 @@ export function LinkSessions({
           {t("links.earlier", { count: earlier })}
         </button>
       ) : null}
-    </section>
+      {empty ? (
+        <p className="flex min-w-0 flex-wrap items-center gap-sm text-caption text-muted-foreground" data-link-none="true">
+          {t("links.noSessions")}
+          {pr && pr.state !== "merged" && pr.state !== "closed" ? (
+            <Button variant="secondary" size="sm" onClick={() => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number })} data-link-delegate={pr.number}>
+              <PlayIcon aria-hidden="true" />
+              {t("prList.delegate")}
+            </Button>
+          ) : null}
+        </p>
+      ) : null}
+      {shown.length > 0 ? (
+        <ol className="flex flex-col" aria-label={t("work.card.timeline")} data-pr-card-timeline-rows={shown.length}>
+          {shown.map((entry) => {
+            if (entry.kind === "session") return <SessionLineView key={entry.session.line.id} entry={entry.session} project={project} checkoutBranch={branchOf(entry.session.line.pr)} actions={actions} />;
+            if (entry.kind === "milestone") return <MilestoneRow key={`${entry.milestone.kind}:${entry.milestone.at ?? ""}`} milestone={entry.milestone} />;
+            return <NowRow key="now" running={entry.running} />;
+          })}
+        </ol>
+      ) : null}
+    </div>
   );
+}
+
+/** A milestone's word and colour (B5): what happened, in the colour the PR marks use for it. */
+function milestoneLook(milestone: Milestone, t: ReturnType<typeof useInterfaceTranslation>["t"]): { text: string; tone: string } {
+  switch (milestone.kind) {
+    case "opened":
+      return { text: t("work.card.milestone.opened"), tone: "text-subtle-foreground" };
+    case "checks_passed":
+      return { text: t("work.card.milestone.checksPassed"), tone: "text-pr-mergeable" };
+    case "checks_failed":
+      return { text: t("work.card.milestone.checksFailed"), tone: "text-pr-failed" };
+    case "review_requested":
+      return { text: t("work.card.milestone.reviewRequested", { who: milestone.who.join(", ") }), tone: "text-warning" };
+    case "approved":
+      return { text: t("work.card.milestone.approved"), tone: "text-pr-mergeable" };
+    case "changes":
+      return { text: t("work.card.milestone.changes"), tone: "text-pr-failed" };
+    case "merged":
+      return { text: t("work.card.milestone.merged"), tone: "text-pr-merged" };
+  }
+}
+
+/** One milestone of the pull request (D-05, B5): the square in its colour, the word, the time at the right. */
+function MilestoneRow({ milestone }: { milestone: Milestone }) {
+  const { t } = useInterfaceTranslation();
+  const look = milestoneLook(milestone, t);
+  return (
+    <SessionRow mark={<MilestoneMark className={look.tone} />} title={look.text} right={milestone.at !== null ? <span className="font-mono text-caption text-muted-foreground">{timeText(milestone.at)}</span> : null} data-timeline-milestone={milestone.kind} data-timeline-at={milestone.at ?? undefined} />
+  );
+}
+
+/** `지금` at the end of an open pull request (B6): the dashed ring of work in progress that waits (status-marks D-25), and the checks still running under it. */
+function NowRow({ running }: { running: number }) {
+  const { t } = useInterfaceTranslation();
+  return <SessionRow mark={<StatusMark mark="waiting" />} title={t("work.card.now")} line={running > 0 ? { text: t("work.card.why.ci", { count: running }), className: "text-warning" } : null} data-timeline-now={running} />;
 }
 
 /** A resume in flight: the request it sent, then the core's refusal if it came. */
@@ -145,19 +194,33 @@ function useResume(): { resume: Resume; start: (send: (request: string) => void)
   };
 }
 
-function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actions }: { entry: SessionLine; last: boolean; project: Workspace; checkoutBranch: string | null; onOpenPr?: (pr: number) => void; actions: Actions }) {
+/**
+ * The title of a session row (B7): the live agent's label, else the session
+ * record's title as the Sessions list shows it, else the agent's product
+ * name. The request stays in the tooltip.
+ */
+function useSessionTitle(line: SessionLine["line"], live: SessionLine["live"], workspaceId: string): string {
+  const summaries = useShellStore((s) => summariesEnabled(s.rest?.status?.background_ai));
+  const work = useShellStore((s) => s.linkSummaries?.projects[workspaceId]?.work);
+  if (live) return live.agent.identity_label;
+  const ids = new Set([line.id, ...line.ids]);
+  const row = work?.find((summary) => ids.has(summary.session.session_id));
+  return row ? recordTitle(row, summaries) : agentProductName(line.agent);
+}
+
+function SessionLineView({ entry, project, checkoutBranch, actions }: { entry: SessionLine; project: Workspace; checkoutBranch: string | null; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const remote = useShellStore((s) => s.rest?.status?.remote);
   const node = useShellStore((s) => localDeviceId(s.rest));
   const { line, live } = entry;
+  const title = useSessionTitle(line, live, project.id);
   const checkout = resumeCheckout(line, catalogOf(workspaces, remote), checkoutBranch, node);
   const viewOff = viewBlock(line, devices, node);
   const resumeOff = resumeBlock(line, checkout, devices, node);
   const { resume, start } = useResume();
   const gone = line.file === "missing";
-  const span = spanText(line.started_at_unix_ms, line.ended_at_unix_ms);
   const asked = live?.kind === "question" ? rowLine(live.agent)?.text : null;
   const view = () => actions.openSessionConversation({ device_id: line.device_id, agent: line.agent, session_id: line.id });
   const resumeLine = () => {
@@ -165,115 +228,65 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
     if (!checkout || !provider) return;
     start((requestId) => actions.startAgent({ target: { checkoutPath: checkout.path }, deviceId: line.device_id === node ? undefined : line.device_id, provider, resumeSessionId: line.id, resumeSessionPath: line.path ?? undefined, requestId }));
   };
-  const request = line.request ?? t("links.noRequest");
+  const agent = agentProductName(line.agent);
+  // The tooltip carries what the row leaves out (B9): the request, who delegated it, how many sessions it joins, which device.
+  const hint = [
+    line.request ?? t("links.noRequest"),
+    line.parent ? t("links.delegatedBy", { name: line.parent.name }) : null,
+    line.ids.length > 1 ? t("links.continued", { count: line.ids.length }) : null,
+    line.device_id !== node ? deviceLabel(devices, line.device_id) : null,
+  ].filter((part): part is string => part !== null).join(" · ");
+  const mark = live ? <StatusMark mark={live.agent.mark} className={markTone(live.agent)} data-agent-status-mark={live.agent.mark} /> : <StatusMark mark="done" className={cn(gone && "opacity-(--opacity-secondary)")} data-agent-status-mark="ended" />;
+  const caption = asked ? { text: asked, className: "text-warning", wrap: true } : { text: `${agent} · ${live ? statusText(t, live.agent.status_code) : t("sessionWork.done")}` };
+  const right = live ? <Elapsed since={line.started_at_unix_ms} className="font-mono text-caption text-muted-foreground" data-link-elapsed={line.id} /> : (() => {
+    const span = spanText(line.started_at_unix_ms, line.ended_at_unix_ms);
+    return span ? <span className="font-mono text-caption text-muted-foreground" data-link-span={line.id}>{span}</span> : null;
+  })();
+  const paneButton = live ? (
+    <Button variant="secondary" size="sm" onClick={() => actions.openAgent(live.agent.pane_id)} data-link-pane={line.id}>
+      <SquareTerminalIcon aria-hidden="true" />
+      {t("links.goToPane")}
+    </Button>
+  ) : null;
+  const viewButton = <LineButton icon={<MessageSquareIcon aria-hidden="true" />} label={t("links.view")} blocked={viewOff} onClick={view} data="view" id={line.id} />;
+  const resumeButton = <LineButton icon={resume.request ? <LoaderCircleIcon aria-hidden="true" className="animate-spin" /> : <PlayIcon aria-hidden="true" />} label={resume.request ? t("links.resuming") : t("links.resume")} blocked={resumeOff} busy={resume.request !== null} onClick={resumeLine} data="resume" id={line.id} />;
+  // A live row keeps its one button under the line (B8); an ended row reveals its two in the time's place.
+  const below = live?.kind === "question" ? (
+    <Button size="sm" onClick={() => actions.openAgent(live.agent.pane_id)} data-link-answer={line.id}>
+      <CircleHelpIcon aria-hidden="true" />
+      {t("links.answer")}
+    </Button>
+  ) : live?.kind === "working" ? paneButton : null;
+  const reveal = live ? (live.kind === "idle" ? <>{viewButton}{paneButton}</> : null) : <>{viewButton}{resumeButton}</>;
+  const busy = resume.request !== null || resume.failure !== null;
   return (
-    <li
-      tabIndex={0}
-      aria-label={[request, agentProductName(line.agent)].join(", ")}
-      className="group/link-line relative flex gap-sm rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+    <SessionRow
+      mark={mark}
+      title={title}
+      titleClassName={gone ? "text-muted-foreground" : undefined}
+      hint={hint}
+      chips={line.role === "created" ? <span className="inline-flex h-(--size-control-sm) shrink-0 items-center rounded-xs border border-border px-xs text-micro text-pr-merged" data-link-chip="created">{t("links.created")}</span> : null}
+      right={right}
+      reveal={busy && !live ? undefined : reveal}
+      line={caption}
+      below={busy && !live ? <>{viewButton}{resumeButton}</> : below}
+      aria-label={[title, agent].join(", ")}
       data-link-session={line.id}
       data-link-live={live?.kind}
       data-link-role={line.role}
       data-link-file={line.file}
+      data-link-request={line.request ?? undefined}
     >
-      <span className="relative flex w-(--size-agent-badge-compact) shrink-0 flex-col items-center pt-xxs" aria-hidden="true">
-        {/* The rail's node: the line's provider is named in its detail line, not drawn as a logo (PRD agent-mark-quiet D-06). */}
-        <span className={cn("size-(--size-tab-status-dot) rounded-full bg-border", gone && "opacity-(--opacity-secondary)")} />
-        {last ? null : <span className="mt-xs w-(--size-hairline) flex-1 bg-border" />}
-      </span>
-      <div className={cn("flex min-w-0 flex-1 flex-col gap-xxs", last ? "pb-xxs" : "pb-md")}>
-        <Hint label={request} reveals>
-          <span className={cn("truncate text-body", line.request && !gone ? "text-foreground" : "text-muted-foreground")} data-link-request={line.id}>
-            {request}
-          </span>
-        </Hint>
-        {asked ? (
-          <span className="truncate text-body text-warning" data-link-question={line.id}>
-            {asked}
-          </span>
-        ) : null}
-        <span className="flex min-w-0 flex-wrap items-center gap-x-xs gap-y-xxs text-caption text-muted-foreground">
-          <span data-link-agent={line.agent}>{agentProductName(line.agent)}</span>
-          {live?.kind === "working" ? (
-            <span className="inline-flex items-center gap-xs" data-link-state="working">
-              <span aria-hidden="true" className="size-(--size-tab-status-dot) rounded-full bg-agent-working" />
-              <span className="text-agent-working">{t("links.working")}</span>
-              <span>{t("links.now")}</span>
-            </span>
-          ) : live?.kind === "question" ? (
-            <span className="inline-flex items-center gap-xs" data-link-state="question">
-              <span aria-hidden="true" className="size-(--size-tab-status-dot) rounded-full bg-warning" />
-              <span className="text-warning">{t("links.waiting")}</span>
-              <span>{t("links.now")}</span>
-            </span>
-          ) : (
-            <>
-              <RoleChip line={line} onOpenPr={onOpenPr} />
-              {span ? <span className="font-mono">{span}</span> : null}
-            </>
-          )}
-          {line.ids.length > 1 ? <span data-link-continued={line.ids.length}>· {t("links.continued", { count: line.ids.length })}</span> : null}
-          {line.device_id !== node ? (
-            <Badge variant="outline" className="font-normal text-muted-foreground" data-link-device={line.device_id}>
-              {deviceLabel(devices, line.device_id)}
-            </Badge>
-          ) : null}
-          {gone ? <MissingFile path={line.path} id={line.id} /> : null}
+      {gone ? <MissingFile path={line.path} id={line.id} /> : null}
+      {resume.failure !== null ? (
+        <span role="alert" className="flex items-center gap-xs text-caption text-warning" data-link-resume-failed={line.id}>
+          <span className="min-w-0 break-words">{resume.failure ? t("links.resumeFailed", { reason: resume.failure }) : t("links.resumeFailedPlain")}</span>
+          <Button variant="ghost" size="sm" onClick={resumeLine} data-link-resume-retry={line.id}>
+            {t("common.retry")}
+          </Button>
         </span>
-        {line.parent ? <ParentLine parent={line.parent} project={project} actions={actions} /> : null}
-        {live && live.kind !== "idle" ? (
-          <span className="flex items-center gap-xs pt-xxs">
-            {live.kind === "question" ? (
-              <Button size="sm" onClick={() => actions.openAgent(live.agent.pane_id)} data-link-answer={line.id}>
-                <CircleHelpIcon aria-hidden="true" />
-                {t("links.answer")}
-              </Button>
-            ) : (
-              <Button variant="secondary" size="sm" onClick={() => actions.openAgent(live.agent.pane_id)} data-link-pane={line.id}>
-                <SquareTerminalIcon aria-hidden="true" />
-                {t("links.goToPane")}
-              </Button>
-            )}
-          </span>
-        ) : (
-          <span className={cn("items-center gap-xs pt-xxs", resume.request || resume.failure ? "flex" : "hidden group-focus-within/link-line:flex group-hover/link-line:flex")} data-link-actions={line.id}>
-            <LineButton icon={<MessageSquareIcon aria-hidden="true" />} label={t("links.view")} blocked={viewOff} onClick={view} data="view" id={line.id} />
-            {live?.kind === "idle" ? (
-              <Button variant="secondary" size="sm" onClick={() => actions.openAgent(live.agent.pane_id)} data-link-pane={line.id}>
-                <SquareTerminalIcon aria-hidden="true" />
-                {t("links.goToPane")}
-              </Button>
-            ) : (
-              <LineButton icon={resume.request ? <LoaderCircleIcon aria-hidden="true" className="animate-spin" /> : <PlayIcon aria-hidden="true" />} label={resume.request ? t("links.resuming") : t("links.resume")} blocked={resumeOff} busy={resume.request !== null} onClick={resumeLine} data="resume" id={line.id} />
-            )}
-          </span>
-        )}
-        {resume.failure !== null ? (
-          <span role="alert" className="flex items-center gap-xs text-caption text-warning" data-link-resume-failed={line.id}>
-            <span className="min-w-0 break-words">{resume.failure ? t("links.resumeFailed", { reason: resume.failure }) : t("links.resumeFailedPlain")}</span>
-            <Button variant="ghost" size="sm" onClick={resumeLine} data-link-resume-retry={line.id}>
-              {t("common.retry")}
-            </Button>
-          </span>
-        ) : null}
-      </div>
-    </li>
-  );
-}
-
-/** `Created PR`, or on the Issue panel `#N created` with its number, a chip that opens that PR; else the muted `Worked` (B6, B34). */
-function RoleChip({ line, onOpenPr }: { line: SessionLine["line"]; onOpenPr?: (pr: number) => void }) {
-  const { t } = useInterfaceTranslation();
-  if (line.role !== "created") return <span data-link-chip="worked">{t("links.worked")}</span>;
-  const label = onOpenPr ? t("links.createdNumber", { number: line.pr }) : t("links.created");
-  const shape = "inline-flex h-(--size-control-sm) items-center rounded-xs border border-border px-xs text-caption text-pr-merged";
-  if (!onOpenPr) return <span className={shape} data-link-chip="created">{label}</span>;
-  return (
-    <Hint label={t("links.chip", { number: line.pr })} reveals>
-      <button type="button" className={cn(shape, "outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring")} onClick={() => onOpenPr(line.pr)} data-link-chip="created" data-link-chip-pr={line.pr}>
-        {label}
-      </button>
-    </Hint>
+      ) : null}
+    </SessionRow>
   );
 }
 
@@ -283,11 +296,11 @@ function LineButton({ icon, label, blocked, busy = false, onClick, data, id }: {
   const off = blocked !== null || busy;
   const button = (
     <Button
-      variant="secondary"
+      variant="ghost"
       size="sm"
       aria-disabled={off ? "true" : undefined}
       aria-busy={busy ? "true" : undefined}
-      className={cn(off && "opacity-(--opacity-disabled) hover:bg-secondary")}
+      className={cn("h-(--size-sidebar-line) px-xs text-caption", off && "opacity-(--opacity-disabled) hover:bg-transparent")}
       onClick={() => {
         if (!off) onClick();
       }}
@@ -316,8 +329,8 @@ function MissingFile({ path, id }: { path: string | null; id: string }) {
     if (timer.current !== null) window.clearTimeout(timer.current);
   }, []);
   return (
-    <span className="inline-flex items-center gap-xs" data-link-missing={id}>
-      · {t("links.fileMissing")}
+    <span className="inline-flex items-center gap-xs text-caption text-muted-foreground" data-link-missing={id}>
+      {t("links.fileMissing")}
       {path ? (
         <Hint label={copied ? t("links.copied") : t("links.copyPath")}>
           <Button
@@ -336,34 +349,6 @@ function MissingFile({ path, id }: { path: string | null; id: string }) {
         </Hint>
       ) : null}
     </span>
-  );
-}
-
-/** `↰ <parent> delegated` (B19): the parent's session on the Sessions tab, dim and inert once its record is gone. */
-function ParentLine({ parent, project, actions }: { parent: NonNullable<SessionLine["line"]["parent"]>; project: Workspace; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
-  const text = (
-    <>
-      <CornerLeftUpIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-      {t("links.delegatedBy", { name: parent.name })}
-    </>
-  );
-  if (!parent.available) {
-    return (
-      <span className="inline-flex items-center gap-xs text-caption text-muted-foreground" data-link-parent={parent.session_id} data-link-parent-available="false">
-        {text}
-      </span>
-    );
-  }
-  return (
-    <button
-      type="button"
-      className="inline-flex items-center gap-xs self-start rounded-xs text-caption text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-      onClick={() => actions.openSessionConversation({ device_id: project.device_id, agent: parent.agent, session_id: parent.session_id })}
-      data-link-parent={parent.session_id}
-    >
-      {text}
-    </button>
   );
 }
 
