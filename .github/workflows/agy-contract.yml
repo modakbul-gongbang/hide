@@ -103,41 +103,54 @@ jobs:
       fail-fast: false
       matrix:
         system: ${{ fromJSON(inputs.systems) }}
+    # The key reaches only the step that runs agy; every other step,
+    # third-party actions, installers and build scripts included, sees
+    # whether it is set and nothing more.
+    permissions:
+      contents: read
     defaults:
       run:
         shell: bash
     env:
       TEST_TARGETS: -p hide-agent-hooks --test it
-      HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
+      HAS_KEY: ${{ secrets.HIDE_AGY_API_KEY != '' }}
     steps:
       - name: Not configured without the CI account's key
-        if: ${{ env.HIDE_AGY_API_KEY == '' }}
+        if: ${{ env.HAS_KEY != 'true' }}
         run: echo "::notice title=agy signed in::not configured (no HIDE_AGY_API_KEY secret); a real agy turn on CI stays unproven"
       - name: Keep line endings as committed
-        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        if: ${{ env.HAS_KEY == 'true' }}
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
-        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        if: ${{ env.HAS_KEY == 'true' }}
       - uses: Swatinem/rust-cache@v2
-        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        if: ${{ env.HAS_KEY == 'true' }}
         with:
           workspaces: ". -> target"
           save-if: false
       - name: Install cargo-nextest
-        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        if: ${{ env.HAS_KEY == 'true' }}
         run: bash scripts/install-nextest.sh
       - name: Install agy
-        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        if: ${{ env.HAS_KEY == 'true' }}
         id: agy
         run: |
           # Its own line, so a failed install fails the step instead of
           # writing an empty path.
           bin=$(bash scripts/install-agy.sh | tr -d '\r')
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Build the test binaries
+        if: ${{ env.HAS_KEY == 'true' }}
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS --no-run
       - name: The real agy, signed in with the CI key, lists Hide's hooks and runs one turn through them
         # The turn (hooks fired, the letter injected, a direct start refused)
         # runs on Linux and macOS; its stand-in `hide` is a shell script.
-        if: ${{ env.HIDE_AGY_API_KEY != '' }}
+        if: ${{ env.HAS_KEY == 'true' }}
         env:
           HIDE_AGY_BINARY: ${{ steps.agy.outputs.bin }}
+          HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
+          # The model the key's free tier serves; agy's API-key default
+          # (`gemini-3.1-pro`) has a quota of 0 there. Change it here when the
+          # vendor renames it.
+          HIDE_AGY_MODEL: gemini-3.8-flash-medium
         run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'test(=agy_binary::the_real_agy_loads_hide_s_hook_block) | test(=agy_binary::a_signed_in_agy_turn_fires_hide_s_hooks)' --run-ignored only --no-capture

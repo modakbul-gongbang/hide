@@ -125,10 +125,10 @@ esac
 /// `herdr agent start`. agy fires Hide's hooks, injects the pane's letter
 /// into the conversation (agy records it, and the helper confirms it only
 /// after agy took the answer), and the start is refused with Hide's reason
-/// before agy's own permission check. The turn runs on a flash model, the
-/// one the key's free tier serves (`gemini-3.1-pro`, agy's default in
-/// API-key mode, has a quota of 0). Unix only: the stand-in is a shell
-/// script.
+/// before agy's own permission check. The turn runs on `HIDE_AGY_MODEL`,
+/// the model the key's free tier serves (`gemini-3.1-pro`, agy's default in
+/// API-key mode, has a quota of 0), and the refusal needs that model to make
+/// the call it is asked for. Unix only: the stand-in is a shell script.
 #[cfg(unix)]
 #[test]
 #[ignore = "runs one real agy turn on HIDE_AGY_API_KEY in a throwaway home; the os contract lane's signed-in job runs it"]
@@ -142,6 +142,8 @@ fn a_signed_in_agy_turn_fires_hide_s_hooks() {
     let key = std::env::var_os("HIDE_AGY_API_KEY")
         .filter(|key| !key.is_empty())
         .expect("HIDE_AGY_API_KEY holds the CI account's key");
+    let model = std::env::var("HIDE_AGY_MODEL")
+        .expect("HIDE_AGY_MODEL names the model the CI key's quota serves");
     let root = tempfile::tempdir().unwrap();
     let root = root.path().canonicalize().unwrap();
     let home = root.join("home");
@@ -189,7 +191,7 @@ fn a_signed_in_agy_turn_fires_hide_s_hooks() {
             "--output-format",
             "stream-json",
         ])
-        .args(["--model", "gemini-3.8-flash-medium"])
+        .args(["--model", &model])
         .args(["--print-timeout", "180s", "-p", "", "--log-file"])
         .arg(&log)
         .current_dir(&workspace)
