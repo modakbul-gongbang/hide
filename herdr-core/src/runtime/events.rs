@@ -3593,7 +3593,15 @@ impl Runtime {
                             .focused_local_checkout()
                             .is_some_and(|(workspace, _)| workspace.path == project)
                     {
-                        self.read_when_looked_at(&project, std::time::Instant::now());
+                        if self.read_when_looked_at(&project, std::time::Instant::now())
+                            == super::projects::LookRead::Asked
+                        {
+                            crate::diagnostic!(serde_json::json!({
+                                "component": "github",
+                                "kind": "read.looked_at",
+                                "project": project,
+                            }));
+                        }
                     }
                     return false;
                 }
