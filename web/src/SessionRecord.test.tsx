@@ -37,12 +37,12 @@ const BASE: RecordValue = {
   children: [child],
 };
 
-async function mount(record: RecordValue, options: { summaries?: boolean; words?: boolean } = {}) {
+async function mount(record: RecordValue | null, options: { summaries?: boolean; words?: boolean } = {}) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
   initializeInterfaceI18n("en");
-  const rest = { status: { background_ai: { provider: "claude", providers: [], unavailable_reason: null, enabled: options.summaries !== false, chosen: true, agent_summary: options.summaries !== false } } } as unknown as SnapshotRest;
-  useShellStore.setState({ rest, sessionRecord: { session: SESSION, loading: false, failure: null, record } });
+  const rest = { navigator: { devices: [{ id: "local", kind: "local" }] }, status: { background_ai: { provider: "claude", providers: [], unavailable_reason: null, enabled: options.summaries !== false, chosen: true, agent_summary: options.summaries !== false } } } as unknown as SnapshotRest;
+  useShellStore.setState({ rest, sessionRecord: record ? { session: SESSION, loading: false, failure: null, record } : null });
   useUiStore.setState({ sessionRecordWords: options.words ?? false });
   const container = document.createElement("div");
   document.body.append(container);
@@ -54,6 +54,16 @@ async function mount(record: RecordValue, options: { summaries?: boolean; words?
 }
 
 const text = (element: Element | null | undefined) => element?.textContent ?? "";
+
+it("asks for the record once when the slot draws one nothing has read, as after a relaunch, and not when it is read", async () => {
+  const restored = await mount(null);
+  try {
+    expect(restored.sent).toEqual([{ schema_version: 2, kind: "detail_open", payload: { item: { kind: "record", session: SESSION } } }]);
+    expect(restored.container.querySelector("[data-record-loading]")).not.toBeNull();
+  } finally { await restored.unmount(); }
+  const read = await mount(BASE);
+  try { expect(read.sent).toEqual([]); } finally { await read.unmount(); }
+});
 
 it("draws the PRs first, then the checklist with its count, a task's PR on its line and no status words", async () => {
   const { container, unmount } = await mount(BASE);

@@ -447,7 +447,9 @@ impl Runtime {
                 self.persist_workspace_views();
             }
         }
-        self.leave_detail();
+        if self.front_workspace_key().as_ref() == Some(key) {
+            self.leave_detail();
+        }
         self.open_project_memory(Some(workspace));
     }
 
@@ -487,8 +489,12 @@ impl Runtime {
             self.persist_workspace_views();
         }
         // A file or diff opened from the card shows in Files; the card keeps
-        // its rail slot to come back to (PRD sidebar-task-lens B49).
-        self.leave_detail();
+        // its rail slot to come back to (PRD sidebar-task-lens B49). The slot
+        // is the window's, so only the lane in front gives way: an open in a
+        // Workspace behind it leaves the card or record the operator reads.
+        if self.front_workspace_key().as_ref() == Some(key) {
+            self.leave_detail();
+        }
     }
 
     pub(super) fn apply_workspace_view(&mut self, payload: WorkspaceViewPayload) -> bool {

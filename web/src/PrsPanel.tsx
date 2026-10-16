@@ -17,7 +17,7 @@ import { workspaceViewOf } from "./workspace";
 // device, in the PRs lens's groups, rows, order and folds, behind one scope
 // chip. Its Needs You rows are the rail icon's number.
 
-export type PrsScope = {
+type PrsScope = {
   /** The front checkout's project; null at Home. */
   project: Workspace | null;
   front: ReturnType<typeof frontCheckout>;
@@ -26,7 +26,7 @@ export type PrsScope = {
   model: PrListModel;
 };
 
-export function prsScope(rest: SnapshotRest | null, agents: AgentRow[], now: number): PrsScope {
+function prsScope(rest: SnapshotRest | null, agents: AgentRow[], now: number): PrsScope {
   const deviceId = frontDeviceId(rest);
   const front = frontCheckout(rest);
   const owner = catalogWorkspaces(rest).find((project) => project.device_id === deviceId && project.checkouts.some((checkout) => checkout.id === front?.id));

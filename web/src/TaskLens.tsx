@@ -26,11 +26,11 @@ import { sessionPulls, type SessionPull } from "./prMark";
 import { remoteTargetOfPane } from "./remote";
 import { machineName } from "./screenMachine";
 import { checkoutPathOfPane, sessionTreeLines } from "./sessionTree";
-import { sessionOfAgent } from "./sessionWork";
+import { sessionOfAgentOn } from "./sessionWork";
 import { commandLabel } from "./shortcutLabels";
 import { revealRow, sidebarFocusPane } from "./sidebarFocus";
 import type { SidebarTreeLine } from "./sidebarTree";
-import { catalogWorkspaces, type AgentRow, type TaskView } from "./snapshot";
+import { catalogWorkspaces, localDeviceId, type AgentRow, type TaskView } from "./snapshot";
 import { useShellStore } from "./store";
 import { taskList, type TaskEntry, type TaskGroup, type TaskGroupState } from "./taskList";
 import { useUiStore } from "./ui";
@@ -294,8 +294,9 @@ function TaskRow({ entry, family, byPane, open, selected, showProject, disabled,
   const { t } = useInterfaceTranslation();
   const { agent, card, project } = entry;
   const staleness = useAgentStaleness(agent, family);
-  const rest = useShellStore((s) => s.rest);
-  const session = useMemo(() => sessionOfAgent(agent, rest), [agent, rest]);
+  // A primitive, so a snapshot that moves nothing of this row leaves it alone.
+  const localId = useShellStore((s) => localDeviceId(s.rest));
+  const session = useMemo(() => sessionOfAgentOn(agent, localId), [agent, localId]);
   const go = () => { if (!disabled) actions.openListedAgent(agent.pane_id); };
   const record = session ? () => actions.openSessionRecord(session) : null;
   const toggle = () => actions.toggleSessionTree(agent.pane_id);
@@ -406,8 +407,9 @@ function SecondLine({ entry, showProject }: { entry: TaskEntry; showProject: boo
 function ChildRow({ parent, child, depth, place, open, selected, disabled, actions, workspace, byPane }: { parent: AgentRow; child: AgentRow; depth: number; place: TreePlace; open: boolean | null; selected: boolean; disabled: boolean; actions: Actions; workspace: string | null; byPane: ReadonlyMap<string, AgentRow> }) {
   const { t } = useInterfaceTranslation();
   const staleness = useAgentStaleness(child);
-  const rest = useShellStore((s) => s.rest);
-  const session = useMemo(() => sessionOfAgent(child, rest), [child, rest]);
+  // A primitive, so a snapshot that moves nothing of this row leaves it alone.
+  const localId = useShellStore((s) => localDeviceId(s.rest));
+  const session = useMemo(() => sessionOfAgentOn(child, localId), [child, localId]);
   const device = useShellStore((s) => {
     const own = remoteTargetOfPane(s.rest, child.pane_id);
     return own !== remoteTargetOfPane(s.rest, parent.pane_id) && own !== null ? machineName(s.rest?.navigator?.devices, own, t) : null;

@@ -4,11 +4,6 @@ import type { Catalog, Catalogs } from "../schema";
 // and second-line reasons, and the PR card.
 
 export const workEnglish = {
-  "work.title": "Work",
-  "work.lens.aria": "Work view",
-  "work.lens.sessions": "Sessions",
-  "work.lens.prs": "PRs",
-  "work.lens.needsYou": "{{lens}} · Needs You {{count}}",
   "work.lens.stale": "GitHub read failed · value from {{minutes}} min ago",
   "work.lens.staleNow": "GitHub read failed · last value",
   "work.count": "Needs You {{count}}",
@@ -56,7 +51,6 @@ export const workEnglish = {
   "work.empty.checkout": "No PR made by this checkout's sessions",
   "work.reading": "Reading PRs",
   "work.gh.settings": "Settings › GitHub",
-  "work.surface.pr": "PR card",
   "work.card.unlisted": "This pull request is not in the list any more",
   "work.card.aria": "PR #{{number}}",
   "work.card.openWorkspace": "Open Workspace",
@@ -68,7 +62,6 @@ export const workEnglish = {
   "work.card.conflict": "Conflicts with {{base}}",
   "work.card.checkLog": "log",
   "work.card.thread": "{{reviewer}} · {{place}} · {{text}}",
-  "work.card.threads": "Unresolved review threads",
   "work.card.body": "Description",
   "work.card.noBody": "No description",
   "work.card.bodyShow": "Show all",
@@ -155,11 +148,6 @@ export const workEnglish = {
 } as const;
 
 const ko = {
-  "work.title": "Work",
-  "work.lens.aria": "Work 기준",
-  "work.lens.sessions": "Sessions",
-  "work.lens.prs": "PRs",
-  "work.lens.needsYou": "{{lens}} · Needs You {{count}}",
   "work.lens.stale": "GitHub 읽기 실패 · {{minutes}}분 전 값",
   "work.lens.staleNow": "GitHub 읽기 실패 · 마지막 값",
   "work.count": "Needs You {{count}}",
@@ -207,7 +195,6 @@ const ko = {
   "work.empty.checkout": "이 체크아웃의 세션이 만든 PR 없음",
   "work.reading": "PR을 읽는 중",
   "work.gh.settings": "설정 › GitHub",
-  "work.surface.pr": "PR 카드",
   "work.card.unlisted": "이 PR은 더 이상 목록에 없습니다",
   "work.card.aria": "PR #{{number}}",
   "work.card.openWorkspace": "Workspace 열기",
@@ -219,7 +206,6 @@ const ko = {
   "work.card.conflict": "{{base}}와 충돌",
   "work.card.checkLog": "로그",
   "work.card.thread": "{{reviewer}} · {{place}} · {{text}}",
-  "work.card.threads": "안 풀린 리뷰 스레드",
   "work.card.body": "본문",
   "work.card.noBody": "본문 없음",
   "work.card.bodyShow": "모두 보기",
@@ -306,11 +292,6 @@ const ko = {
 } satisfies Catalog<typeof workEnglish>;
 
 const zhCN = {
-  "work.title": "Work",
-  "work.lens.aria": "Work 视图",
-  "work.lens.sessions": "Sessions",
-  "work.lens.prs": "PRs",
-  "work.lens.needsYou": "{{lens}} · Needs You {{count}}",
   "work.lens.stale": "GitHub 读取失败 · {{minutes}} 分钟前的值",
   "work.lens.staleNow": "GitHub 读取失败 · 最近一次的值",
   "work.count": "Needs You {{count}}",
@@ -358,7 +339,6 @@ const zhCN = {
   "work.empty.checkout": "此检出的会话没有创建过 PR",
   "work.reading": "正在读取 PR",
   "work.gh.settings": "设置 › GitHub",
-  "work.surface.pr": "PR 卡片",
   "work.card.unlisted": "这个 PR 已不在列表中",
   "work.card.aria": "PR #{{number}}",
   "work.card.openWorkspace": "打开 Workspace",
@@ -370,7 +350,6 @@ const zhCN = {
   "work.card.conflict": "与 {{base}} 冲突",
   "work.card.checkLog": "日志",
   "work.card.thread": "{{reviewer}} · {{place}} · {{text}}",
-  "work.card.threads": "未解决的审查讨论",
   "work.card.body": "正文",
   "work.card.noBody": "没有正文",
   "work.card.bodyShow": "显示全部",
@@ -457,11 +436,6 @@ const zhCN = {
 } satisfies Catalog<typeof workEnglish>;
 
 const ja = {
-  "work.title": "Work",
-  "work.lens.aria": "Work の表示",
-  "work.lens.sessions": "Sessions",
-  "work.lens.prs": "PRs",
-  "work.lens.needsYou": "{{lens}} · Needs You {{count}}",
   "work.lens.stale": "GitHub の読み取りに失敗 · {{minutes}} 分前の値",
   "work.lens.staleNow": "GitHub の読み取りに失敗 · 最後の値",
   "work.count": "Needs You {{count}}",
@@ -509,7 +483,6 @@ const ja = {
   "work.empty.checkout": "このチェックアウトのセッションが作成した PR なし",
   "work.reading": "PR を読み取り中",
   "work.gh.settings": "設定 › GitHub",
-  "work.surface.pr": "PR カード",
   "work.card.unlisted": "この PR はもう一覧にありません",
   "work.card.aria": "PR #{{number}}",
   "work.card.openWorkspace": "Workspace を開く",
@@ -521,7 +494,6 @@ const ja = {
   "work.card.conflict": "{{base}} と競合",
   "work.card.checkLog": "ログ",
   "work.card.thread": "{{reviewer}} · {{place}} · {{text}}",
-  "work.card.threads": "未解決のレビュースレッド",
   "work.card.body": "本文",
   "work.card.noBody": "本文なし",
   "work.card.bodyShow": "すべて表示",

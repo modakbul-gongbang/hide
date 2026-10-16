@@ -94,13 +94,20 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
   const parent = frame.trail.length > 0 ? (records.find((record) => record.children.some((child) => shown && workKey(child.session) === workKey(shown.session))) ?? null) : null;
   const descendants = useMemo(() => (shown ? recordTree(shown).slice(1) : []), [shown]);
   const wasConnected = useRef(connected);
+  const asked = useRef(false);
   const leave = useRef(frame.onLeave);
   leave.current = frame.onLeave;
   useEffect(() => () => leave.current(), []);
+  // Read again on a reconnect, and once when the record is drawn with no read
+  // behind it: a slot restored after a relaunch shows a record no event opened.
   useEffect(() => {
-    if (connected && !wasConnected.current) frame.onRead();
+    const unread = !own && !asked.current;
+    if (connected && (!wasConnected.current || unread)) {
+      asked.current = true;
+      frame.onRead();
+    }
     wasConnected.current = connected;
-  }, [frame, connected]);
+  }, [frame, connected, own]);
   const up = () => frame.onTrail(frame.trail.slice(0, -1));
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-session-record={frame.kind}>
     {frame.kind === "lane" ? null : <>

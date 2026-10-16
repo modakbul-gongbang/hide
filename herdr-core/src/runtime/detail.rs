@@ -204,12 +204,12 @@ impl Runtime {
                 state.sessions_expanded_agent_pane_ids.push(ancestor);
             }
         }
-        match payload.session {
-            Some(session) => {
-                self.open_detail(DetailItem::Record { session });
-            }
-            None => self.persist_ui_state(),
+        if let Some(session) = payload.session {
+            self.open_detail(DetailItem::Record { session });
         }
+        // The lens, the sidebar and the unfolded ancestors are saved even
+        // when the record was already in front and the slot did not move.
+        self.persist_ui_state();
         true
     }
 
