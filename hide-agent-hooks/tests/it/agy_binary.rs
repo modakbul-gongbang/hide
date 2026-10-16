@@ -192,6 +192,8 @@ fn a_signed_in_agy_turn_fires_hide_s_hooks() {
             "stream-json",
         ])
         .args(["--model", &model])
+        // Inside the test's 240 s guard (`.config/nextest.toml`), so a
+        // slow turn ends with agy's own report.
         .args(["--print-timeout", "180s", "-p", "", "--log-file"])
         .arg(&log)
         .current_dir(&workspace)
@@ -204,7 +206,7 @@ fn a_signed_in_agy_turn_fires_hide_s_hooks() {
     drop(stdin);
     let output = child
         .capture_until(
-            std::time::Instant::now() + Duration::from_secs(240),
+            std::time::Instant::now() + Duration::from_secs(200),
             1024 * 1024,
         )
         .expect("agy ends its turn");

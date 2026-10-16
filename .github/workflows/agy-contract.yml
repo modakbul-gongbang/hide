@@ -146,6 +146,8 @@ jobs:
         # The turn (hooks fired, the letter injected, a direct start refused)
         # runs on Linux and macOS; its stand-in `hide` is a shell script.
         if: ${{ env.HAS_KEY == 'true' }}
+        # Two attempts of the turn's 240 s guard, with room for the listing.
+        timeout-minutes: 12
         env:
           HIDE_AGY_BINARY: ${{ steps.agy.outputs.bin }}
           HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
