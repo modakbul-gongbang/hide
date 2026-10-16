@@ -265,7 +265,7 @@ pub fn prepare(
 ) -> Result<Option<Projection>, &'static str> {
     if rows.len() > DAILY_LIMIT
         || hide.rows.len() > super::store::AI_ROW_LIMIT
-        || progress.len() > 6
+        || progress.len() > Agent::supported().count()
     {
         return Err("usage_projection_capacity");
     }
@@ -298,7 +298,9 @@ pub fn prepare(
             providers: row.totals.providers.iter().cloned().collect(),
             ..Sum::default()
         };
-        if resolved.unpriced {
+        // A call whose records name no model (agy's) is unpriced under no
+        // model's name.
+        if resolved.unpriced && row.model != hide_session::usage::UNNAMED_MODEL {
             sum.unpriced.insert(row.model.clone());
         }
         days.entry(date)

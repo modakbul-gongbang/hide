@@ -35,6 +35,10 @@ pub fn fetch(source: LimitSource, root: &Path, report: &mut dyn FnMut() -> bool)
                 .and_then(|_| codex_session_usage(root));
             LimitFetch { result, fallback }
         }
+        LimitSource::AntigravityUsage => LimitFetch {
+            result: antigravity_usage(root, report),
+            fallback: None,
+        },
     }
 }
 
@@ -239,6 +243,10 @@ fn claude_usage_text(cwd: &Path, report: &mut dyn FnMut() -> bool) -> Result<Str
             Err(LimitFailure::new(FailureDisposition::Schema, "body_limit"))
         }
     })
+}
+
+fn antigravity_usage(_root: &Path, _report: &mut dyn FnMut() -> bool) -> Result<String, LimitFailure> {
+    Err(LimitFailure::new(FailureDisposition::Schema, "antigravity_usage_unbuilt"))
 }
 
 #[cfg(test)]

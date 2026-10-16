@@ -16,8 +16,11 @@ pub struct UsagePreferences {
 impl Default for UsagePreferences {
     fn default() -> Self {
         Self {
+            // An agent that starts switched off (agy) gets a chip only when
+            // the operator pins one.
             pinned: hide_agent_adapter::ADAPTERS
                 .iter()
+                .filter(|row| row.default_on)
                 .filter(|row| matches!(row.usage.window(WindowKind::Weekly), Support::Supported(_)))
                 .map(|row| Pin {
                     agent: row.herdr.name.into(),
