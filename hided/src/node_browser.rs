@@ -525,6 +525,8 @@ mod tests {
             json!({"workspace": "local\u{0}/c", "area_id": ""}),
             json!({"workspace": "local\u{0}/c", "area_id": "a", "display_id": 1}),
             json!({"workspace": "local\u{0}/c", "area_id": "a", "endpoint": "x"}),
+            // A linked node never grants the operator's Comment lease.
+            json!({"workspace": "local\u{0}/c", "area_id": "a", "display_id": "d", "purpose": "comment"}),
             json!("local"),
         ] {
             assert_eq!(scope_valid(&refused), None, "{refused}");

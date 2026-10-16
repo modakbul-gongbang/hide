@@ -14,6 +14,7 @@ import { agentPane, type HideAnswer } from "../../web/e2e/agent-pane";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { fitWindow, focusPage, isolate, launch, NEEDS_FOCUS, screenshot, test, type Isolated } from "./fixture";
+import { evaluateIn, sendInput } from "./page-input";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -28,16 +29,7 @@ let app: ElectronApplication | null = null;
 let server: Server;
 let origin: string;
 
-/** Sends the page shown at `url` input the way a person's hardware would: the page reads it as trusted. */
-async function input(url: string, events: Electron.MouseInputEvent[] | Electron.KeyboardInputEvent[]): Promise<void> {
-  await app!.evaluate(({ BrowserWindow }, { url, events }) => {
-    const contents = BrowserWindow.getAllWindows()[0]!.contentView.children
-      .map((view) => (view as { webContents?: Electron.WebContents }).webContents)
-      .find((page) => page && !page.isDestroyed() && page.getURL() === url);
-    if (!contents) throw new Error(`no page shows ${url}`);
-    for (const event of events) contents.sendInputEvent(event);
-  }, { url, events });
-}
+const input = (url: string, events: Electron.MouseInputEvent[] | Electron.KeyboardInputEvent[]) => sendInput(app!, url, events);
 
 /** Whether the window's shell, not a page, holds the keyboard. */
 async function shellHasKeyboard(): Promise<boolean> {
@@ -84,16 +76,7 @@ async function pinAt(url: string, x: number, y: number): Promise<boolean> {
   }, { url, x, y });
 }
 
-/** Evaluates `expression` in the page's own world. */
-async function inPage<T>(url: string, expression: string): Promise<T> {
-  return app!.evaluate(({ BrowserWindow }, { url, expression }) => {
-    const contents = BrowserWindow.getAllWindows()[0]!.contentView.children
-      .map((view) => (view as { webContents?: Electron.WebContents }).webContents)
-      .find((page) => page && !page.isDestroyed() && page.getURL() === url);
-    if (!contents) throw new Error(`no page shows ${url}`);
-    return contents.executeJavaScript(expression) as Promise<T>;
-  }, { url, expression });
-}
+const inPage = <T>(url: string, expression: string) => evaluateIn<T>(app!, url, expression);
 
 test.beforeAll(async () => {
   herdr = await startHerdr({ agents: false });
