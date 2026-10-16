@@ -153,7 +153,9 @@ fn a_busy_agy_index_refuses_the_read_and_the_next_read_places_the_checkout() {
     drop(holder);
     let (events, _) = usage_drain(home.path(), Agent::Antigravity, &file, None);
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].cwd.as_deref(), checkout.to_str());
+    // The checkout as the index names it, in this system's spelling.
+    let placed = hide_platform::path::from_wire(&wire).unwrap();
+    assert_eq!(events[0].cwd.as_deref(), placed.to_str());
 }
 
 fn pi_or_omp_usage(agent: Agent) {
