@@ -37,7 +37,7 @@ function agent(line: string | null = "README 태그 고치는 중"): AgentRow {
 async function mount(rows: WorkProgress[] | undefined, options: { ai?: BackgroundAi; line?: string | null } = {}) {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-  initializeInterfaceI18n("ko");
+  initializeInterfaceI18n("en");
   useShellStore.setState({
     agents: [agent(options.line)],
     rest: { navigator: { devices: [{ id: "mac", kind: "local" }] }, status: { background_ai: options.ai ?? AI_ON } } as unknown as SnapshotRest,
@@ -58,7 +58,7 @@ it("shows done over tasks from one task, and nothing for a pane with no task", a
   const one = await mount([progress([task("task-3", "README 번역 정리")])]);
   try {
     expect(one.chip()?.textContent).toBe("0/1");
-    expect(one.chip()?.getAttribute("aria-label")).toBe("시킨 일 1개 중 0개 끝남");
+    expect(one.chip()?.getAttribute("aria-label")).toBe("0 of 1 assigned tasks done");
   } finally { await one.unmount(); }
   // A ledger with no judgment publishes no progress for the session.
   const none = await mount(undefined);
@@ -84,7 +84,7 @@ it("shows the plain child count while a child has no judgment, never a false zer
     await act(async () => view.chip()!.focus());
     const head = view.list()!.querySelector("[data-child-progress]")!;
     expect(head.getAttribute("data-child-progress")).toBe("count");
-    expect(head.textContent).toBe("자식2");
+    expect(head.textContent).toBe("Children2");
     expect(view.list()!.querySelector("[data-child-segment]")).toBeNull();
   } finally { await view.unmount(); }
 });
@@ -94,11 +94,11 @@ it("opens on the pointer and on focus, closes when both leave, and pins on a pre
   const view = await mount([progress([task("task-3", "README의 HTML 태그가 보이게 하기"), task("task-3.2", "댓글 + 마크 위치 맞추기")])]);
   try {
     expect(view.list()).toBeNull();
-    await act(async () => view.chip()!.dispatchEvent(new PointerEvent("pointerenter")));
+    await act(async () => view.chip()!.dispatchEvent(new MouseEvent("pointerover", { bubbles: true })));
     expect(view.list()).not.toBeNull();
-    expect([...view.list()!.querySelectorAll("[data-task-list-item]")].map((node) => node.textContent)).toEqual(["README의 HTML 태그가 보이게 하기", "댓글 + 마크 위치 맞추기"]);
+    expect([...view.list()!.querySelectorAll("[data-task-list-name]")].map((node) => node.textContent)).toEqual(["README의 HTML 태그가 보이게 하기", "댓글 + 마크 위치 맞추기"]);
     expect(view.list()!.querySelector("[data-task-list-line]")?.textContent).toBe("README 태그 고치는 중");
-    await act(async () => { view.chip()!.dispatchEvent(new PointerEvent("pointerleave")); vi.advanceTimersByTime(200); });
+    await act(async () => { view.chip()!.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })); vi.advanceTimersByTime(200); });
     expect(view.list()).toBeNull();
     await act(async () => view.chip()!.focus());
     expect(view.list()).not.toBeNull();
@@ -106,7 +106,7 @@ it("opens on the pointer and on focus, closes when both leave, and pins on a pre
     expect(view.list()).toBeNull();
     await act(async () => view.chip()!.click());
     expect(useUiStore.getState().taskListPane).toBe("p1");
-    await act(async () => { view.chip()!.dispatchEvent(new PointerEvent("pointerleave")); vi.advanceTimersByTime(200); });
+    await act(async () => { view.chip()!.dispatchEvent(new MouseEvent("pointerout", { bubbles: true, relatedTarget: document.body })); vi.advanceTimersByTime(200); });
     expect(view.list(), "a pinned list stays when the pointer leaves").not.toBeNull();
     const escape = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
     await act(async () => document.body.dispatchEvent(escape));

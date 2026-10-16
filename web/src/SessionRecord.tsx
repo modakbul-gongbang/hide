@@ -12,7 +12,7 @@ import { formatDateTime } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, sessionPlace, workKey, type Checklist, type ChecklistTask, type TaskState } from "./sessionWork";
+import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, sessionPlace, workKey, type Checklist, type ChecklistTask } from "./sessionWork";
 import { boardProjects } from "./navigation";
 import { cardLine, cardOfPane, cardQuestion, everyAgent, itemToken } from "./overviewTasks";
 import { destinationOf } from "./overviewBacklog";

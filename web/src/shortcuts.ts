@@ -480,6 +480,7 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "split_right",
   "split_down",
   "toggle_zoom",
+  "toggle_task_list",
   "close_pane",
   "text_larger",
   "text_smaller",

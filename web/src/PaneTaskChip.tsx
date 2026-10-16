@@ -149,7 +149,7 @@ function TaskList({ agent, progress, onRecord }: { agent: AgentRow; progress: Wo
             return (
               <li key={task.id} className="flex min-w-0 items-start gap-xs py-xxs" data-task-list-item={task.id}>
                 <span className="mt-xxs flex"><TaskMark state={state} /></span>
-                <span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", state === "done" ? "text-subtle-foreground" : "text-foreground")}>{task.name}</span>
+                <span className={cn("min-w-0 flex-1 whitespace-normal [overflow-wrap:anywhere]", state === "done" ? "text-subtle-foreground" : "text-foreground")} data-task-list-name="true">{task.name}</span>
                 {prs.map((output) => {
                   const look = outputPrState(output.state);
                   return <span key={output.url} role="img" aria-label={`#${output.number} ${t(PR_LOOK[look].word)}`} title={output.title} className="shrink-0"><PrMark state={look} number={output.number} stale={output.stale} /></span>;
