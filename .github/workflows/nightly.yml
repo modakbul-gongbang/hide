@@ -143,10 +143,13 @@ jobs:
     name: verify
     if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
     uses: ./.github/workflows/pr.yml
-    # pr.yml's jobs file a flaky test.
+    # pr.yml's jobs file a flaky test, and its `plan` reads the earlier runs
+    # it may reuse; a called workflow gets no permission its caller does not
+    # grant, and GitHub refuses to start the whole nightly without it.
     permissions:
       contents: read
       issues: write
+      actions: read
   package:
     name: package
     if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
