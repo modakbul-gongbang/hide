@@ -94,7 +94,7 @@ impl AiBackend for GeminiCliBackend {
             .ok_or_else(|| AiError::ProviderUnavailable("gemini_not_installed".to_owned()))?;
         let system = PrivateFile::create(
             "system.md",
-            &system_with_schema(&request.system, &request.output_schema),
+            &system_with_schema(&request.system_prompt(), &request.output_schema),
         )
         .map_err(|error| {
             AiError::ProviderUnavailable(format!("gemini_system_file:{}", error.kind()))

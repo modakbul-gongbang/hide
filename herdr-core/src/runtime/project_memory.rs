@@ -176,6 +176,7 @@ impl Runtime {
             checkout_path: context.checkout_path,
             reader,
             settings: self.ai_active().then(|| self.ai_settings.clone()).flatten(),
+            language: self.output_language(),
             caller_agents,
             branches,
             branch_checkouts,

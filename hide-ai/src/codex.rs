@@ -226,7 +226,7 @@ impl CodexAppServerBackend {
                 "approvalPolicy": "never",
                 "cwd": self.config.cwd,
                 "model": request.model(&self.config.model),
-                "baseInstructions": request.system,
+                "baseInstructions": request.system_prompt(),
             }),
             CONTROL_TIMEOUT,
         )?;

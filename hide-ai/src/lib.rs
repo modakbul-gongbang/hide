@@ -120,6 +120,48 @@ pub struct AiRequest {
     /// Factory's AI). `None` runs it on the operator's Hide AI order.
     #[serde(default)]
     pub pick: Option<AiPick>,
+    /// The language every text a person reads is written in, which
+    /// [`AiRequest::system_prompt`] tells the model; `None` only for an
+    /// answer that is not prose for a person (a Git name). No default: a
+    /// request from a peer that does not send it is refused, so a feature
+    /// cannot forget it silently. serde reads a missing `Option` as `None`
+    /// unless the field names its reader, which is why it does.
+    #[serde(deserialize_with = "Option::<OutputLanguage>::deserialize")]
+    pub output_language: Option<OutputLanguage>,
+}
+
+/// A language Hide writes in for the operator, the interface's four
+/// (docs/LOCALIZATION.md).
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+pub enum OutputLanguage {
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "ko")]
+    Korean,
+    #[serde(rename = "zh-CN")]
+    SimplifiedChinese,
+    #[serde(rename = "ja")]
+    Japanese,
+}
+
+impl OutputLanguage {
+    pub const ALL: [Self; 4] = [
+        Self::English,
+        Self::Korean,
+        Self::SimplifiedChinese,
+        Self::Japanese,
+    ];
+
+    /// The language's English name, as an instruction says it; the
+    /// instructions themselves stay in one language.
+    pub fn english_name(self) -> &'static str {
+        match self {
+            Self::English => "English",
+            Self::Korean => "Korean",
+            Self::SimplifiedChinese => "Simplified Chinese",
+            Self::Japanese => "Japanese",
+        }
+    }
 }
 
 /// One agent, and optionally its model and reasoning effort, chosen by the
@@ -147,6 +189,20 @@ impl AiRequest {
     /// The reasoning effort the caller picked, if any.
     pub fn effort(&self) -> Option<&str> {
         self.pick.as_ref().and_then(|pick| pick.effort.as_deref())
+    }
+
+    /// The system prompt every provider is given: the feature's own, then
+    /// the one sentence naming the language to write in, so no feature's
+    /// prompt names a language of its own.
+    pub fn system_prompt(&self) -> Cow<'_, str> {
+        match self.output_language {
+            None => Cow::Borrowed(&self.system),
+            Some(language) => Cow::Owned(format!(
+                "{}\n\nWrite every text a person reads in {}, whatever language the input is in; keep code, commands, paths, identifiers, names and quoted text exactly as they are.",
+                self.system,
+                language.english_name()
+            )),
+        }
     }
 }
 

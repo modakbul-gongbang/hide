@@ -37,16 +37,6 @@ impl Language {
         }
     }
 
-    /// The language's English name, as a judgment's instructions say it.
-    pub fn english_name(self) -> &'static str {
-        match self {
-            Self::English => "English",
-            Self::Korean => "Korean",
-            Self::SimplifiedChinese => "Simplified Chinese",
-            Self::Japanese => "Japanese",
-        }
-    }
-
     /// The language's own name, as the worker's prompt says it.
     pub fn own_name(self) -> &'static str {
         match self {
@@ -229,15 +219,6 @@ pub fn report_language_rule(language: Language) -> String {
         "- 사람이 읽는 보고(done의 결과·바뀐 것·확인한 것·확인 못 한 것, ask와 block의 질문·제안·기본 행동·선택지, propose와 decide의 내용)는 모두 이 언어로 쓰세요: {} ({})\n",
         language.own_name(),
         language.tag()
-    )
-}
-
-/// The instruction every judgment ends with: what a person reads is in the
-/// operator's language whatever language its input is in.
-pub fn judgment_language_rule(language: Language) -> String {
-    format!(
-        " Write every text a person reads (questions, suggestions, default actions, choices, flags, summaries, warnings, actions, causes, impacts, answers, reasons and card text) in {}, whatever language the input is in; keep code, commands, paths, identifiers and quoted names as they are.",
-        language.english_name()
     )
 }
 

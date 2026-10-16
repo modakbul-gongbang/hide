@@ -20,10 +20,29 @@ use regex::Regex;
 /// Upper bound on the analysis context. This also guards against one
 /// enormous turn while the initial or rolling sections are being assembled.
 pub(crate) const MAX_ANALYSIS_CONTEXT_CHARS: usize = 4_000;
-pub(crate) const MAX_GOAL_CHARS: usize = 30;
-/// The longest `line` kept. Every surface draws it in one line; the prompt
-/// asks for this length and the parser cuts whatever came back.
-pub(crate) const MAX_LINE_CHARS: usize = 40;
+/// The shortest goal that names a result rather than a word.
+pub(crate) const MIN_GOAL_CHARS: usize = 8;
+
+/// How long a goal and a `line` may be in the language they are written in
+/// (PRD ai-output-language D-08): a character of Korean, Chinese or Japanese
+/// says about what two of English do. Every surface draws a line in one
+/// line; the prompt asks for these lengths and the parser cuts whatever
+/// came back.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct LabelLimits {
+    pub(crate) goal: usize,
+    pub(crate) line: usize,
+}
+
+impl LabelLimits {
+    pub(crate) fn of(language: hide_ai::OutputLanguage) -> Self {
+        use hide_ai::OutputLanguage::*;
+        match language {
+            English => Self { goal: 60, line: 80 },
+            Korean | SimplifiedChinese | Japanese => Self { goal: 30, line: 40 },
+        }
+    }
+}
 /// The initial view includes a small head and a bounded tail of human turns.
 pub(crate) const INITIAL_FIRST_USER_TURNS: usize = 3;
 /// How many of the session's latest human turns feed the initial task
@@ -127,21 +146,21 @@ impl AnalysisFailure {
     }
 }
 
-/// Cut a goal to the display budget without splitting a word.
-pub(crate) fn truncate_goal(text: &str) -> String {
-    if text.chars().count() <= MAX_GOAL_CHARS {
+/// Cut a goal to `max` characters without splitting a word.
+pub(crate) fn truncate_goal(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
         return text.to_owned();
     }
-    let budget: String = text.chars().take(MAX_GOAL_CHARS - 1).collect();
+    let budget: String = text.chars().take(max - 1).collect();
     let head = budget
         .rsplit_once(char::is_whitespace)
         .map(|(head, _)| head)
-        .filter(|head| head.chars().count() * 2 >= MAX_GOAL_CHARS)
+        .filter(|head| head.chars().count() * 2 >= max)
         .unwrap_or(&budget);
     format!("{}…", head.trim_end())
 }
 
-pub(crate) fn normalize_goal(raw: &str) -> Option<String> {
+pub(crate) fn normalize_goal(raw: &str, max: usize) -> Option<String> {
     let candidate = raw
         .rsplit("</think>")
         .next()
@@ -149,10 +168,10 @@ pub(crate) fn normalize_goal(raw: &str) -> Option<String> {
         .trim()
         .trim_matches(|character| matches!(character, '`' | '*' | '"' | '#'))
         .trim();
-    if candidate.chars().count() < 8 || candidate.chars().any(char::is_control) {
+    if candidate.chars().count() < MIN_GOAL_CHARS || candidate.chars().any(char::is_control) {
         return None;
     }
-    Some(truncate_goal(candidate))
+    Some(truncate_goal(candidate, max))
 }
 
 /// Normalize a one-line non-title field without silently accepting a
@@ -587,13 +606,16 @@ mod tests {
     #[test]
     fn goal_truncates_on_a_word_boundary_and_rejects_short_or_multiline_titles() {
         assert_eq!(
-            truncate_goal("Refactor the authentication middleware to use JWT tokens"),
+            truncate_goal(
+                "Refactor the authentication middleware to use JWT tokens",
+                30
+            ),
             "Refactor the authentication…"
         );
-        assert_eq!(normalize_goal("짧음"), None);
-        assert_eq!(normalize_goal("two\nlines here ok"), None);
+        assert_eq!(normalize_goal("짧음", 30), None);
+        assert_eq!(normalize_goal("two\nlines here ok", 30), None);
         assert_eq!(
-            normalize_goal("**라벨 생성기 옮기기**").as_deref(),
+            normalize_goal("**라벨 생성기 옮기기**", 30).as_deref(),
             Some("라벨 생성기 옮기기")
         );
     }

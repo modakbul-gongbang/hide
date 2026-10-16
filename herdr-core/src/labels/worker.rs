@@ -158,6 +158,9 @@ pub(crate) struct WorkerConfig {
     pub(crate) lock: LockPlace,
     /// Where the runtime records the operator's submits (D-19).
     pub(crate) input: Arc<OperatorInput>,
+    /// The language labels are asked in when the worker starts; see
+    /// [`LabelWorker::set_language`].
+    pub(crate) language: hide_ai::OutputLanguage,
 }
 
 pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -274,6 +277,10 @@ pub(crate) struct LabelWorker {
     /// rows stand on what they find.
     summaries: bool,
     summaries_on_since: u64,
+    /// The core's output language, which every new request is asked in
+    /// (PRD ai-output-language B1, B2, B10): a device's labels too, whatever
+    /// that machine's own language is.
+    language: hide_ai::OutputLanguage,
 }
 
 impl LabelWorker {
@@ -310,6 +317,7 @@ impl LabelWorker {
             handed_sessions: Default::default(),
             summaries: true,
             summaries_on_since: 0,
+            language: config.language,
         })
     }
 
@@ -701,6 +709,12 @@ impl LabelWorker {
     /// What these labels lay onto a projection; see [`LabelOverlay`].
     pub(crate) fn overlay(&self) -> LabelOverlay {
         LabelOverlay::of_records(&self.records, self.generator.shows(), self.summaries)
+    }
+
+    /// Takes the core's output language for the requests made from now on;
+    /// a label already shown keeps the language it was asked in (D-09).
+    pub(crate) fn set_language(&mut self, language: hide_ai::OutputLanguage) {
+        self.language = language;
     }
 
     /// Takes the operator's agent-summary switch. Off cancels the request
@@ -1419,6 +1433,7 @@ impl LabelWorker {
         );
         let request = context_label::request(
             phase,
+            self.language,
             &format!("{}/{pane_id}", self.target),
             request_id,
             &context,

@@ -171,6 +171,8 @@ pub struct PreparedMemory {
     pub(crate) reader: Option<(String, String)>,
     /// Hide AI's settings while it is on.
     pub(crate) settings: Option<AiSettings>,
+    /// The core's output language, which an `add`'s cards are written in.
+    pub(crate) language: hide_ai::OutputLanguage,
     /// The coordination ids of the live agents in the caller's pane, so only
     /// the agent a promotion started names its file (`placed`).
     pub(crate) caller_agents: Vec<String>,
@@ -455,6 +457,7 @@ impl PreparedMemory {
                     &mut store,
                     self.sessions_node.as_ref(),
                     &router,
+                    self.language,
                     &self.add_source(&identity.id, &root, &session_id, deadline),
                     &group,
                     &CancelToken::new(),
@@ -809,6 +812,7 @@ mod tests {
                 checkout_path: self.root.clone(),
                 reader: Some(("claude".to_owned(), "caller-session".to_owned())),
                 settings: ai.then(AiSettings::default),
+                language: hide_ai::OutputLanguage::English,
                 caller_agents: vec!["agent-9".to_owned()],
                 branches,
                 branch_checkouts,

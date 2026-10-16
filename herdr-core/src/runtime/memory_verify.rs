@@ -130,6 +130,7 @@ pub(super) fn reverify_pending(
     node: &dyn NodeLink,
     facts: &mut CheckoutFacts<'_>,
     router: &AiRouter,
+    language: hide_ai::OutputLanguage,
     project_id: &str,
     root: &str,
     cancel: &CancelToken,
@@ -180,6 +181,7 @@ pub(super) fn reverify_pending(
             &card,
             &answers,
             &files,
+            language,
         )
         .map_err(|error| local(error.to_string()))?;
         let sent_repository = sent_documents(&request, "files", &repository);
@@ -404,6 +406,7 @@ pub(super) fn check_before_suggestion(
     node: &dyn NodeLink,
     facts: &mut CheckoutFacts<'_>,
     router: &AiRouter,
+    language: hide_ai::OutputLanguage,
     project_id: &str,
     root: &str,
     home: Option<&Path>,
@@ -456,6 +459,7 @@ pub(super) fn check_before_suggestion(
             },
             &excerpts(&repository, &words, DOCUMENT_EXCERPT_BYTES),
             &excerpts(&global, &words, GLOBAL_EXCERPT_BYTES),
+            language,
         )
         .map_err(|error| local(error.to_string()))?;
         let sent_repository = sent_documents(&request, "documents", &repository);
@@ -811,7 +815,15 @@ mod tests {
             })
             .collect::<Vec<_>>();
         files.extend(excerpts(&repository, &[], DOCUMENT_EXCERPT_BYTES));
-        let request = verify_request("fixture", "project", &pending, &[], &files).unwrap();
+        let request = verify_request(
+            "fixture",
+            "project",
+            &pending,
+            &[],
+            &files,
+            hide_ai::OutputLanguage::English,
+        )
+        .unwrap();
         let sent = sent_documents(&request, "files", &repository);
         assert!(!sent.is_empty());
         assert!(

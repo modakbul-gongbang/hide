@@ -71,6 +71,7 @@ mod tests {
             deadline: Duration::from_secs(1),
             schema_version: "v1".into(),
             pick: None,
+            output_language: None,
         };
         assert_eq!(
             backend.execute(&request, &CancelToken::new()).unwrap_err(),

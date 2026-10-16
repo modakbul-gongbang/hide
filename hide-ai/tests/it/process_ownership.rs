@@ -75,6 +75,7 @@ fn request(n: usize) -> AiRequest {
         deadline: Duration::from_secs(10),
         schema_version: "process.v1".into(),
         pick: None,
+        output_language: None,
     }
 }
 

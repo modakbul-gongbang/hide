@@ -40,6 +40,7 @@ fn request(deadline: Duration) -> AiRequest {
         deadline,
         schema_version: "fixture.v1".into(),
         pick: None,
+        output_language: None,
     }
 }
 

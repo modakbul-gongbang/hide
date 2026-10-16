@@ -249,12 +249,15 @@ impl Core {
                 serde_json::json!({"kind": "diagnostics.open_failed", "message": error.to_string()})
             );
         }
+        // Before the runtime exists, so the read is never made under its lock.
+        let system_language = crate::runtime::output_language::read_system_language();
         let runtime = Arc::new(Mutex::new(Runtime::new(
             options.clone(),
             environment,
             Arc::clone(&own_node),
             devices,
         )));
+        lock_recover(&runtime).set_system_language(system_language);
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
         lock_recover(&runtime).set_guardrails_own_file(options.account_state_folder);

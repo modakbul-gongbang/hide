@@ -98,12 +98,13 @@ impl LabelServices {
     }
 
     /// The worker for this machine's Herdr server at `socket_path`, reading
-    /// conversations through the core's own node.
+    /// conversations through the core's own node and asking in `language`.
     pub(crate) fn local_worker(
         &self,
         socket_path: &Path,
         node: Arc<dyn NodeLink>,
         wake: Wake,
+        language: hide_ai::OutputLanguage,
     ) -> Result<Option<LabelWorker>, String> {
         if self.home.is_none() {
             return Ok(None);
@@ -121,6 +122,7 @@ impl LabelServices {
                 },
                 input: Arc::clone(&self.input),
                 ledger: Arc::clone(&self.ledger),
+                language,
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
@@ -142,12 +144,14 @@ impl LabelServices {
         }
     }
 
-    /// The worker for a device's Herdr server, reading through its helper.
+    /// The worker for a device's Herdr server, reading through its helper
+    /// and asking in the core's `language`, not the device's.
     pub(crate) fn device_worker(
         &self,
         device_id: &str,
         runtime: Weak<Mutex<Runtime>>,
         wake: Wake,
+        language: hide_ai::OutputLanguage,
     ) -> Result<LabelWorker, String> {
         LabelWorker::spawn(
             WorkerConfig {
@@ -159,6 +163,7 @@ impl LabelServices {
                 },
                 input: Arc::clone(&self.input),
                 ledger: Arc::clone(&self.ledger),
+                language,
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),

@@ -28,6 +28,8 @@ use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 struct Scripted {
     answers: Mutex<VecDeque<Value>>,
     inputs: Mutex<Vec<String>>,
+    /// The language each request was asked in.
+    languages: Mutex<Vec<Option<hide_ai::OutputLanguage>>>,
     calls: AtomicUsize,
     /// How many of the next requests run out of time.
     timeouts: AtomicUsize,
@@ -41,6 +43,7 @@ impl Scripted {
         Arc::new(Self {
             answers: Mutex::new(VecDeque::new()),
             inputs: Mutex::new(Vec::new()),
+            languages: Mutex::new(Vec::new()),
             calls: AtomicUsize::new(0),
             timeouts: AtomicUsize::new(0),
             held: Mutex::new(false),
@@ -100,6 +103,7 @@ impl AiBackend for Scripted {
     }
     fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
         self.inputs.lock().unwrap().push(request.input.clone());
+        self.languages.lock().unwrap().push(request.output_language);
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self
             .timeouts
@@ -257,6 +261,7 @@ impl Harness {
                 },
                 input: Arc::clone(&self.input),
                 ledger,
+                language: hide_ai::OutputLanguage::Korean,
             },
             store,
             Arc::clone(&self.analyzer),
@@ -1038,7 +1043,7 @@ fn a_null_goal_is_valid_but_an_absent_or_invalid_goal_is_not() {
             answer["work"] =
                 json!({"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null});
         }
-        let parsed = parse(phase, answer.clone()).unwrap();
+        let parsed = parse(phase, hide_ai::OutputLanguage::Korean, answer.clone()).unwrap();
         assert_eq!(parsed.goal, None);
         assert_eq!(parsed.line, "");
         assert_eq!(
@@ -1049,21 +1054,28 @@ fn a_null_goal_is_valid_but_an_absent_or_invalid_goal_is_not() {
                 LabelEnd::Done
             }
         );
-        let schema = request(phase, "pane", "null-goal".into(), "context").output_schema;
+        let schema = request(
+            phase,
+            hide_ai::OutputLanguage::Korean,
+            "pane",
+            "null-goal".into(),
+            "context",
+        )
+        .output_schema;
         assert_eq!(
             schema["properties"]["goal"]["type"],
             json!(["string", "null"])
         );
         answer["goal_changed"] = json!(true);
-        assert!(parse(phase, answer.clone()).is_err());
+        assert!(parse(phase, hide_ai::OutputLanguage::Korean, answer.clone()).is_err());
         answer["goal_changed"] = json!(false);
         for invalid in [json!(""), json!("짧음"), json!(42)] {
             answer["goal"] = invalid;
-            assert!(parse(phase, answer.clone()).is_err());
+            assert!(parse(phase, hide_ai::OutputLanguage::Korean, answer.clone()).is_err());
         }
         answer.as_object_mut().unwrap().remove("goal");
         assert!(
-            parse(phase, answer).is_err(),
+            parse(phase, hide_ai::OutputLanguage::Korean, answer).is_err(),
             "null is explicit, not a missing field"
         );
     }
@@ -1221,7 +1233,13 @@ fn the_providers_answer_is_judged_before_it_is_shown() {
 fn each_turn_boundary_is_asked_only_what_it_can_know() {
     use super::analysis::{AnalysisPhase, LabelEnd};
     use super::context_label::{parse_text, request};
-    let start = request(AnalysisPhase::TurnStart, "pane", "r1".to_owned(), "context");
+    let start = request(
+        AnalysisPhase::TurnStart,
+        hide_ai::OutputLanguage::Korean,
+        "pane",
+        "r1".to_owned(),
+        "context",
+    );
     assert_eq!(start.output_schema["properties"].get("end"), None);
     assert!(
         !start.output_schema["required"]
@@ -1244,7 +1262,13 @@ fn each_turn_boundary_is_asked_only_what_it_can_know() {
         "a turn's start does not judge how a turn ended"
     );
 
-    let end = request(AnalysisPhase::TurnEnd, "pane", "r2".to_owned(), "context");
+    let end = request(
+        AnalysisPhase::TurnEnd,
+        hide_ai::OutputLanguage::Korean,
+        "pane",
+        "r2".to_owned(),
+        "context",
+    );
     assert_eq!(
         end.output_schema["properties"]["end"]["enum"],
         json!(["question", "blocked", "waiting", "unfinished", "done"])
@@ -1273,11 +1297,94 @@ fn each_turn_boundary_is_asked_only_what_it_can_know() {
 fn turn_end_asks_only_for_work_outside_the_assigned_task() {
     use super::analysis::AnalysisPhase;
     use super::context_label::request;
-    let end = request(AnalysisPhase::TurnEnd, "pane", "r1".to_owned(), "context");
+    let end = request(
+        AnalysisPhase::TurnEnd,
+        hide_ai::OutputLanguage::Korean,
+        "pane",
+        "r1".to_owned(),
+        "context",
+    );
     assert_eq!(
         end.output_schema["properties"]["work"]["properties"]["missed"]["items"]["properties"]["kind"]
             ["enum"],
         json!(["problem", "follow_up"])
+    );
+}
+
+/// A label prompt names no language: the request carries it, and the
+/// lengths it asks for and keeps are that language's (PRD
+/// ai-output-language B1, B2, B9, B13).
+#[test]
+fn a_label_request_carries_its_language_and_that_languages_lengths() {
+    use super::analysis::AnalysisPhase;
+    use super::context_label::{parse, request};
+    use hide_ai::OutputLanguage;
+    for language in OutputLanguage::ALL {
+        let (goal, line) = if language == OutputLanguage::English {
+            (60, 80)
+        } else {
+            (30, 40)
+        };
+        for phase in [AnalysisPhase::TurnStart, AnalysisPhase::TurnEnd] {
+            let asked = request(phase, language, "pane", "r".to_owned(), "context");
+            assert_eq!(asked.output_language, Some(language));
+            assert_eq!(asked.output_schema["properties"]["goal"]["maxLength"], goal);
+            assert!(asked.system.contains(&format!("8 to {goal} characters")));
+            assert!(
+                asked
+                    .system
+                    .contains(&format!("line is one line of at most {line} characters"))
+            );
+            for name in ["English", "Korean", "Chinese", "Japanese"] {
+                assert!(
+                    !asked.system.contains(name),
+                    "{language:?} prompt names {name}"
+                );
+            }
+            assert!(!asked.system.chars().any(|c| ('가'..='힣').contains(&c)));
+        }
+        let mut answer = json!({
+            "goal": "w".repeat(goal + 5),
+            "goal_changed": true,
+            "line": "l".repeat(line + 5),
+        });
+        let parsed = parse(AnalysisPhase::TurnStart, language, answer.clone()).unwrap();
+        assert_eq!(parsed.goal.unwrap().chars().count(), goal);
+        assert_eq!(parsed.line.chars().count(), line);
+        answer["goal"] = json!("w".repeat(goal));
+        let parsed = parse(AnalysisPhase::TurnStart, language, answer).unwrap();
+        assert_eq!(parsed.goal.unwrap(), "w".repeat(goal));
+    }
+}
+
+/// B8, B10: each request is asked in the core's language as it stands when
+/// the request is made, a device pane's too, whatever the language the
+/// worker started with.
+#[test]
+fn a_label_is_asked_in_the_language_the_core_names_now() {
+    let harness = Harness::new();
+    let path = harness.session(
+        "device",
+        "native-d",
+        &[("user", "Run the batch on the mini"), ("assistant", "Done")],
+    );
+    harness
+        .backend
+        .answer("Mini batch run finished", "done", "");
+    let helper: Arc<dyn crate::node_access::NodeLink> =
+        Arc::new(HelperAt(harness.home.path().to_path_buf()));
+    let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
+    worker.set_language(hide_ai::OutputLanguage::English);
+    let idle = agent(&path, "idle", 1);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("Mini batch run finished")
+    );
+    assert_eq!(
+        *harness.backend.languages.lock().unwrap(),
+        vec![Some(hide_ai::OutputLanguage::English)]
     );
 }
 

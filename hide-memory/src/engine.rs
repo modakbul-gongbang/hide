@@ -1,4 +1,4 @@
-use hide_ai::{AiRequest, RequestId};
+use hide_ai::{AiRequest, OutputLanguage, RequestId};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::fmt::{Display, Formatter};
@@ -31,12 +31,12 @@ Keep:
 - decision: the operator's product principle or boundary that later work must respect, or a choice between real alternatives whose reason no repository file records. How one piece of work was designed or built is not a decision: its pull request records it.
 - fact: a durable fact about the environment or the operator's setup that cannot be read from the repository.
 Never keep: how a feature was designed or built in this session, progress, status or what is waiting on what, plans and next steps, the course of a debugging session, one-off errors, who was asked to do what, a run, pane, branch, issue or pull request identifier that will stop mattering, a command or path that exists only in this session, anything a parent_agent or assistant said that the operator did not say, and anything the files that instruct agents already say.
-Each card stands alone: one subject, written so an agent who never saw this conversation can act on it, in the language of its source, a few sentences at most, and without session-local names. Related cards stay separate; fold two into one only when one restates the other.
+Each card stands alone: one subject, written so an agent who never saw this conversation can act on it, a few sentences at most, and without session-local names. Related cards stay separate; fold two into one only when one restates the other.
 
 ## Fields
 - text: the card.
 - title: one line under 60 characters naming the subject.
-- aliases: 3 to 8 other words a later prompt might use for the subject, in both Korean and English: synonyms, the tool, command or file involved, the Korean term for an English one and the reverse. Single words or two-word phrases.
+- aliases: 3 to 8 other words a later prompt might use for the subject: synonyms, the tool, command or file involved, and the English word for each one that is not English, so a search in either language finds the card. Single words or two-word phrases.
 - kind: rule, decision, lesson, fact or preference.
 - confidence: how certain the source makes the card, 0 to 1. salience: how much it should shape later work, 0 to 1.
 - source_offsets: the offsets of the new_events the card comes from. A rule needs at least one "human" offset.
@@ -106,6 +106,7 @@ impl HideNativeAnalyzer {
         session_id: &str,
         normalized_events_json: &str,
         similar: &[ComparisonCard],
+        language: OutputLanguage,
     ) -> Result<AiRequest, HideNativeOutputError> {
         let events = redact(normalized_events_json);
         // Stored Memory is provider-bound input too. Re-run the current local
@@ -152,6 +153,7 @@ impl HideNativeAnalyzer {
             deadline: Duration::from_secs(45),
             schema_version: SCHEMA_VERSION.into(),
             pick: None,
+            output_language: Some(language),
         })
     }
 
@@ -408,9 +410,14 @@ mod tests {
     #[test]
     fn the_system_prompt_is_hides_own_and_within_its_cap() {
         let request = HideNativeAnalyzer
-            .request("r1", "project:1", "s1", "[]", &[])
+            .request("r1", "project:1", "s1", "[]", &[], OutputLanguage::Japanese)
             .unwrap();
         assert_eq!(request.feature_id, "project_memory");
+        // The card's language is the request's, never one the prompt names.
+        assert_eq!(request.output_language, Some(OutputLanguage::Japanese));
+        for name in ["Korean", "Japanese", "Chinese", "language of its source"] {
+            assert!(!request.system.contains(name), "{name}");
+        }
         assert_eq!(request.schema_version, SCHEMA_VERSION);
         assert!(request.system.len() <= SYSTEM_PROMPT_LIMIT_BYTES);
         assert!(
@@ -429,7 +436,14 @@ mod tests {
         let mut secret = card(7, "memory:7");
         secret.body = "api_key=super-secret-egress-value".to_owned();
         let request = HideNativeAnalyzer
-            .request("r1", "project:1", "s1", "[]", &[secret])
+            .request(
+                "r1",
+                "project:1",
+                "s1",
+                "[]",
+                &[secret],
+                OutputLanguage::Korean,
+            )
             .unwrap();
         let input: Value = serde_json::from_str(&request.input).unwrap();
         let similar = &input["similar_memories"];

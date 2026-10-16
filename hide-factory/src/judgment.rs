@@ -12,7 +12,7 @@ use crate::model::{
     Card, ChoiceOutcome, CriterionState, CriterionVerdict, DecisionKind, FactoryAi,
     ObserverProposal, RecoveryAction, SplitPiece, WorkerPick,
 };
-use crate::words::{self, Language};
+use crate::words::Language;
 
 pub const INTAKE_REVIEW: &str = "factory_intake_review";
 pub const DRIFT: &str = "factory_drift";
@@ -208,9 +208,10 @@ impl Judgment {
         }
     }
 
-    /// The instructions, ending with the operator's language.
-    pub fn system(&self) -> String {
-        let base = match self.input {
+    /// The instructions. They name no language: the request carries
+    /// `language`, and Hide AI asks the model to write in it.
+    pub fn system(&self) -> &'static str {
+        match self.input {
             JudgmentInput::IntakeReview { .. } => INTAKE_SYSTEM,
             JudgmentInput::Drift { .. } => DRIFT_SYSTEM,
             JudgmentInput::Watch { .. } => WATCH_SYSTEM,
@@ -219,8 +220,7 @@ impl Judgment {
             JudgmentInput::ObserverClassify { .. } => CLASSIFY_SYSTEM,
             JudgmentInput::ObserverDiagnose { .. } => DIAGNOSE_SYSTEM,
             JudgmentInput::ObserverMerge { .. } => MERGE_SYSTEM,
-        };
-        format!("{base}{}", words::judgment_language_rule(self.language))
+        }
     }
 
     pub fn schema(&self) -> Value {
@@ -1129,7 +1129,7 @@ mod tests {
     }
 
     #[test]
-    fn every_judgment_writes_for_a_person_in_the_language_it_carries_and_no_other() {
+    fn no_judgment_instruction_names_a_language_of_its_own() {
         let card = Card::default();
         let inputs = [
             JudgmentInput::IntakeReview {
@@ -1183,32 +1183,26 @@ mod tests {
             },
         ];
         for input in inputs {
-            for language in Language::ALL {
-                let system = Judgment {
-                    id: String::new(),
-                    factory: String::new(),
-                    task: None,
-                    priority: Priority::Factory,
-                    input: input.clone(),
-                    ai: None,
-                    language,
-                }
-                .system();
-                for other in Language::ALL.into_iter().filter(|other| *other != language) {
-                    assert!(
-                        !system.contains(other.english_name()),
-                        "{language:?} judgment names {other:?}: {system}"
-                    );
-                }
+            let system = Judgment {
+                id: String::new(),
+                factory: String::new(),
+                task: None,
+                priority: Priority::Factory,
+                input,
+                ai: None,
+                language: Language::Korean,
+            }
+            .system();
+            for name in ["English", "Korean", "Chinese", "Japanese"] {
                 assert!(
-                    system.contains(&format!("in {},", language.english_name())),
-                    "{system}"
-                );
-                assert!(
-                    !system.chars().any(|c| ('가'..='힣').contains(&c)),
-                    "the instructions themselves are in one language: {system}"
+                    !system.contains(name),
+                    "the judgment names {name}: {system}"
                 );
             }
+            assert!(
+                !system.chars().any(|c| ('가'..='힣').contains(&c)),
+                "the instructions themselves are in one language: {system}"
+            );
         }
     }
 

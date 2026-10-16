@@ -1167,6 +1167,7 @@ impl Runtime {
         };
         self.pr_summaries_asked.insert(asked);
         let (node, gate, usage) = (self.own_node(), self.usage_gate(), self.ai_usage());
+        let language = self.output_language();
         let subject = format!("{workspace_id}#{number}");
         let (answered, asked_head) = (workspace_id.to_owned(), head.clone());
         let head_for_failure = head.clone();
@@ -1174,7 +1175,7 @@ impl Runtime {
             "pr-summary",
             move || {
                 crate::ai::summarize_pull_request(
-                    &node, &settings, &gate, &usage, &subject, &head, &input,
+                    &node, &settings, &gate, &usage, &subject, &head, &input, language,
                 )
             },
             move |runtime, answer| {

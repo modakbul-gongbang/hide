@@ -171,7 +171,7 @@ impl AiBackend for PiCliBackend {
                 binary: &binary,
                 args: &Self::print_arguments(
                     request.model(&self.config.model),
-                    &request.system,
+                    &request.system_prompt(),
                     &request.output_schema,
                 ),
                 cwd: &self.config.cwd,
