@@ -110,3 +110,35 @@ export function dedent(text: string, firstLinePartial = false): string {
     })
     .join("\n");
 }
+
+/**
+ * How far the viewport's rows moved under a selection. `selected` is the
+ * text of the selection's rows (trailing whitespace trimmed) when it was
+ * made, `first` the screen row of the first, `screen` every row's text now,
+ * `expected` the shift the wheel asked for (positive moves text down). The
+ * answer is the shift whose rows still on screen all read as they did,
+ * nearest `expected` first, so blank or repeated rows resolve to the shift
+ * the wheel asked for; null when no row of the selection is on screen any
+ * more or none of the shifts reads the same.
+ */
+export function followScroll(selected: string[], first: number, screen: string[], expected: number): number | null {
+  const reach = screen.length + selected.length;
+  const shifts: number[] = [];
+  for (let shift = -reach; shift <= reach; shift += 1) shifts.push(shift);
+  shifts.sort((a, b) => Math.abs(a - expected) - Math.abs(b - expected) || Math.abs(a) - Math.abs(b));
+  for (const shift of shifts) {
+    let overlap = 0;
+    let same = true;
+    for (const [index, text] of selected.entries()) {
+      const row = first + shift + index;
+      if (row < 0 || row >= screen.length) continue;
+      overlap += 1;
+      if (screen[row] !== text) {
+        same = false;
+        break;
+      }
+    }
+    if (same && overlap > 0) return shift;
+  }
+  return null;
+}

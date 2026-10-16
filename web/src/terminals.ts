@@ -30,7 +30,7 @@ import { noteWriteComplete, probeEnabled } from "./probe";
 import { loadTerminalRenderer } from "./terminalRenderer";
 import { remoteControl, remoteTargetOfPane } from "./remote";
 import { keyPayload, noteTerminalFocus } from "./keyTarget";
-import { bufferRow, selectionToText, type CellRow } from "./selection";
+import { bufferRow, followScroll, selectionToText, type CellRow } from "./selection";
 import { osc8Handler, registerTerminalLinks, terminalLinkAtCell, terminalPathOwner, type LinkState, type TerminalContextLink, type TerminalLinkActions } from "./terminalLinkProvider";
 import { isHtmlFile } from "./browserViews";
 import { pointerModifiers, wheelRows } from "./wheel";
@@ -60,6 +60,11 @@ type Instance = {
   grid: { cols: number; rows: number } | null;
   /** Wheel rows accumulated toward the next flush, and the pending flush. */
   wheel: { rows: number; remainder: number; column: number; row: number; modifiers: number; frame: number | null };
+  /**
+   * The selection a wheel scrolled and the text it covered, until the frame
+   * that moved that text under it has been found; null when none waits.
+   */
+  follow: FollowedSelection | null;
   /** The cell of a primary press that may still become a click, or null once it dragged or was not one. */
   press: { column: number; row: number } | null;
   /**
@@ -71,6 +76,15 @@ type Instance = {
   /** Keys the custom handler took that wait behind such a send, in order. */
   keysWaiting: number;
   disposeHandlers: () => void;
+};
+
+/** A selection as it stood when the wheel scrolled, with the rows it covered. */
+type FollowedSelection = {
+  start: { x: number; y: number };
+  end: { x: number; y: number };
+  rows: string[];
+  /** The shift of the text the wheel asked for, rows, positive moving it down. */
+  expected: number;
 };
 
 const instances = new Map<string, Instance>();
@@ -150,9 +164,12 @@ export function feedChunks(chunks: TerminalChunk[]) {
     if (!bytes) continue;
     if (probeEnabled()) {
       const term = instance.term;
-      term.write(bytes, () => noteWriteComplete(term));
+      term.write(bytes, () => {
+        followSelection(instance);
+        noteWriteComplete(term);
+      });
     } else {
-      instance.term.write(bytes);
+      instance.term.write(bytes, instance.follow ? () => followSelection(instance) : undefined);
     }
   }
 }
@@ -305,12 +322,79 @@ export function setTextScale(paneId: string, scale: number) {
   sendGrid(paneId, instance, false);
 }
 
+function screenRows(term: Terminal): string[] {
+  const buffer = term.buffer.active;
+  const rows: string[] = [];
+  for (let y = 0; y < term.rows; y += 1) rows.push(buffer.getLine(y)?.translateToString(true) ?? "");
+  return rows;
+}
+
+/**
+ * The pane has no local scrollback: Herdr redraws its viewport in place, so
+ * xterm keeps the selection on the same screen cells while the text under it
+ * moves. A wheel remembers what the selection covers, and the frame that
+ * answers it moves the selection to where that text went, or to the part
+ * still on screen; a selection whose text left the screen is cleared rather
+ * than left on other text.
+ */
+function armFollow(instance: Instance, rows: number) {
+  const { term } = instance;
+  const range = term.getSelectionPosition();
+  if (!range) {
+    instance.follow = null;
+    return;
+  }
+  const known = instance.follow;
+  const same = known && known.start.x === range.start.x && known.start.y === range.start.y && known.end.x === range.end.x && known.end.y === range.end.y;
+  const shift = rows > 0 ? -Math.abs(rows) : Math.abs(rows);
+  if (same) {
+    known.expected += shift;
+    return;
+  }
+  const screen = screenRows(term);
+  instance.follow = {
+    start: { ...range.start },
+    end: { ...range.end },
+    rows: screen.slice(range.start.y, range.end.y + 1),
+    expected: shift,
+  };
+}
+
+/** Runs after a frame is drawn: moves a waiting selection onto the text it covered. */
+function followSelection(instance: Instance) {
+  const follow = instance.follow;
+  if (!follow) return;
+  const { term } = instance;
+  const range = term.getSelectionPosition();
+  // Cleared, replaced by a drag, or moved by xterm itself: nothing to follow.
+  if (!range || range.start.x !== follow.start.x || range.start.y !== follow.start.y || range.end.x !== follow.end.x || range.end.y !== follow.end.y) {
+    instance.follow = null;
+    return;
+  }
+  const screen = screenRows(term);
+  if (follow.rows.every((text, index) => screen[follow.start.y + index] === text)) return;
+  instance.follow = null;
+  const shift = followScroll(follow.rows, follow.start.y, screen, follow.expected);
+  if (shift === null) {
+    term.clearSelection();
+    return;
+  }
+  const first = follow.start.y + shift;
+  const last = follow.end.y + shift;
+  const top = Math.max(first, 0);
+  const bottom = Math.min(last, term.rows - 1);
+  const startX = first < 0 ? 0 : follow.start.x;
+  const endX = last > term.rows - 1 ? term.cols : follow.end.x;
+  term.select(startX, top, (bottom - top) * term.cols + endX - startX);
+}
+
 function flushWheel(paneId: string, instance: Instance) {
   const wheel = instance.wheel;
   wheel.frame = null;
   const rows = wheel.rows;
   wheel.rows = 0;
   if (rows === 0) return;
+  armFollow(instance, rows);
   instance.dispatch({
     schema_version: 2,
     kind: "terminal_scroll",
@@ -542,6 +626,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     stale: false,
     grid: null,
     wheel: { rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
+    follow: null,
     press: null,
     commitPending: false,
     keysWaiting: 0,

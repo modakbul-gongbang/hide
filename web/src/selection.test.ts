@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dedent, rowContinues, selectionToText, type CellRow } from "./selection";
+import { dedent, followScroll, rowContinues, selectionToText, type CellRow } from "./selection";
 
 /** A row of `width` cells holding `text`, padded with written spaces the way a Herdr frame draws it. */
 function row(text: string, width: number): CellRow {
@@ -73,5 +73,33 @@ describe("selectionToText", () => {
     const rows: CellRow = ["a", "", "b", "", ""];
     expect(selectionToText([rows], 0, 5)).toBe("a b");
     expect(rowContinues(rows)).toBe(false);
+  });
+});
+
+describe("followScroll", () => {
+  const screen = ["a", "b", "c", "d", "e", "f"];
+
+  it("finds the rows where the wheel moved the text", () => {
+    // The text scrolled up by two rows: what was rows 3-4 is now rows 1-2.
+    expect(followScroll(["d", "e"], 3, screen.slice(2).concat(["x", "y"]), -2)).toBe(-2);
+    // It scrolled down by one row.
+    expect(followScroll(["b", "c"], 1, ["z"].concat(screen.slice(0, 5)), 1)).toBe(1);
+  });
+
+  it("finds a shift smaller than the wheel asked for at the end of the history", () => {
+    expect(followScroll(["d", "e"], 3, screen.slice(1).concat(["x"]), -5)).toBe(-1);
+  });
+
+  it("reads blank rows as the shift the wheel asked for", () => {
+    expect(followScroll(["", ""], 2, ["a", "", "", "", "", ""], 1)).toBe(1);
+  });
+
+  it("keeps the part of the selection still on screen", () => {
+    // The first row left the top; the second is now row 0.
+    expect(followScroll(["a", "b"], 0, ["b", "c", "d", "e", "f", "g"], -1)).toBe(-1);
+  });
+
+  it("gives up when the text is no longer on screen", () => {
+    expect(followScroll(["a", "b"], 0, ["m", "n", "o", "p", "q", "r"], 3)).toBeNull();
   });
 });
