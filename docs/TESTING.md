@@ -363,6 +363,7 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | `pr.yml`, `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), the Herdr pin and schema and any contract `READERS` does not name, any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane but `package`, which only the package inputs add |
 
 Every plan includes `policy`, whatever else it names, except a draft pull request's: it plans no lane, and `verify` fails with "draft: lanes not run, mark ready for review".
+A body edit (`edited`) starts a run too, for the checks that read the body (`check-pr-screenshots.py`); it waits for a run in progress rather than cancelling it, and with the last green run standing it plans `policy` alone.
 Marking the pull request ready (`ready_for_review`) starts the run that plans and runs the lanes, and that run's `verify` replaces the failed one.
 `verify` fails on a draft instead of being skipped because a skipped required check counts as passed, and `verify` is not started until its lanes finish: a skipped `verify` from the draft run would otherwise be the only check on the commit for the minutes after it is marked ready.
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
