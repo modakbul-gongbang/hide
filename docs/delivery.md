@@ -326,7 +326,6 @@ A normal reply closes the request's answer wait and leaves the watch active.
 A done target remains watched until exit, explicit stop or a completion report.
 The first receipt, an acknowledgement or the actual post-flush confirmation, records `hook_confirmed: true` and ends a matching sender-parent watch for `hide request send --kind report`; a confirmation still does after cancellation or the delivery deadline, and replay after restart preserves a watch explicitly started after that receipt.
 A `progress` letter is received the same way and ends no watch: it is the interim report, such as a plan, and the child is still at work after it.
-Before it existed (2026-10-16) a child that sent its plan as a report ended its parent's watch at the first letter, so a blocked prompt two hours later warned no one.
 A report from an unwatched sender is an ordinary letter; the parent can restart a watch explicitly.
 
 ## The code-owned recipient `factory:<id>`
