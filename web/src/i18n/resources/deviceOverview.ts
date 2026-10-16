@@ -21,7 +21,6 @@ const words = {
   "overviewTasks.cleanup": ["To clean up {{count}}", "정리할 것 {{count}}", "整理するもの {{count}}", "待清理 {{count}}"],
   "overviewTasks.fold": ["Fold", "접기", "折りたたむ", "收起"],
   "overviewTasks.children": ["{{count}} children", "자식 {{count}}", "子 {{count}}", "子 {{count}}"],
-  "overviewTasks.stage": ["Work → PR → Review → Merge, {{stage}} of 4", "작업 → PR → 검토 → 머지, 4칸 중 {{stage}}", "作業 → PR → レビュー → マージ、4段階中 {{stage}}", "工作 → PR → 审查 → 合并，第 {{stage}}/4 步"],
   "overviewTasks.state.needs_you": ["Asking", "묻는 중", "質問中", "提问中"],
   "overviewTasks.state.blocked": ["Blocked", "막힘", "ブロック中", "受阻"],
   "overviewTasks.state.working": ["Working", "일하는 중", "作業中", "进行中"],
