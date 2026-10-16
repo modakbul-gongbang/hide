@@ -431,7 +431,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 A pane header is a quiet identity row: the ancestor path, the status mark, the agent's logo, title, the fork mark, the letters-waiting pill, the task chip, the PR mark, the Not connected chip, and the retained overflow, zoom and close controls at the right end.
 The task chip (PRD task-split-checklist D-05, D-06) is a checklist icon and `<done>/<tasks>` in figures, drawn from the pane session's first task (`0/1`) and never for a session with no task, whatever children it has, a plain shell, or with Agent summaries off; it carries no child count, and the second row with the child badge does not move it.
 The pointer on the chip or the keyboard's focus on it opens the checklist below the header, which never covers the header it belongs to and stays inside the window at narrow widths: `시킨 일 <done>/<total>`, each task's state mark and name (Korean wrapping between words) with a split request's PR marks once on its first task, `자식 일 <done>/<children>` with one segment per direct child (done green, working blue, the rest grey) or the plain `자식 N` while a child has no judgment, the agent's current line, and `기록 열기` with the chord, which opens the session record on the same task list.
-Leaving the chip and the list, or blurring the chip, closes it; a press on the chip or Show task list (⇧⌘L, Alt+Shift+L on Windows and Linux, remappable) pins the focused pane's list, and a second press, the chord again or Esc closes it; Esc on a pinned list stops there, so an agent CLI in the focused terminal is not interrupted, and opening the list never takes the keyboard from the terminal (`web/src/PaneTaskChip.tsx`).
+Leaving the chip and the list, or blurring the chip, closes it; a press on the chip or Show task list (⇧⌘U, Alt+Shift+U on Windows and Linux, remappable) pins the focused pane's list, and a second press, the chord again or Esc closes it; Esc on a pinned list stops there, so an agent CLI in the focused terminal is not interrupted, and opening the list never takes the keyboard from the terminal (`web/src/PaneTaskChip.tsx`).
 The chip, the list and the record follow the ledger in the same snapshot burst, and a chip whose count did not change is not redrawn.
 A plain shell keeps its terminal mark.
 On an agent pane whose session Hide knows, the status mark, the logo and the title are one button: under the pointer they light together with the hint `세션 기록 보기`, and a press shows that session's record in the lane's 보기 slot ([The 보기 slot](#the-보기-slot)), opening the lane when it is closed or put away, while the keyboard and the input cursor stay in the pane's terminal (PRD overview-device-tasks B22, sidebar-task-lens B15); the Overview's `lane에서 보기` lands the same way.
@@ -2433,7 +2433,7 @@ The sheet carries no row or explanation for a command the removed native app alo
 | Split right | `⌘D` | `Ctrl+Shift+D` | `⌘D` | `Ctrl+Shift+D` |
 | Split down | `⇧⌘D` | `Alt+Shift+D` | `⇧⌘D` | `Alt+Shift+D` |
 | Zoom pane | `⇧⌘↩` | `Alt+Shift+Enter` | `⇧⌘↩` | `Alt+Shift+Enter` |
-| Show task list | `⇧⌘L` | `Alt+Shift+L` | `⇧⌘L` | `Alt+Shift+L` |
+| Show task list | `⇧⌘U` | `Alt+Shift+U` | `⇧⌘U` | `Alt+Shift+U` |
 | Close pane | `⇧⌘W` | `Alt+Shift+W` | `⌥⇧W` | `Alt+Shift+W` |
 | Larger text (exception) | `⌘=` | `Ctrl+=` | `⌘=` | `Ctrl+=` |
 | Smaller text (exception) | `⌘-` | `Ctrl+-` | `⌘-` | `Ctrl+-` |

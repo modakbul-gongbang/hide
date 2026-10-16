@@ -271,7 +271,7 @@ type UiStore = {
   workspaceDialog: WorkspaceDialog | null;
   /** The record's `내 말 보기` button is pressed: the operator's own words show under their tasks. Kept while the app runs, never stored. */
   sessionRecordWords: boolean;
-  /** The pane whose task checklist is pinned open by its chip or ⇧⌘L (PRD task-split-checklist D-06). */
+  /** The pane whose task checklist is pinned open by its chip or ⇧⌘U (PRD task-split-checklist D-06). */
   taskListPane: string | null;
   /**
    * The task and removal this page started, so their later answers (an agent

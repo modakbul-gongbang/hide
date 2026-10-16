@@ -92,7 +92,7 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
   }
   // The task chip and its checklist (PRD task-split-checklist B9-B14): a chip
   // from one task, none without a task or with Agent summaries off, and the
-  // list the pointer, the keyboard's focus or ⇧⌘L opens under it.
+  // list the pointer, the keyboard's focus or ⇧⌘U opens under it.
   function taskBoard(suffix) {
     const id=`tsc-ph-board-${suffix}`;
     const labeled = (key, label, children) => frame(`${id}-sec-${key}`, label, {width:'fill_container',layout:'vertical',gap:8}, [caption(`${id}-sec-${key}-label`, label, '$--subtle-foreground', {weight:'600'}), ...children]);
@@ -117,14 +117,14 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       ]),
       frame(`${id}-pop-foot`, 'Open record', {width:'fill_container',layout:'horizontal',alignItems:'center',padding:['$--spacing-xs','$--spacing-sm'],stroke:'$--border',strokeWidth:{top:1},strokeAlignment:'inner'}, [
         caption(`${id}-pop-open`, '기록 열기', '$--foreground', {width:'fill_container'}),
-        frame(`${id}-pop-kbd`, 'Shortcut', {height:18,layout:'horizontal',alignItems:'center',padding:[0,5],cornerRadius:'$--radius-xs',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner'}, [text(`${id}-pop-kbd-t`, '⇧⌘L', {size:'$--text-micro',fill:'$--subtle-foreground'})]),
+        frame(`${id}-pop-kbd`, 'Shortcut', {height:18,layout:'horizontal',alignItems:'center',padding:[0,5],cornerRadius:'$--radius-xs',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner'}, [text(`${id}-pop-kbd-t`, '⇧⌘U', {size:'$--text-micro',fill:'$--subtle-foreground'})]),
       ]),
     ]);
     return frame(id,'Pane task chip states',{width:761,layout:'vertical',gap:20,padding:[0,0,24,0],fill:'$--background'},[
       labeled('one','One task: the chip alone, done over tasks',[pane(`${id}-one`,{provider:'codex',title:'README 번역 정리',tasks:{count:'0/1'}})]),
       labeled('split','A request split into four, with a PR and children: the chip counts tasks only; the children keep their own row',[pane(`${id}-split`,{mark:'●',provider:'claude',title:'Pre-launch bugfix pass for File views',tasks:{count:'0/4'},pr:{number:1233,state:'mergeable'},children:5,counts:{working:1,result:4},summary:'파일 페이지 댓글 기능 구현 · 작업 중'})]),
       labeled('none','No task, or Agent summaries off: no chip',[pane(`${id}-none`,{title:'아침 점검 위임',children:2,counts:{working:2},summary:'두 자식이 점검하는 중'})]),
-      labeled('open','The list under the chip: tasks with the request\'s PR once, children\'s progress, the current line and 기록 열기 (⇧⌘L pins it, Esc closes a pinned list)',[
+      labeled('open','The list under the chip: tasks with the request\'s PR once, children\'s progress, the current line and 기록 열기 (⇧⌘U pins it, Esc closes a pinned list)',[
         pane(`${id}-open`,{mark:'●',provider:'claude',title:'Pre-launch bugfix pass for File views',tasks:{count:'0/4',open:true},pr:{number:1233,state:'mergeable'},terminal:'● 머지 가능한 건 바로 머지했어요.'}),
         list,
       ]),

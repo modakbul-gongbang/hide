@@ -34,6 +34,26 @@ function originalRepository(stateDir: string, session: string) {
   finally { db.close(); }
 }
 
+/**
+ * Show task list pins the focused pane's checklist and the chord again closes
+ * it; a press on the chip pins it and a second press closes it under the
+ * pointer (PRD task-split-checklist B12, D-06).
+ */
+async function pinAndClose(page: import("@playwright/test").Page, pane: string, names: string[]) {
+  const chip = page.locator(`[data-pane-task-chip="${pane}"]`);
+  const list = page.locator(`[data-pane-task-list="${pane}"]`);
+  await page.locator(`[data-pane-view="${pane}"] .xterm-helper-textarea`).focus();
+  await page.keyboard.press(chord("toggle_task_list"));
+  await expect(list.locator("[data-task-list-name]")).toHaveText(names);
+  await page.keyboard.press(chord("toggle_task_list"));
+  await expect(list).toHaveCount(0);
+  await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+  await chip.click();
+  await expect(list).toHaveCount(0);
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
+}
+
 test("@platform a native session keeps its chapters, child outputs and reversible missed work through search and summaries off", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
@@ -84,18 +104,7 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     // First asked first: the finished task, then the split request's two, which share the failed CI of its PR.
     expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed", "ci_failed"]);
     await expect(chip).toHaveText("1/3");
-    // Show task list pins the focused pane's checklist; the chord again closes it.
-    await page.locator(`[data-pane-view="${herdr.panes[0]}"] .xterm-helper-textarea`).focus();
-    await page.keyboard.press(chord("toggle_task_list"));
-    await expect(list.locator("[data-task-list-name]")).toHaveText(["기록 화면 구현", "이슈와 검색 검증", "좁은 열 줄바꿈 확인"]);
-    await page.keyboard.press(chord("toggle_task_list"));
-    await expect(list).toHaveCount(0);
-    // A press pins the list; a second press on the chip closes it under the pointer.
-    await chip.click();
-    await expect(chip).toHaveAttribute("aria-pressed", "true");
-    await chip.click();
-    await expect(list).toHaveCount(0);
-    await expect(chip).toHaveAttribute("aria-pressed", "false");
+    await pinAndClose(page, herdr.panes[0], ["기록 화면 구현", "이슈와 검색 검증", "좁은 열 줄바꿈 확인"]);
     // A child is a row that opens its own record in the slot, and the head's ← comes back (PRD sidebar-task-lens B16).
     await record.locator(`[data-record-child="${child}"]`).click();
     // The slot swaps the parent's three tasks for the child's one, so wait for that whole list.

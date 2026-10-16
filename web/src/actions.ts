@@ -2347,7 +2347,7 @@ export function createActions(send: DispatchFn) {
      * keyboard stays in the pane's terminal.
      */
     /**
-     * ⇧⌘L: pins the focused pane's task checklist open, or closes it when it
+     * ⇧⌘U: pins the focused pane's task checklist open, or closes it when it
      * is pinned there. A pane without tasks draws no chip and pins nothing, so
      * a list never opens by itself once that pane later has tasks.
      */

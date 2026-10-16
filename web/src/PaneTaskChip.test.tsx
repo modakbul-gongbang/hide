@@ -162,9 +162,10 @@ it("pins nothing by the shortcut on a pane with no chip", async () => {
 it("opens the record from the list on the same session", async () => {
   const view = await mount([progress([task("task-3", "가")])]);
   try {
+    const open = vi.spyOn(view.actions, "openSessionRecord").mockImplementation(() => {});
     await act(async () => view.chip()!.click());
     await act(async () => view.list()!.querySelector<HTMLButtonElement>("[data-task-list-record]")!.click());
-    expect(view.events.find((event) => event.kind === "session_record_open")?.payload).toEqual({ session: SESSION });
+    expect(open).toHaveBeenCalledWith(SESSION);
     expect(view.list()).toBeNull();
   } finally { await view.unmount(); }
 });

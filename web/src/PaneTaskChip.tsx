@@ -30,8 +30,8 @@ export function usePaneProgress(paneId: string): { agent: AgentRow; progress: Wo
 /**
  * The pane head's task chip (PRD task-split-checklist D-05, D-06, B9-B14):
  * `<done>/<tasks>` beside the PR chip, from one task. The pointer or the
- * keyboard's focus on it opens the checklist; a press or ⇧⌘L pins it, and a
- * second press, ⇧⌘L or Esc closes it. Opening never takes the keyboard from
+ * keyboard's focus on it opens the checklist; a press or ⇧⌘U pins it, and a
+ * second press, ⇧⌘U or Esc closes it. Opening never takes the keyboard from
  * the terminal.
  */
 export function PaneTaskChip({ paneId, actions }: { paneId: string; actions: Actions }) {
