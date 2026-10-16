@@ -2885,13 +2885,13 @@ fn what_each_machine_shows_survives_the_move_and_the_move_back() -> Result<()> {
                 .as_array()
                 .into_iter()
                 .flatten()
-                .any(|view| view["owner"].is_string()
-                    && view["presentations"]
+                .any(|view| view["layout"]["root"]["area"]["displays"]
+                    .as_array()
+                    .is_some_and(|displays| !displays.is_empty())
+                    && view["bookmarks"]
                         .as_object()
-                        .is_some_and(|presentations| presentations
-                            .values()
-                            .any(|parked| parked["layout"] != view["layout"]))),
-            "the move fixture must compare distinct current and parked tab presentations: {kept_before:#}"
+                        .is_some_and(|bookmarks| !bookmarks.is_empty())),
+            "the move fixture must keep one View and a tab bookmark to it: {kept_before:#}"
         );
         let shown_after = wait_for("the window as it was, through the new core", || {
             let shown = window_shows(&fixture, TARGET_NODE)?;

@@ -391,13 +391,8 @@ impl Runtime {
                 reveal || kept.is_none() && self.front_workspace_key().as_ref() == Some(&key)
             });
             let lone_tree = calls_lane && self.front_lone_tree().as_ref() == Some(&key);
-            let mut applied = (|| {
-                self.check_browser_scope(&key, &action)?;
-                if let Action::OpenBrowser { area_id, .. } = &action {
-                    self.check_browser_area(&key, area_id.as_deref())?;
-                }
-                self.apply_workspace_action(&key, &context, request_id, pane_id, &action, material)
-            })();
+            let mut applied =
+                self.apply_workspace_action(&key, &context, request_id, pane_id, &action, material);
             if let Ok(done) = &mut applied {
                 self.stamp_control_opener(&key, pane_id, &action, &done.view_id);
                 self.note_caller_view(&key, pane_id, &action, &done.view_id);

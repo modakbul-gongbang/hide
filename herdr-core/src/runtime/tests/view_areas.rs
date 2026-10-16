@@ -379,7 +379,7 @@ fn open_to_the_side_uses_the_neighbour_or_a_new_area_to_the_right() {
 }
 
 /// B18, B19, contract 2: a split past the area cap and an open past the
-/// tab's view cap are refused with a reason, and the tree stays as it was.
+/// checkout's view cap are refused with a reason, and the tree stays as it was.
 #[test]
 fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
     use crate::view_layout::{DisplayKind, Edge, Layout, MAX_VIEW_DISPLAYS};
@@ -465,7 +465,7 @@ fn fill(runtime: &mut Runtime, directory: &Path, count: usize) {
         .layout = layout;
 }
 
-/// B19: at its 16 views nothing adds a 17th to the tab when none of them
+/// B19: at its 32 views nothing adds a 33rd to the checkout when none of them
 /// can close. Reopen Closed, a created file and a revealed file are refused
 /// with the reason before anything is read or made, and the closed file
 /// stays reopenable.
@@ -524,9 +524,9 @@ fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
     );
 }
 
-/// B19: a file that lands after the tab filled, here a Reopen Closed
-/// admitted at 15 views, is refused with the reason as it lands rather than
-/// making a 17th view; nothing is opened and the file stays reopenable.
+/// B19: a file that lands after the checkout filled, here a Reopen Closed
+/// admitted at 31 views, is refused with the reason as it lands rather than
+/// making a 33rd view; nothing is opened and the file stays reopenable.
 #[test]
 fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() {
     use crate::view_layout::{DisplayKind, MAX_VIEW_DISPLAYS};

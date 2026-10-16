@@ -690,6 +690,61 @@ fn an_open_past_the_cap_closes_the_view_looked_at_longest_ago() {
     )));
 }
 
+/// B11, D-07: the View in front of another area is never the one closed, even
+/// when it was looked at longest ago.
+#[test]
+fn an_open_past_the_cap_spares_the_front_of_every_area() {
+    let (mut runtime, _checkout, directory) = setup("cap-fronts");
+    fill_pages(&mut runtime, &directory, MAX_VIEW_DISPLAYS);
+    runtime.sync_workspace_view();
+    let oldest = display_id(&runtime, &directory, "https://example.test/saved/0");
+    let area = area_id(&runtime, &directory, 0);
+    view_act(
+        &mut runtime,
+        &directory,
+        serde_json::json!({"action": "split", "display_id": oldest, "area_id": area, "edge": "right", "request_id": "split-oldest"}),
+    );
+    assert_eq!(layout(&runtime, &directory).areas().len(), 2);
+    let url = "https://example.test/clicked";
+    runtime.dispatch_json(&explorer_event(
+        "browser_open",
+        serde_json::json!({
+            "url": url,
+            "workspace": {"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()},
+        }),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    let shown = strip(&runtime, &directory);
+    assert_eq!(shown.len(), MAX_VIEW_DISPLAYS);
+    assert!(shown.contains(&url.to_owned()));
+    assert!(
+        shown.contains(&"https://example.test/saved/0".to_owned()),
+        "the front of the other area stays"
+    );
+}
+
+/// B5: a background agent's open into an empty list is not the operator tab's
+/// own choice, so it is not that tab's bookmark; the opener's tab remembers it.
+#[test]
+fn a_background_open_into_an_empty_list_is_not_the_active_tabs_bookmark() {
+    let (mut runtime, checkout, directory) = setup("background-empty");
+    control_file(
+        &mut runtime,
+        "w-order:t2:p",
+        &directory,
+        "c.md",
+        false,
+        "background-empty",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(strip(&runtime, &directory), ["c.md"]);
+    assert_eq!(bookmark(&runtime, &directory, TABS[0]), None);
+    let c = display_id(&runtime, &directory, "c.md");
+    assert_eq!(bookmark(&runtime, &directory, TABS[1]), Some(c));
+    focus_tab(&mut runtime, &checkout, &directory, TABS[1]);
+    assert_eq!(fronts(&runtime, &directory), ["c.md"]);
+}
+
 /// B11: with nothing that may close, the open is refused with the View
 /// layout's reason and nothing changes, for the operator and for an agent.
 #[test]

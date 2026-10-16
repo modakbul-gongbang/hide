@@ -62,14 +62,29 @@ impl Runtime {
     /// View back in front of its area (D-11); otherwise a change of the View
     /// in front of the area in use is the active tab's new bookmark (D-16).
     pub(super) fn track_view_bookmarks(&mut self) -> bool {
-        let Some(key) = self
-            .workspace_views
-            .as_ref()
-            .and_then(|store| store.front.clone())
-        else {
+        let Some(store) = self.workspace_views.as_ref() else {
             return false;
         };
-        let (shown, active) = self.agent_view_of(&key);
+        let Some(key) = store.front.as_ref() else {
+            return false;
+        };
+        let (shown, active) = self.agent_view_of(key);
+        // Most syncs see what the last one saw; those allocate nothing.
+        let front_now = store
+            .views
+            .get(&key.0, &key.1)
+            .and_then(|entry| entry.layout.active_area().active.as_deref());
+        if store.bookmark_seen.get(key).is_some_and(|seen| {
+            seen.front.as_deref() == front_now
+                && seen
+                    .shown
+                    .iter()
+                    .map(String::as_str)
+                    .eq(shown.iter().copied())
+        }) {
+            return false;
+        }
+        let key = key.clone();
         let shown: Vec<String> = shown.into_iter().map(str::to_owned).collect();
         let active = active.map(str::to_owned);
         let now = unix_milliseconds();
@@ -164,6 +179,19 @@ impl Runtime {
         });
         if let Err(error) = outcome {
             self.push_diagnostic("view_layout.front_not_restored", error.message());
+        }
+        // What is in front now is not the operator's change to record as the
+        // active tab's bookmark: a background open into an empty list leaves
+        // its new View there.
+        let front = self
+            .view_layout_of(&kept.key)
+            .and_then(|layout| layout.active_area().active.clone());
+        if let Some(seen) = self
+            .workspace_views
+            .as_mut()
+            .and_then(|store| store.bookmark_seen.get_mut(&kept.key))
+        {
+            seen.front = front;
         }
     }
 

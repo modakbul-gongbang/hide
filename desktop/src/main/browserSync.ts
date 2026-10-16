@@ -6,14 +6,13 @@
 import { createHash } from "node:crypto";
 import type { BrowserCommand, BrowserPlacement, BrowserRect, BrowserSync } from "../../../web/src/host";
 
-/** A Workspace holds at most this many displays across its tabs, and so does
- * the tab shown (`MAX_VIEW_DISPLAYS`). */
+/** A Workspace holds at most this many displays (`MAX_VIEW_DISPLAYS` is 32);
+ * the bound is kept wider than the core's. */
 export const MAX_SYNCED_DISPLAYS = 256;
 /** Displays across at most 256 Workspaces. */
 export const MAX_RETAINED_DISPLAYS = 256 * MAX_SYNCED_DISPLAYS;
-/** Positive areas across at most 256 Workspaces: each Agent tab has its own
- * View areas and every area but an empty front one holds a display, so a
- * Workspace has at most one per display plus that empty one. */
+/** Positive areas across at most 256 Workspaces: every area but an empty front
+ * one holds a display, so a Workspace has at most one per display plus that empty one. */
 export const MAX_AUTHORIZED_SCOPES = 256 * (MAX_SYNCED_DISPLAYS + 1);
 /** Live pages at once; a hidden one past this is closed and loads again when shown. */
 export const MAX_LIVE_VIEWS = 12;

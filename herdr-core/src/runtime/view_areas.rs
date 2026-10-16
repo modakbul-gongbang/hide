@@ -353,11 +353,6 @@ impl From<LayoutError> for LayoutRefusal {
     }
 }
 
-struct ReconcileAdmission<'a> {
-    owned: &'a HashSet<String>,
-    available: usize,
-}
-
 /// Brings one Workspace's displays in line with the editor's tabs. Returns
 /// whether anything the file stores changed, and the documents the display
 /// cap kept off screen.
@@ -366,7 +361,7 @@ fn reconcile_layout<'t>(
     layout: &mut Layout,
     key: &WorkspaceKey,
     live: bool,
-    admission: ReconcileAdmission<'_>,
+    owned: &HashSet<String>,
     tabs: &'t [TabFacts],
     roots: &[WorkspaceKey],
     requested: Option<&str>,
@@ -427,7 +422,7 @@ fn reconcile_layout<'t>(
     if live {
         for tab in tabs
             .iter()
-            .filter(|tab| tab.key.as_ref() == Some(key) && !admission.owned.contains(&tab.id))
+            .filter(|tab| tab.key.as_ref() == Some(key) && !owned.contains(&tab.id))
         {
             if layout
                 .displays()
@@ -435,7 +430,7 @@ fn reconcile_layout<'t>(
             {
                 continue;
             }
-            if layout.display_count() >= admission.available {
+            if layout.display_count() >= MAX_VIEW_DISPLAYS {
                 unshown.push(tab);
                 continue;
             }
@@ -2385,10 +2380,7 @@ impl Runtime {
                 &mut view.layout,
                 &key,
                 store.live.contains(&key),
-                ReconcileAdmission {
-                    owned: &owned,
-                    available: MAX_VIEW_DISPLAYS,
-                },
+                &owned,
                 &tabs,
                 &roots,
                 requested,

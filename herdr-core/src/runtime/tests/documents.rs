@@ -1963,7 +1963,7 @@ fn a_coalesced_gui_read_cannot_replace_closed_new_tabs() {
 /// queue of GUI destinations, even though each replaces an existing slot:
 /// the tab's cap counts the destinations still waiting for the read.
 #[test]
-fn a_coalesced_gui_read_refuses_a_destination_past_the_tabs_cap() {
+fn a_coalesced_gui_read_refuses_a_destination_past_the_views_cap() {
     let f = Fixture::new();
     let views_dir = f.runtime_dir("hide-gui-bounded-read-");
     {

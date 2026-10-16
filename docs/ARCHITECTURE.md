@@ -2286,9 +2286,9 @@ The pinned Herdr emits no event for a focus command that leaves its current tab 
 This metadata remains inside the core projection, adds no terminal-output work, and is removed with its tab; local New and Reopen intents retain their existing focus claim.
 Each Workspace stores one Files View list, `view_layout`, with its split, selection and active area, and one bookmark per Agent tab, `tab_views`, a map from a Herdr tab to the display it last put in front.
 The bookmark is one display id, never a layout, so it holds no View of its own and no tab owns the list.
-The earlier per-tab keys (`view_owner`, `view_presentations`, `view_next_id`, `view_bookmarks` and the old `layout`) are not read and not written; the schema stays 3 and nothing converts them, so the first run after the update starts with an empty list while the lane's tool, pin, tree, widths, comments and the Agent layout survive.
+The earlier per-tab keys (`view_owner`, `view_presentations`, `view_next_id`, `view_bookmarks` and a schema 3 file's old `layout`) are not read and not written, while the schema 1 and 2 column files still convert through their own `layout`; the schema stays 3 and nothing converts them, so the first run after the update starts with an empty list while the lane's tool, pin, tree, widths, comments and the Agent layout survive.
 The shell receives the existing projected layout; none of these fields adds a wire field.
-`track_view_bookmarks` compares borrowed shown/active tab ids during the existing Workspace sync.
+`track_view_bookmarks` compares borrowed shown/active tab ids and the front with the last observation during the existing Workspace sync, and allocates only when one moved.
 A tab that was on no Agent area and now is the active one gets its bookmarked display brought to the front of its own area without moving the active area or the keyboard, and a bookmark naming a closed display is ignored; otherwise a change of the front of the area in use is recorded as the active tab's bookmark, and a tab that leaves Herdr drops its bookmark (`prune_view_bookmarks`).
 The lane's tool, pin, tree and widths stay checkout-wide, and ordinary focus among already shown Agent areas changes nothing in the list.
 
