@@ -275,8 +275,6 @@ const COMMENT_STOPS = {
   display_closed: "display_closed",
   page_unresponsive: "page_unresponsive",
   dialog_open: "dialog_open",
-  page_script_failed: "page_changed",
-  cdp_error: "page_changed",
 } as const;
 
 function isCommentStop(reason: string): reason is keyof typeof COMMENT_STOPS {

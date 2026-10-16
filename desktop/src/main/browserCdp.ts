@@ -81,6 +81,8 @@ type Client = {
   autoKind: "page" | "tab";
   autoFlattened: boolean;
   known: Map<string, string>;
+  /** Execution contexts of the isolated worlds this client's comment made. */
+  commentWorlds: Set<number>;
   pending: number;
   minute: number;
   requests: number;
@@ -112,6 +114,15 @@ const COMMENT_METHODS = new Set([
   "Target.getTargets", "Target.attachToTarget", "Page.enable", "Page.getFrameTree", "Page.createIsolatedWorld",
   "Runtime.enable", "Runtime.addBinding", "Runtime.evaluate", "Page.captureScreenshot",
 ]);
+// The parameters each of those methods takes from the session, and no others: a
+// world made with universal access, an evaluation with a user gesture or the
+// command-line API, a binding in the page's own world would each be more than the session asks for.
+const COMMENT_PARAMS: Record<string, readonly string[]> = {
+  "Target.getTargets": [], "Target.attachToTarget": ["targetId", "flatten"], "Page.enable": [], "Page.getFrameTree": [], "Runtime.enable": [],
+  "Page.createIsolatedWorld": ["frameId", "worldName"], "Runtime.addBinding": ["name", "executionContextName"],
+  "Runtime.evaluate": ["expression", "contextId", "returnByValue", "awaitPromise"], "Page.captureScreenshot": ["format", "clip"],
+};
+const MAX_COMMENT_WORLDS = 64;
 const COMMENT_EVENTS = new Set(["Runtime.bindingCalled", "Page.frameNavigated", "Page.navigatedWithinDocument", "Inspector.detached"]);
 const SCOPED_BROWSER_METHODS = new Set(["Browser.getVersion", "Target.getTargets", "Target.getTargetInfo", "Target.getBrowserContexts", "Target.attachToTarget", "Target.detachFromTarget"]);
 // These act on the shared Chromium session or the host filesystem, even when
@@ -397,7 +408,7 @@ export class BrowserCdpGateway {
     // Node's HTTP idle timeout must not kill a healthy upgraded CDP socket.
     socket.setTimeout(0);
     this.ws.handleUpgrade(request, socket, head, (ws) => {
-      const client: Client = { intents: new Map(), closingPages: new Set(), draining: false, socket: ws, capability, sessions: new Map(), browserSessions: new Set(), leases: new Map(), abort: new AbortController(), discover: false, autoAttach: false, autoKind: "page", autoFlattened: true, known: new Map(), pending: 0, minute: Date.now(), requests: 0 };
+      const client: Client = { intents: new Map(), closingPages: new Set(), draining: false, socket: ws, capability, sessions: new Map(), browserSessions: new Set(), leases: new Map(), abort: new AbortController(), discover: false, autoAttach: false, autoKind: "page", autoFlattened: true, known: new Map(), commentWorlds: new Set(), pending: 0, minute: Date.now(), requests: 0 };
       this.clients.add(client);
       ws.on("close", () => this.end(client));
       ws.on("error", () => this.end(client));
@@ -710,7 +721,7 @@ export class BrowserCdpGateway {
     if (Date.now() >= deadline) throw new ProtocolError("CDP request timed out");
     const { method, params } = command;
     if (session) this.getSession(client, session.id);
-    if (client.capability.purpose === "comment") this.commentGate(method, params);
+    if (client.capability.purpose === "comment") this.commentGate(client, method, params);
     if (command.sessionId && client.browserSessions.has(command.sessionId) && !SCOPED_BROWSER_METHODS.has(method)) throw new ProtocolError("Command is outside the scoped browser session boundary");
     const requestId = intentId ?? `${Date.now()}-${secret().slice(0, 32)}`;
     if (method.startsWith("Target.")) return this.target(client, method, params, session, depth, requestId,
@@ -740,12 +751,21 @@ export class BrowserCdpGateway {
       return this.native(session, method, { ...params, urls: params.urls ?? [session.lease.page.contents.getURL()] }, deadline);
     }
     if (method === "Page.printToPDF" && params.transferMode === "ReturnAsStream") throw new ProtocolError("Filesystem streams are not available");
-    return this.native(session, method, params, deadline);
+    const answer = await this.native(session, method, params, deadline);
+    // The worlds a comment made are the only ones it may evaluate in.
+    if (client.capability.purpose === "comment" && method === "Page.createIsolatedWorld" && object(answer) && typeof answer.executionContextId === "number") {
+      if (client.commentWorlds.size >= MAX_COMMENT_WORLDS) client.commentWorlds.delete(client.commentWorlds.values().next().value as number);
+      client.commentWorlds.add(answer.executionContextId);
+    }
+    return answer;
   }
   /** What a comment capability may send; the evaluation must name a world, never the page's own. */
-  private commentGate(method: string, params: Json): void {
-    if (!COMMENT_METHODS.has(method)) throw new ProtocolError("Command is outside the comment boundary");
-    if (method === "Runtime.evaluate" && typeof params.contextId !== "number") throw new ProtocolError("A comment evaluates only in its own world");
+  private commentGate(client: Client, method: string, params: Json): void {
+    const allowed = COMMENT_PARAMS[method];
+    if (!COMMENT_METHODS.has(method) || !allowed) throw new ProtocolError("Command is outside the comment boundary");
+    if (Object.keys(params).some((key) => !allowed.includes(key))) throw new ProtocolError("Parameter is outside the comment boundary");
+    if (method === "Runtime.addBinding" && typeof params.executionContextName !== "string") throw new ProtocolError("A comment binding belongs to its own world");
+    if (method === "Runtime.evaluate" && !(typeof params.contextId === "number" && client.commentWorlds.has(params.contextId))) throw new ProtocolError("A comment evaluates only in a world it made");
   }
   private async perform(client: Client, action: CdpAction, deadline: number): Promise<CdpActionResult> {
     if (Date.now() >= deadline) throw new CdpActionUncertain();

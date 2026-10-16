@@ -865,6 +865,11 @@ describe("comment capability on a local file page", () => {
       ["Browser.getVersion", {}],
       // The page's own world is never the comment's: an evaluation names its isolated one.
       ["Runtime.evaluate", { expression: "document.title" }],
+      ["Runtime.evaluate", { expression: "document.title", contextId: 1 }],
+      // Nor may a command of the allowlist carry more than the session sends.
+      ["Page.createIsolatedWorld", { frameId: "page-21", worldName: "x", grantUniveralAccess: true }],
+      ["Runtime.evaluate", { expression: "1", contextId: 42, userGesture: true }], ["Runtime.evaluate", { expression: "1", contextId: 42, includeCommandLineAPI: true }],
+      ["Runtime.addBinding", { name: "__hideCommentSend" }],
     ];
     for (const [method, params] of refused) {
       const reply = await comment.call(method, params, method.startsWith("Target.") || method.startsWith("Browser.") ? undefined : session);
