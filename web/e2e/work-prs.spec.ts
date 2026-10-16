@@ -90,8 +90,8 @@ test("the Work tool's PRs lens groups by whose move it is and says why on each r
 
 /** The groups the PRs lens draws and the pull requests in each, in the order drawn. */
 async function groupsOf(work: Locator): Promise<Record<string, string[]>> {
-  // Drafts, Bots and merged start folded (B7); a group opens from its header.
-  for (const group of ["drafts", "bots", "merged"]) {
+  // Everything after Blocked starts folded (B7); a group opens from its header.
+  for (const group of ["waiting", "drafts", "bots", "merged"]) {
     const section = work.locator(`[data-pr-group="${group}"]`);
     if ((await section.count()) > 0 && (await section.getAttribute("data-folded")) === "true") await section.locator('[data-pr-focus="group"]').click();
   }
@@ -105,6 +105,21 @@ async function groupsOf(work: Locator): Promise<Record<string, string[]>> {
 // it unknown, the list stays, and the ⚠ on PRs says which question it was.
 const UNREAD = '[data-work-lens="prs"] [data-work-stale="true"]';
 const warning = (work: Locator) => work.locator(UNREAD);
+/** The ⚠ says `text` in its tooltip, and its accessible name; the lane is captured with the tooltip open, cropped so no pane or terminal prompt is in it. */
+async function warnsWith(page: Page, work: Locator, text: string, name: string): Promise<void> {
+  await expect(warning(work)).toHaveAttribute("aria-label", text);
+  await warning(work).hover();
+  await expect(page.locator('[data-slot="tooltip-content"]')).toContainText(text);
+  const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (!dir) return;
+  // The tooltip slides in: capture after it has settled.
+  for (let frame = 0; frame < 20; frame += 1) await page.evaluate(() => new Promise((done) => requestAnimationFrame(done)));
+  const box = (await work.boundingBox())!;
+  const tip = (await page.locator('[data-slot="tooltip-content"]').boundingBox())!;
+  const right = Math.max(box.x + box.width, tip.x + tip.width);
+  await page.screenshot({ path: path.join(dir, `${name}.png`), clip: { x: box.x, y: Math.min(box.y, tip.y), width: right - box.x, height: box.height } });
+}
+
 /** The reason a row says, by its kind and words. */
 const reasonOf = (work: Locator, number: number) => work.locator(`[data-pr="${number}"] [data-pr-reason]`).first();
 
@@ -125,8 +140,7 @@ test("an unreadable account keeps the list and leaves every pull request's owner
       expect((await groupsOf(work)).merged).toEqual(["37"]);
       // Nothing is asked of the operator, so the rail's Work icon carries no number.
       await expect(page.locator('[data-lane-tool="work"] [data-lane-work-count]')).toHaveCount(0);
-      await expect(warning(work)).toHaveAttribute("aria-label", "GitHub read incomplete · could not read the signed-in account");
-      await screenshot(page, "work-prs-unread-account-light");
+      await warnsWith(page, work, "GitHub read incomplete · could not read the signed-in account", "work-prs-unread-account-light");
     },
     { failing: ["account"] },
   );
@@ -143,8 +157,7 @@ test("unreadable review requests keep the list and judge a team's ask only as un
       expect((await groupsOf(work)).waiting).toEqual(["38"]);
       await expect(reasonOf(work, 38)).toHaveAttribute("data-pr-reason", "unjudged");
       await expect(reasonOf(work, 38)).toContainText("Not judged · can't tell if a review was asked of you");
-      await expect(warning(work)).toHaveAttribute("aria-label", "GitHub read incomplete · could not read review requests");
-      await screenshot(page, "work-prs-unread-review-requests-light");
+      await warnsWith(page, work, "GitHub read incomplete · could not read review requests", "work-prs-unread-review-requests-light");
     },
     { failing: ["review_requests"], teamAsk: true },
   );
@@ -164,8 +177,7 @@ test("an unreadable merge queue keeps the list and holds back only the pull requ
         await expect(reasonOf(work, number)).toContainText("Not judged · can't tell if it is in the merge queue");
       }
       await expect(page.locator('[data-lane-tool="work"] [data-lane-work-count]')).toHaveText("1");
-      await expect(warning(work)).toHaveAttribute("aria-label", "GitHub read incomplete · could not read the merge queue");
-      await screenshot(page, "work-prs-unread-merge-queue-light");
+      await warnsWith(page, work, "GitHub read incomplete · could not read the merge queue", "work-prs-unread-merge-queue-light");
     },
     { failing: ["merge_queue"] },
   );
@@ -179,10 +191,9 @@ test("all three extra questions failing still lists every pull request and names
       expect(Object.keys(groups)).toEqual(["waiting", "drafts", "bots", "merged"]);
       expect(groups.waiting).toEqual(["31", "32", "33", "34", "38"]);
       await expect(reasonOf(work, 31)).toContainText("Not judged · can't tell if it is yours");
-      await expect(warning(work)).toHaveAttribute("aria-label", "GitHub read incomplete · could not read the signed-in account, review requests, the merge queue");
       // Plain Waiting says nothing of whose move it is, so the lens carries no Needs You dot.
       await expect(work.locator('[data-work-lens="prs"] [data-work-dot]')).toHaveCount(0);
-      await screenshot(page, "work-prs-unread-all-light");
+      await warnsWith(page, work, "GitHub read incomplete · could not read the signed-in account, review requests, the merge queue", "work-prs-unread-all-light");
     },
     { failing: ["account", "review_requests", "merge_queue"], teamAsk: true },
   );
