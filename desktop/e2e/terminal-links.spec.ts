@@ -355,7 +355,8 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
 
 // Its own spec because the links journey is at its size ceiling: the keyboard
 // goes with the file a link opens, so ⌘W closes that file and never the pane
-// that printed the link.
+// that printed the link; a folder a link reveals opens nothing to type in,
+// so the keyboard stays in the pane.
 test("a file a terminal link opens takes the keyboard, so Command W closes the file and the pane stays", async () => {
   const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
   fs.mkdirSync(path.join(checkout, "src"), { recursive: true });
@@ -368,7 +369,13 @@ test("a file a terminal link opens takes the keyboard, so Command W closes the f
   await enterWorkspace(page, "fixture");
   const paneId = await page.evaluate(() => (window as unknown as { __hideProbe: Probe }).__hideProbe.paneId()!);
   await dockFiles(page, paneId);
-  await print(page, paneId, ["file src/focus.ts", "FOCUS-END"], "FOCUS-END");
+  await print(page, paneId, ["folder ./src", "file src/focus.ts", "FOCUS-END"], "FOCUS-END");
+
+  const folder = await pointOf(page, paneId, "./src", { offset: 1 });
+  await hoverLink(page, paneId, folder);
+  await page.mouse.click(folder.x, folder.y);
+  await expect(page.locator(`[data-explorer-row="${path.join(checkout, "src")}"][data-selected="true"]`)).toBeVisible({ timeout: 20_000 });
+  await expect(page.locator(`[data-pane-view="${paneId}"] .xterm-helper-textarea`)).toBeFocused();
 
   const point = await pointOf(page, paneId, "src/focus.ts", { offset: 2 });
   await hoverLink(page, paneId, point);
@@ -453,6 +460,8 @@ test("an image of another checkout opens in the Workspace in front and its check
     await page.mouse.click(point.x, point.y);
     await expect(viewTab(page, "shot.png")).toBeVisible({ timeout: 20_000 });
     await expect(page.locator('[data-viewer="image"] img')).toBeVisible();
+    // The keyboard goes with the image into the Workspace in front.
+    await expect(viewTab(page, "shot.png")).toBeFocused();
     // The pane that printed the link is still the one on screen.
     await expect(page.locator(`[data-pane-view="${paneId}"]`)).toBeVisible();
     expect(sent.get("file_open")).toBe(1);
