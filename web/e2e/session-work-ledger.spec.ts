@@ -74,7 +74,8 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed"]);
     // A child is a row that opens its own record in the slot, and the head's ← comes back (PRD sidebar-task-lens B16).
     await record.locator(`[data-record-child="${child}"]`).click();
-    await expect(record.locator("[data-record-task]")).toContainText("자식 연결 검증");
+    // The slot swaps the parent's two tasks for the child's one, so wait for that whole list.
+    await expect(record.locator("[data-record-task]")).toHaveText([/자식 연결 검증/]);
     await page.locator("[data-detail-back]").click();
     await expect(tasks).toHaveCount(2);
     const missed = record.locator("[data-missed-work]", { hasText: MISSED });
