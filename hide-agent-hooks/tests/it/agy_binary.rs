@@ -79,9 +79,11 @@ fn the_real_agy_loads_hide_s_hook_block() {
     // Signed in (the nightly's account), `/hooks` lists Hide's four events.
     let answer: Option<serde_json::Value> = serde_json::from_str(finished.stdout.trim()).ok();
     let signed_in = answer.filter(|answer| answer["status"] == "SUCCESS");
+    // A key agy does not sign in with fails here: a runner has no browser
+    // for agy's own sign-in, and nothing on PATH could open one.
     assert!(
         key.is_none() || signed_in.is_some(),
-        "agy did not sign in with the CI key:\n{report}"
+        "agy did not sign in with HIDE_AGY_API_KEY passed as GEMINI_API_KEY; it wants a browser sign-in, which a CI runner cannot give:\n{report}"
     );
     if let Some(answer) = signed_in {
         let listed = answer["response"].as_str().unwrap_or_default();
