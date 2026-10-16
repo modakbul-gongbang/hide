@@ -153,7 +153,11 @@ use crate::error::HostError;
 /// redesign D-04). A helper on 38 allows only the query text it knows, so it
 /// would refuse every card read of a device project; it is refused at Hello
 /// and upgraded.
-pub const PROTOCOL_VERSION: u32 = 39;
+/// 40: `LetterPull` carries `tool`, a hook's ask at a tool event for the
+/// letters due while the agent works (PRD letters-to-busy-agents D-02). A
+/// helper on 39 would drop the field and answer a prompt's letters, so it is
+/// refused at Hello and upgraded.
+pub const PROTOCOL_VERSION: u32 = 40;
 
 /// What agy's index held in a checkout before Hide typed `/fork`
 /// ([`Call::AntigravityForkMark`]).

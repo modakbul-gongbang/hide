@@ -577,6 +577,7 @@ impl Runtime {
         if let Command::Pull {
             session,
             prompt_digest,
+            tool,
         } = &command
         {
             if prompt_digest
@@ -589,9 +590,19 @@ impl Runtime {
                 if !crate::delivery::valid_session(session) {
                     return Err("session_invalid".into());
                 }
-                if crate::wire::session_digest(session) == actor.session {
+                let own = crate::wire::session_digest(session) == actor.session;
+                // A tool event's ask submits nothing: the composer may hold
+                // a draft while the agent works (D-09). It must come from
+                // the pane's own session, since it hands letters over.
+                if *tool {
+                    if !own {
+                        return Err("session_mismatch".into());
+                    }
+                } else if own {
                     self.note_prompt_submitted(&actor.pane_id);
                 }
+            } else if *tool {
+                return Err("session_mismatch".into());
             }
         }
         let resolves_to_caller = |key: &str| {
@@ -642,6 +653,9 @@ impl Runtime {
         };
         let target = match &command {
             Command::Send { .. } if repeated => None,
+            // A tool event's ask is judged by the caller's own pane: whether
+            // it works, and since when.
+            Command::Pull { tool: true, .. } => self.delivery_observations.get(actor_pane).cloned(),
             Command::Send { target, .. }
             | Command::WatchStart { target, .. }
             | Command::WatchAssign {
@@ -1067,12 +1081,14 @@ impl Runtime {
             .map(|row| row.identity_label.clone())
     }
 
-    /// Whether a bell may be typed into the recipient's pane now, and the
-    /// observation the verdict was read from. The refusal says which fact
+    /// Whether a bell may be typed into the recipient's pane now for a letter
+    /// that waits as `patience` says, and the observation the verdict was
+    /// read from. The refusal says which fact
     /// held the letter, for the diagnostic log.
     pub(crate) fn delivery_bell_verdict(
         &self,
         recipient: &Actor,
+        patience: crate::delivery::doorbell::Patience,
         now: u64,
     ) -> Result<Observation, crate::delivery::doorbell::Hold> {
         use crate::delivery::doorbell::Hold;
@@ -1087,7 +1103,7 @@ impl Runtime {
         if !current.actor.same_identity(recipient) {
             return Err(Hold::Session);
         }
-        crate::delivery::doorbell::judge(current, now)?;
+        crate::delivery::doorbell::judge(current, patience, now)?;
         Ok(current.clone())
     }
 
@@ -1117,20 +1133,30 @@ impl Runtime {
             return Err(Hold::Input);
         }
         let now = unix_milliseconds();
-        crate::delivery::doorbell::judge(current, now)?;
-        let letter_current = self.delivery_ledger.as_ref().is_ok_and(|ledger| {
-            ledger.letters.iter().any(|letter| {
-                letter.id == id
-                    && letter.recipient.same_identity(&observed.actor)
-                    && letter.state == crate::delivery::ledger::State::Pending
-                    && match reserved {
-                        Some(attempt) => (1..=3).contains(&attempt) && letter.attempts() == attempt,
-                        None => letter.attempts() < 3,
-                    }
-                    && letter.within_deadline(&ledger.node_clocks, now)
+        let letter = self
+            .delivery_ledger
+            .as_ref()
+            .ok()
+            .and_then(|ledger| {
+                ledger.letters.iter().find(|letter| {
+                    letter.id == id
+                        && letter.recipient.same_identity(&observed.actor)
+                        && letter.state == crate::delivery::ledger::State::Pending
+                        && match reserved {
+                            Some(attempt) => {
+                                (1..=3).contains(&attempt) && letter.attempts() == attempt
+                            }
+                            None => letter.attempts() < 3,
+                        }
+                        && letter.within_deadline(&ledger.node_clocks, now)
+                })
             })
-        });
-        letter_current.then_some(()).ok_or(Hold::Letter)
+            .ok_or(Hold::Letter)?;
+        crate::delivery::doorbell::judge(
+            current,
+            crate::delivery::doorbell::Patience::of(letter),
+            now,
+        )
     }
 
     pub(crate) fn delivery_watch_work(&mut self) -> Vec<crate::delivery::worker::WatchWork> {
@@ -1338,6 +1364,12 @@ pub(crate) struct CoordinationContext {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    /// A letter whose wait is over, or that never had one: the bell's
+    /// verdict for a pane at rest, where the wait plays no part.
+    const WAITED: crate::delivery::doorbell::Patience = crate::delivery::doorbell::Patience {
+        arrived_at_unix_ms: 0,
+        now: false,
+    };
     use crate::delivery::worker::Worker;
     use crate::handle::ChangeNotifier;
     use crate::model::{CoreOptions, SCHEMA_VERSION};
@@ -1593,6 +1625,22 @@ pub(crate) mod tests {
         observation
     }
 
+    /// The pane as the core observes it now.
+    pub(crate) fn observed(runtime: &Runtime, pane: &str) -> Observation {
+        runtime.delivery_observations[pane].clone()
+    }
+
+    /// The pane as the core observes it working since `since`, confirmed by
+    /// Herdr, with no key typed since.
+    pub(crate) fn observe_working_since(runtime: &mut Runtime, pane: &str, since: u64) {
+        let observation = runtime.delivery_observations.get_mut(pane).unwrap();
+        observation.status = "working".into();
+        observation.entered_working_at_unix_ms = since;
+        observation.status_changed_at_unix_ms = since;
+        observation.last_input_at_unix_ms = since - 1;
+        observation.last_submit_at_unix_ms = since - 1;
+    }
+
     /// The core's Herdr link, as a device's connection makes and drops it.
     pub(crate) fn set_live(runtime: &mut Runtime, herdr: Option<&crate::fake_herdr::FakeHerdr>) {
         runtime.live = herdr.map(|herdr| crate::live::LiveContext {
@@ -1676,7 +1724,9 @@ pub(crate) mod tests {
         let held = guard
             .delivery_observations
             .get("recipient")
-            .map(|observation| crate::delivery::doorbell::judge(observation, unix_milliseconds()));
+            .map(|observation| {
+                crate::delivery::doorbell::judge(observation, WAITED, unix_milliseconds())
+            });
         assert_eq!(held, Some(Err(crate::delivery::doorbell::Hold::Draft)));
         assert_eq!(
             clocks(&mut guard, "sender", false),
@@ -1829,7 +1879,11 @@ pub(crate) mod tests {
         observation.status_changed_at_unix_ms = long_ago;
         observation.entered_working_at_unix_ms = long_ago;
         let judge = |runtime: &Runtime, now: u64| {
-            crate::delivery::doorbell::judge(&runtime.delivery_observations["recipient"], now)
+            crate::delivery::doorbell::judge(
+                &runtime.delivery_observations["recipient"],
+                WAITED,
+                now,
+            )
         };
         assert_eq!(judge(&guard, unix_milliseconds()), Ok(()));
 
@@ -1871,6 +1925,7 @@ pub(crate) mod tests {
         assert_eq!(
             crate::delivery::doorbell::judge(
                 &guard.delivery_observations["recipient"],
+                WAITED,
                 unix_milliseconds() + 120_000
             ),
             Ok(())
@@ -2054,7 +2109,7 @@ pub(crate) mod tests {
             observation.last_submit_at_unix_ms = long_ago;
             observation.status_changed_at_unix_ms = long_ago;
             guard
-                .delivery_bell_verdict(&target.actor, unix_milliseconds())
+                .delivery_bell_verdict(&target.actor, WAITED, unix_milliseconds())
                 .err()
         };
         assert_eq!(
@@ -2086,9 +2141,15 @@ pub(crate) mod tests {
             observation.status_changed_at_unix_ms = long_ago;
         }
         let now = unix_milliseconds();
-        assert!(guard.delivery_bell_verdict(&target.actor, now).is_ok());
+        assert!(
+            guard
+                .delivery_bell_verdict(&target.actor, WAITED, now)
+                .is_ok()
+        );
         assert_eq!(
-            guard.delivery_bell_verdict(&target.actor, long_ago).err(),
+            guard
+                .delivery_bell_verdict(&target.actor, WAITED, long_ago)
+                .err(),
             Some(Hold::Quiet)
         );
         let replaced: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
@@ -2096,13 +2157,17 @@ pub(crate) mod tests {
         ]})).unwrap();
         guard.observe_delivery(crate::node::TEST_NODE, &replaced, None, None);
         assert_eq!(
-            guard.delivery_bell_verdict(&target.actor, now).err(),
+            guard
+                .delivery_bell_verdict(&target.actor, WAITED, now)
+                .err(),
             Some(Hold::Session)
         );
         let empty: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[]})).unwrap();
         guard.observe_delivery(crate::node::TEST_NODE, &empty, None, None);
         assert_eq!(
-            guard.delivery_bell_verdict(&target.actor, now).err(),
+            guard
+                .delivery_bell_verdict(&target.actor, WAITED, now)
+                .err(),
             Some(Hold::Absent)
         );
     }
@@ -2241,6 +2306,7 @@ pub(crate) mod tests {
                     Command::Pull {
                         prompt_digest: prompt_digest.clone(),
                         session: session.map(str::to_owned),
+                        tool: false,
                     },
                 )
                 .unwrap();
@@ -2261,6 +2327,7 @@ pub(crate) mod tests {
                     Command::Pull {
                         prompt_digest: Some("prompt".into()),
                         session: None,
+                        tool: false,
                     },
                 )
                 .err()
@@ -2270,6 +2337,7 @@ pub(crate) mod tests {
         let pull = |session: String| Command::Pull {
             prompt_digest: None,
             session: Some(session),
+            tool: false,
         };
         // An id past the session bound is refused before it is hashed under the lock.
         assert_eq!(
@@ -2306,6 +2374,115 @@ pub(crate) mod tests {
         drop(worker);
     }
 
+    /// PRD letters-to-busy-agents D-02, D-05, D-09: a tool event's ask from
+    /// the pane's own session is answered from that pane as the core
+    /// observes it, with a `--now` letter at once and one still waiting left
+    /// pending; it submits no prompt, and another session's ask is refused.
+    #[test]
+    fn a_tool_events_ask_hands_a_working_agent_its_due_letters_and_submits_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, sender, _, path) = fixture(root.path());
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let mut guard = runtime.lock().unwrap();
+        guard.install_delivery_client(client);
+        let own = crate::wire::session_digest("hook-session");
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
+            {"id":"recipient","pane_id":"recipient","agent":"opencode","agent_status":"working","state_change_seq":2,"lineage_session":own},
+        ]})).unwrap();
+        guard.observe_delivery(crate::node::TEST_NODE, &payload, None, None);
+        let recipient = guard.delivery_observations["recipient"].actor.clone();
+        let send = |intent: &str, now: bool| Command::Send {
+            target: "recipient".into(),
+            intent: intent.into(),
+            body: format!("{intent} body"),
+            kind: "request".into(),
+            now,
+        };
+        let sender_context = authority(&sender).context;
+        let mut sent = Vec::new();
+        for (intent, now) in [("waits", false), ("urgent", true)] {
+            let prepared = guard
+                .prepare_delivery(
+                    crate::node::TEST_NODE,
+                    "sender",
+                    &sender_context,
+                    None,
+                    send(intent, now),
+                )
+                .unwrap();
+            drop(guard);
+            let letter = prepared.run(Duration::from_secs(5)).unwrap();
+            assert_eq!(letter["immediate"], now, "{intent}");
+            sent.push(letter["id"].as_str().unwrap().to_owned());
+            guard = runtime.lock().unwrap();
+        }
+        let recipient_context = authority(&recipient).context;
+        let pull = |session: &str| Command::Pull {
+            prompt_digest: None,
+            session: Some(session.into()),
+            tool: true,
+        };
+        clocks(&mut guard, "recipient", true);
+        let prepared = guard
+            .prepare_delivery(
+                crate::node::TEST_NODE,
+                "recipient",
+                &recipient_context,
+                None,
+                pull("hook-session"),
+            )
+            .unwrap();
+        assert_eq!(
+            written(&mut guard),
+            (false, false, false),
+            "nothing submitted"
+        );
+        drop(guard);
+        let intake = prepared.run(Duration::from_secs(5)).unwrap();
+        assert_eq!(intake["ids"], json!([sent[1]]));
+        let context = intake["context"].as_str().unwrap();
+        assert!(context.contains("urgent body") && !context.contains("waits body"));
+        let mut guard = runtime.lock().unwrap();
+        assert_eq!(
+            guard
+                .prepare_delivery(
+                    crate::node::TEST_NODE,
+                    "recipient",
+                    &recipient_context,
+                    None,
+                    pull("another-session"),
+                )
+                .err()
+                .as_deref(),
+            Some("session_mismatch")
+        );
+        assert_eq!(
+            guard
+                .prepare_delivery(
+                    crate::node::TEST_NODE,
+                    "recipient",
+                    &recipient_context,
+                    None,
+                    Command::Pull {
+                        prompt_digest: None,
+                        session: None,
+                        tool: true,
+                    },
+                )
+                .err()
+                .as_deref(),
+            Some("session_mismatch")
+        );
+        drop(guard);
+        drop(worker);
+    }
+
     #[test]
     fn a_pane_reaches_a_factory_only_while_it_exists_and_only_the_factory_sends_as_it() {
         let root = tempfile::tempdir().unwrap();
@@ -2327,6 +2504,7 @@ pub(crate) mod tests {
             intent: intent.into(),
             body: "done".into(),
             kind: "report".into(),
+            now: false,
         };
         assert_eq!(
             guard
@@ -2404,6 +2582,7 @@ pub(crate) mod tests {
                     intent: "factory-answer".into(),
                     body: "noted".into(),
                     kind: "report".into(),
+                    now: false,
                 },
             )
             .unwrap();
@@ -2496,6 +2675,7 @@ pub(crate) mod tests {
                     intent: "remote-once".into(),
                     body: "done".into(),
                     kind: "report".into(),
+                    now: false,
                 },
             )
             .unwrap();
@@ -2531,6 +2711,7 @@ pub(crate) mod tests {
                 intent: "checkout-send".into(),
                 body: "hello".into(),
                 kind: "request".into(),
+                now: false,
             },
             Command::Inbox,
             Command::WatchStart {
@@ -2619,6 +2800,7 @@ pub(crate) mod tests {
                         intent: "must-refuse".into(),
                         body: "private".into(),
                         kind: "request".into(),
+                        now: false,
                     },
                 )
                 .unwrap()
@@ -2897,7 +3079,7 @@ pub(crate) mod tests {
         read_nothing_waits(observation);
         observation.status_changed_at_unix_ms = 0;
         let observation = observation.clone();
-        crate::delivery::doorbell::judge(&observation, unix_milliseconds() + 600_000)
+        crate::delivery::doorbell::judge(&observation, WAITED, unix_milliseconds() + 600_000)
     }
 
     #[test]

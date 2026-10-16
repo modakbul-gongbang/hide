@@ -66,7 +66,7 @@ fn main() -> ExitCode {
             ) =>
         {
             if cursor_permission_hook(&arguments) {
-                print_line(basic::CURSOR_ALLOW);
+                let _ = print_line(basic::CURSOR_ALLOW);
             }
             if antigravity_tool_hook(&arguments) {
                 print_line(antigravity::ASK);
@@ -77,8 +77,9 @@ fn main() -> ExitCode {
     };
     match arguments.first().map(String::as_str) {
         Some("hook") => {
-            // Grok and Cursor have no Memory or letters: their hooks carry the
-            // spawn guard, the subagent count and Cursor's session guidance
+            // Grok and Cursor have no Memory and no bell: their hooks carry the
+            // spawn guard, the subagent count, Cursor's session guidance and,
+            // at a tool call, the letters due while the agent works
             // (`hide_agent_hooks::guidance`, `hide_agent_hooks::basic`).
             if let Some(agent) = argument_value("--runtime", &arguments)
                 .and_then(|value| GuidanceAgent::from_id(&value))
@@ -169,7 +170,7 @@ fn usage() -> String {
      [--source <install marker>]\n       \
      hide-agent-hooks hook --runtime antigravity \
      --event <SessionStart|UserPromptSubmit|PreToolUse|Stop> [--source <install marker>]\n       \
-     hide-agent-hooks <opencode|pi|omp> <start|prompt|confirm|tool|subagents>\n       \
+     hide-agent-hooks <opencode|pi|omp> <start|prompt|confirm|tool|letters|subagents>\n       \
      hide-agent-hooks doctor [--json]"
         .to_owned()
 }
@@ -215,25 +216,22 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
     if dialect == HookDialect::Cursor && inside_grok() {
         return;
     }
-    let answer = std::panic::catch_unwind(|| match event {
-        HookEvent::PreToolUse => guard_refusal(dialect, agent.id(), started).map(|reason| {
-            match dialect {
-                HookDialect::Cursor => basic::cursor_deny(&reason),
-                // Grok takes Claude Code's refusal envelope.
-                _ => hide_agent_hooks::spawn_guard::deny_output(&reason),
-            }
-        }),
-        HookEvent::SessionStart => guidance::stdout(
-            agent,
-            &guidance::session_context(workspace_context::live_context().as_deref()),
+    let (answer, intake) = std::panic::catch_unwind(|| match event {
+        HookEvent::PreToolUse => basic_tool_call(dialect, agent.id(), started),
+        HookEvent::SessionStart => (
+            guidance::stdout(
+                agent,
+                &guidance::session_context(workspace_context::live_context().as_deref()),
+            ),
+            None,
         ),
-        _ => None,
+        _ => (None, None),
     })
     .unwrap_or_else(|_| {
         if event == HookEvent::PreToolUse {
             guard_failed(arguments, "panic");
         }
-        None
+        (None, None)
     });
     let answer = match answer {
         None if dialect == HookDialect::Cursor && basic::cursor_permission_event(event) => {
@@ -241,10 +239,64 @@ fn run_basic_hook(agent: GuidanceAgent, arguments: &[String], started: Instant) 
         }
         answer => answer,
     };
-    if let Some(answer) = answer {
-        print_line(&answer);
+    let printed = answer.is_some_and(|answer| print_line(&answer));
+    // The letters the answer carries are received once it reached the agent:
+    // a flush that failed leaves them pending for the next event.
+    if let Some(intake) = intake.filter(|_| printed)
+        && let Err(failure) = hide_agent_hooks::delivery::confirm(&intake, started + GUARD_BUDGET)
+        && let Some(home) = home_directory()
+    {
+        hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
     }
     let _ = std::panic::catch_unwind(|| count_basic(dialect, event, started));
+}
+
+/// A Grok or Cursor tool call: the guards' refusal in the agent's shape, or,
+/// when the call runs, the letters due while the agent works as the context
+/// the agent reads with the tool's result (PRD letters-to-busy-agents D-02),
+/// asked in a Herdr pane for the session the payload names and confirmed by
+/// the caller once printed. Only the tools the agent's matcher names reach
+/// this hook (`guidance`), so a letter waits through the others.
+fn basic_tool_call(
+    dialect: HookDialect,
+    runtime_id: &str,
+    started: Instant,
+) -> (Option<String>, Option<hide_agent_hooks::delivery::Intake>) {
+    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
+    else {
+        if let Some(home) = home_directory() {
+            hide_agent_hooks::guardrails::record_failure(&home, runtime_id, "payload_deadline");
+        }
+        return (None, None);
+    };
+    if let Some(reason) = guard_refusal(dialect, runtime_id, started, &payload, truncated) {
+        let answer = match dialect {
+            HookDialect::Cursor => basic::cursor_deny(&reason),
+            // Grok takes Claude Code's refusal envelope.
+            _ => hide_agent_hooks::spawn_guard::deny_output(&reason),
+        };
+        return (Some(answer), None);
+    }
+    let in_pane = std::env::var("HERDR_PANE_ID").is_ok_and(|value| !value.is_empty());
+    let Some(session) = (in_pane && dialect.adapter().tool_letters.is_some())
+        .then(|| basic::session(&payload, truncated, dialect))
+        .flatten()
+    else {
+        return (None, None);
+    };
+    match hide_agent_hooks::delivery::pull_at_tool(started + GUARD_BUDGET, &session) {
+        Ok(Some(intake)) => (
+            Some(basic::context_answer(dialect, &intake.context)),
+            Some(intake),
+        ),
+        Ok(None) => (None, None),
+        Err(failure) => {
+            if let Some(home) = home_directory() {
+                hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
+            }
+            (None, None)
+        }
+    }
 }
 
 /// agy's hook (PRD antigravity-first-class; `hide_agent_hooks::antigravity`):
@@ -261,11 +313,16 @@ fn run_antigravity_hook(arguments: &[String], started: Instant) {
         return;
     };
     if event == HookEvent::PreToolUse {
+        // A payload that does not arrive in time refuses nothing: the call
+        // is left to agy's own rules, and the miss is recorded.
         let refusal = std::panic::catch_unwind(|| {
+            let (payload, truncated) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)?;
             guard_refusal(
                 HookDialect::Antigravity,
                 GuidanceAgent::Antigravity.id(),
                 started,
+                &payload,
+                truncated,
             )
         })
         .unwrap_or_else(|_| {
@@ -364,10 +421,14 @@ fn antigravity_event(event: HookEvent, started: Instant) {
             );
         }
         // Every model call of a turn runs `PreInvocation`; the prompt's
-        // first is the prompt hook, and the others ask for nothing.
+        // first is the prompt hook, and a later one is the gap after a tool,
+        // where the letters due while the agent works are handed over (PRD
+        // letters-to-busy-agents D-02).
         (HookEvent::UserPromptSubmit, None) => {
             if antigravity::Event::read(&payload, truncated).invocation == Some(0) {
                 antigravity_prompt(&home, &conversation, started);
+            } else {
+                antigravity_tool_gap(&home, &conversation, started);
             }
         }
         (HookEvent::Stop, None) => {
@@ -444,6 +505,50 @@ fn antigravity_prompt(home: &std::path::Path, conversation: &str, started: Insta
     }
 }
 
+/// A model call after a tool of agy's turn: the letters due while it works,
+/// injected as a system message the model reads before its next step, and
+/// confirmed once printed, as Grok's and Cursor's tool hook confirms. Nothing
+/// due, a failed ask or a pane the helper is not in answer nothing, and agy
+/// runs the call as it would.
+fn antigravity_tool_gap(home: &std::path::Path, conversation: &str, started: Instant) {
+    let in_pane = std::env::var("HERDR_PANE_ID").is_ok_and(|value| !value.is_empty());
+    if !in_pane {
+        return;
+    }
+    let delivery_deadline = started + INTAKE_BUDGET;
+    let intake = match hide_agent_hooks::delivery::pull_at_tool(delivery_deadline, conversation) {
+        Ok(Some(intake)) => intake,
+        Ok(None) => return,
+        Err(failure) => {
+            hide_agent_hooks::delivery::diagnose_failure(home, &failure);
+            return;
+        }
+    };
+    let Some(answer) = antigravity::inject(&intake.context) else {
+        return;
+    };
+    let answer = if cfg!(windows) {
+        hide_agent_hooks::runtime::ascii_json(&answer)
+    } else {
+        answer
+    };
+    let mut stdout = std::io::stdout().lock();
+    let flushed = writeln!(stdout, "{answer}")
+        .and_then(|_| stdout.flush())
+        .is_ok();
+    drop(stdout);
+    if intake.ids.is_empty() {
+        return;
+    }
+    if flushed {
+        if let Err(failure) = hide_agent_hooks::delivery::confirm(&intake, delivery_deadline) {
+            hide_agent_hooks::delivery::diagnose_failure(home, &failure);
+        }
+    } else {
+        hide_agent_hooks::delivery::diagnose(home, "stdout");
+    }
+}
+
 /// Memory's context for agy's `event` in `conversation`, the session agy's
 /// transcript, and so Memory's receipts, know it by.
 fn antigravity_memory(
@@ -508,14 +613,17 @@ fn count_basic(dialect: HookDialect, event: HookEvent, started: Instant) {
 /// PowerShell, which re-encodes what a program prints in the console code
 /// page, so the answer goes out as ASCII with `\u` escapes, as the runtime
 /// hooks' does.
-fn print_line(json: &str) {
+/// Prints one answer line; whether it was written and flushed.
+fn print_line(json: &str) -> bool {
     let json = if cfg!(windows) {
         hide_agent_hooks::runtime::ascii_json(json)
     } else {
         json.to_owned()
     };
     let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "{json}").and_then(|_| stdout.flush());
+    writeln!(stdout, "{json}")
+        .and_then(|_| stdout.flush())
+        .is_ok()
 }
 
 /// The spawn guard (`hide_agent_hooks::spawn_guard`) of Claude Code's and
@@ -535,7 +643,18 @@ fn run_spawn_guard(arguments: &[String], started: Instant) {
     if hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name)).is_some() {
         return;
     }
-    if let Some(reason) = guard_refusal(runtime.dialect(), runtime.id(), started) {
+    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
+    else {
+        guard_failed(arguments, "payload_deadline");
+        return;
+    };
+    if let Some(reason) = guard_refusal(
+        runtime.dialect(),
+        runtime.id(),
+        started,
+        &payload,
+        truncated,
+    ) {
         print_line(&hide_agent_hooks::spawn_guard::deny_output(&reason));
     }
 }
@@ -556,27 +675,26 @@ fn guard_failed(arguments: &[String], cause: &str) {
 /// failure of its own let it run). A refusal and an unreachable daemon are
 /// written to the guard's log here; the caller prints the answer in its
 /// runtime's form.
-fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Option<String> {
+fn guard_refusal(
+    dialect: HookDialect,
+    runtime_id: &str,
+    started: Instant,
+    payload: &[u8],
+    truncated: bool,
+) -> Option<String> {
     use hide_agent_hooks::spawn_guard::{self as guard, Registration};
 
     let pane = std::env::var("HERDR_PANE_ID")
         .ok()
         .filter(|value| !value.is_empty());
     let home = home_directory();
-    let Some((payload, truncated)) = read_stdin_before_deadline(started + GUARD_PAYLOAD_BUDGET)
-    else {
-        if let Some(home) = &home {
-            hide_agent_hooks::guardrails::record_failure(home, runtime_id, "payload_deadline");
-        }
-        return None;
-    };
     // The project's guardrails come first, in any session of a guarded
     // project, a Herdr pane or not (PRD agent-guardrails B22): they read only
     // local files, and a call they refuse never reaches the daemon.
     if let Some(home) = &home
         && let Some(reason) =
             hide_agent_hooks::guardrails::refusal_for(home, runtime_id, pane.as_deref(), || {
-                hide_agent_hooks::guardrails::payload::read_hook(&payload, truncated, dialect)
+                hide_agent_hooks::guardrails::payload::read_hook(payload, truncated, dialect)
             })
     {
         return Some(reason);
@@ -586,9 +704,9 @@ fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Op
     // Question tools have no shell command and take their own readonly route,
     // for an agent whose question tools are confirmed to reach this hook
     // (Grok's are not yet, so its questions stay native).
-    if let Some(question) = (guard::may_hold_question(&payload)
+    if let Some(question) = (guard::may_hold_question(payload)
         && hide_agent_adapter::direct_ask_kind(runtime_id).is_some())
-    .then(|| guard::read_question(&payload, truncated, dialect))
+    .then(|| guard::read_question(payload, truncated, dialect))
     .flatten()
     {
         let home = home_directory()?;
@@ -611,10 +729,10 @@ fn guard_refusal(dialect: HookDialect, runtime_id: &str, started: Instant) -> Op
         };
     }
     // Every shell call comes through here: this one search decides the rest.
-    if !guard::may_hold_launch(&payload) {
+    if !guard::may_hold_launch(payload) {
         return None;
     }
-    let call = guard::read_call(&payload, truncated, dialect)?;
+    let call = guard::read_call(payload, truncated, dialect)?;
     let launch = guard::find_launch(&call.command, &|name| std::env::var(name).ok())?;
     let home = home_directory()?;
     let program = workspace_context::cli_program()?;

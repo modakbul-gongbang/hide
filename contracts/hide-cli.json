@@ -657,6 +657,11 @@
                         "id": {
                             "type": "string"
                         },
+                        "immediate": {
+                            "default": false,
+                            "description": "Sent with `hide request send --now`: delivered at the recipient's next safe gap while it works, without the mid-turn wait (PRD letters-to-busy-agents D-05). An older build drops the field at its next save, and the letter then waits as any other.",
+                            "type": "boolean"
+                        },
                         "intake_from": {
                             "default": null,
                             "description": "Where the letter's wait for intake began: on its recipient machine's clock while the ledger keeps one (`Ledger::node_clocks`), on the wall clock otherwise; null is its creation on the wall clock.",
@@ -687,6 +692,13 @@
                         },
                         "state": {
                             "$ref": "#/definitions/State"
+                        },
+                        "tool_handovers": {
+                            "default": 0,
+                            "description": "How many tool events handed the letter over while its recipient worked (PRD letters-to-busy-agents D-11): a handover is confirmed by the script once the host kept it, and after three unconfirmed ones the letter waits for the next prompt or `hide inbox`, as it does after three bells.",
+                            "format": "uint8",
+                            "minimum": 0.0,
+                            "type": "integer"
                         },
                         "waiting_answer": {
                             "type": "boolean"
@@ -723,7 +735,9 @@
                         "watch_warning",
                         "answer_wait_ended",
                         "bell_line",
-                        "intake_from"
+                        "intake_from",
+                        "immediate",
+                        "tool_handovers"
                     ],
                     "type": "object"
                 },
@@ -961,6 +975,11 @@
                 "id": {
                     "type": "string"
                 },
+                "immediate": {
+                    "default": false,
+                    "description": "Sent with `hide request send --now`: delivered at the recipient's next safe gap while it works, without the mid-turn wait (PRD letters-to-busy-agents D-05). An older build drops the field at its next save, and the letter then waits as any other.",
+                    "type": "boolean"
+                },
                 "intake_from": {
                     "default": null,
                     "description": "Where the letter's wait for intake began: on its recipient machine's clock while the ledger keeps one (`Ledger::node_clocks`), on the wall clock otherwise; null is its creation on the wall clock.",
@@ -991,6 +1010,13 @@
                 },
                 "state": {
                     "$ref": "#/definitions/State"
+                },
+                "tool_handovers": {
+                    "default": 0,
+                    "description": "How many tool events handed the letter over while its recipient worked (PRD letters-to-busy-agents D-11): a handover is confirmed by the script once the host kept it, and after three unconfirmed ones the letter waits for the next prompt or `hide inbox`, as it does after three bells.",
+                    "format": "uint8",
+                    "minimum": 0.0,
+                    "type": "integer"
                 },
                 "waiting_answer": {
                     "type": "boolean"
@@ -1027,7 +1053,9 @@
                 "watch_warning",
                 "answer_wait_ended",
                 "bell_line",
-                "intake_from"
+                "intake_from",
+                "immediate",
+                "tool_handovers"
             ],
             "title": "Letter",
             "type": "object"
@@ -1594,6 +1622,12 @@
                             "progress"
                         ]
                     }
+                },
+                {
+                    "name": "--now",
+                    "required": false,
+                    "requires": [],
+                    "value": null
                 }
             ],
             "repeats_at_most": null,
@@ -1716,6 +1750,14 @@
                     "value": {
                         "type": "session"
                     }
+                },
+                {
+                    "name": "--tool",
+                    "required": false,
+                    "requires": [
+                        "--session"
+                    ],
+                    "value": null
                 }
             ],
             "repeats_at_most": null,
@@ -1852,7 +1894,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:70fb06036493e7d6849fc4279d194b90bc35bb15da0bd127050b68fda7ec324b",
+    "digest": "sha256:435510802d8bc78c0b93c20e4fb1ea2d85bbd3349dcff3474588c679af29a56d",
     "envelopes": {
         "agent": {
             "answer": "value",

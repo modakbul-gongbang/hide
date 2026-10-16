@@ -35,6 +35,12 @@ fn all_core_gates_accept_the_same_aliases_without_enabling_other_agents() {
                 row.id
             );
             assert_eq!(
+                crate::delivery::mailbox::tool_letters(&spelling),
+                row.tool_letters.is_some(),
+                "{}: letters at a tool event",
+                row.id
+            );
+            assert_eq!(
                 crate::agent_sleep::sleeps_kind(&spelling),
                 row.supports(Feature::Sleep),
                 "{}: sleep",

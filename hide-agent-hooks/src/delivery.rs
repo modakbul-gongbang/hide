@@ -117,6 +117,25 @@ pub fn pull(deadline: Instant, prompt: &Prompt) -> Result<Option<Intake>, Failur
         arguments.extend(["--session", session]);
     }
     let answer = run_cli(&arguments, pull_deadline)?;
+    intake(answer)
+}
+
+/// The letters due while the agent works, asked at one of its tool events
+/// for the native session `session` (PRD letters-to-busy-agents D-02): the
+/// bodies a prompt's pull would hand over, once each letter's wait is over,
+/// for a kind whose hook, plugin or extension takes them there. A resting
+/// agent, a letter still waiting and a session that is not the pane's own
+/// get nothing.
+pub fn pull_at_tool(deadline: Instant, session: &str) -> Result<Option<Intake>, Failure> {
+    let pull_deadline = deadline.checked_sub(CONFIRM_RESERVE).ok_or("deadline")?;
+    let answer = run_cli(
+        &["inbox", "--hook", "--session", session, "--tool"],
+        pull_deadline,
+    )?;
+    intake(answer)
+}
+
+fn intake(answer: serde_json::Value) -> Result<Option<Intake>, Failure> {
     let intake: Intake = serde_json::from_value(answer).map_err(|_| "format")?;
     if intake.context.len() > CONTEXT_LIMIT || !valid_letter_ids(&intake.ids) {
         return Err("format".into());

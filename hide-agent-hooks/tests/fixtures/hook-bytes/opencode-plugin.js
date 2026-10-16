@@ -1,4 +1,4 @@
-// hide-opencode-plugin@2 sha256=2ae7e7070ce5614fb1d3228e86e1283adc2c61339a7887ca1f2e2492de467472
+// hide-opencode-plugin@5 sha256=aec638a69b9607672aad7133a05d29f424308870f2561319dfc6088308d27f71
 // Hide's OpenCode plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -18,6 +18,9 @@ const TOOL_BUDGET_MS = 2500;
 const START_BUDGET_MS = 8000;
 const CONFIRM_BUDGET_MS = 2000;
 const COUNT_BUDGET_MS = 2000;
+// A tool result's letters: the helper's budget, and how often a working session asks. A burst of tool calls asks
+// once per interval, so the cost per tool stays bounded, and a letter that is due waits at most this much longer.
+const LETTERS_BUDGET_MS = 1500;
 const LOOKUP_BUDGET_MS = 300;
 const OUTPUT_LIMIT = 64 * 1024;
 // Far inside the helper's 256 KiB input, so a pasted log never costs a prompt its letters.
@@ -324,13 +327,83 @@ async function onEvent(state, client, event) {
     return;
   }
   if (type === "message.part.updated") {
-    const id = properties.part?.id;
-    const pending = id && state.pending.get(id);
+    const part = properties.part;
+    // Hide's own text part is written once; a tool part is updated through its run and carries the letters its
+    // result got once it is completed.
+    const key = part?.type === "tool" ? (part.state?.status === "completed" ? toolKey(part.sessionID, part.callID) : undefined) : part?.id;
+    const pending = key && state.pending.get(key);
     if (!pending) return;
-    state.pending.delete(id);
-    // OpenCode wrote the prompt carrying the letters: only now are they received.
-    void helper(state, "confirm", { session_id: pending.session, letters: pending.letters }, CONFIRM_BUDGET_MS);
+    // A tool part is Hide's letters' only when the stored output still carries them: a later plugin may have
+    // rewritten the result, and a child session's call may share the id.
+    state.pending.delete(key);
+    // The letters a plugin after this one stripped from the stored result never reached the model: they stay
+    // pending in Hide and ride the next ask.
+    if (pending.text && !(typeof part.state?.output === "string" && part.state.output.includes(pending.text))) return;
+    // OpenCode wrote the prompt or the tool result carrying the letters: only now are they received.
+    confirmLetters(state, pending.session, pending.letters);
   }
+}
+
+/** Confirms the letters OpenCode stored; a letter Hide did not take stays pending there and rides the next ask. */
+function confirmLetters(state, session, letters) {
+  for (const letter of letters) state.confirming.add(letter);
+  void helper(state, "confirm", { session_id: session, letters }, CONFIRM_BUDGET_MS).then((answer) => {
+    const confirmed = Array.isArray(answer?.confirmed) ? answer.confirmed : [];
+    for (const letter of letters) {
+      state.confirming.delete(letter);
+      if (confirmed.includes(letter)) remember(state, state.confirmed, letter);
+    }
+  });
+}
+
+/** The pending key of a tool part: its session and call, since a child session may reuse a call id. */
+function toolKey(sessionID, callID) {
+  return typeof sessionID === "string" && typeof callID === "string" ? `${sessionID}\u0000${callID}` : undefined;
+}
+
+/** Forgets the writes that never came; the letters they carried stay pending in Hide and ride the next ask. */
+function forgetStale(state, now) {
+  for (const [name, old] of state.pending) {
+    if (now - old.at > PENDING_AGE_MS) state.pending.delete(name);
+  }
+}
+
+/** Whether letters this plugin handed over still wait for their receipt, OpenCode's write or Hide's confirmation. */
+function handoverOpen(state) {
+  forgetStale(state, Date.now());
+  if (state.confirming.size > 0) return true;
+  for (const entry of state.pending.values()) {
+    if (entry.letters.length > 0) return true;
+  }
+  return false;
+}
+
+/** Makes room for `key`; a letter left out stays pending in Hide. */
+function holdPending(state, key, entry) {
+  const now = Date.now();
+  forgetStale(state, now);
+  if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
+  state.pending.set(key, { ...entry, at: now });
+}
+
+/**
+ * The letters due while the pane's agent works, written after the tool's result so the agent reads them before its
+ * next step (PRD letters-to-busy-agents D-02); confirmed once OpenCode stored the completed tool part of that session
+ * with the letters still in its output. Only the pane's root session asks, at every tool result (a `--now` letter
+ * goes at the next one, D-05), except while letters it handed over still wait for their receipt: those are not
+ * written twice, and the receipt comes with the stored part, before the next result in practice.
+ */
+async function onToolResult(state, sessionID, input, output) {
+  if (!sessionID || sessionID !== state.root || typeof input?.callID !== "string") return;
+  if (handoverOpen(state)) return;
+  const answer = await helper(state, "letters", { session_id: sessionID }, LETTERS_BUDGET_MS);
+  if (typeof answer?.context !== "string" || !answer.context) return;
+  const letters = Array.isArray(answer.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
+  // A letter Hide already took is never written twice.
+  if (letters.some((letter) => state.confirmed.has(letter))) return;
+  const text = `<system-reminder>\n${answer.context.replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
+  output.output = typeof output.output === "string" && output.output ? `${output.output}\n\n${text}` : text;
+  if (letters.length > 0) holdPending(state, toolKey(sessionID, input.callID), { session: sessionID, letters, text });
 }
 
 async function onPrompt(state, client, directory, input, output) {
@@ -372,14 +445,7 @@ async function onPrompt(state, client, directory, input, output) {
   const text = `<system-reminder>\n${sections.join("\n\n").replace(REMINDER_TAG, "<\u200b$1")}\n</system-reminder>`;
   parts.push({ id, sessionID, messageID: message.id, type: "text", text, synthetic: true });
   const letters = Array.isArray(answer?.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
-  if (letters.length === 0) return;
-  const now = Date.now();
-  for (const [key, entry] of state.pending) {
-    if (now - entry.at > PENDING_AGE_MS) state.pending.delete(key);
-  }
-  // A letter left out stays pending in Hide and reaches the next prompt.
-  if (state.pending.size >= PENDING_LIMIT) state.pending.delete(state.pending.keys().next().value);
-  state.pending.set(id, { session: sessionID, letters, at: now });
+  if (letters.length > 0) holdPending(state, id, { session: sessionID, letters });
 }
 
 async function onTool(state, sessionID, directory, input, output) {
@@ -420,6 +486,8 @@ export const HidePlugin = async ({ client, directory }) => {
     guided: new Set(),
     started: false,
     pending: new Map(),
+    confirming: new Set(),
+    confirmed: new Set(),
     root: null,
     published: null,
     closed: false,
@@ -455,6 +523,12 @@ export const HidePlugin = async ({ client, directory }) => {
       } catch {}
       // The refusal is the one error this plugin raises: OpenCode hands its text to the model.
       if (reason) throw new Error(reason);
+    },
+    "tool.execute.after": async (input, output) => {
+      // A throw here would fail the tool call: every failure leaves its result unchanged.
+      try {
+        await onToolResult(state, input?.sessionID, input, output);
+      } catch {}
     },
     dispose: async () => {
       state.closed = true;

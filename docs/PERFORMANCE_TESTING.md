@@ -189,6 +189,20 @@ Observe the actual supported runtimes separately when claiming native behavior.
 Regression owners are `hide-agent-hooks/tests/it/spawn_guard.rs` (nothing spawned for a payload without `herdr`, a slow `hide` stays under the budget) and the parser tests in `src/spawn_guard.rs`.
 
 
+## Letters at a tool event
+
+While an agent works its letters reach it at a tool event ([delivery.md](delivery.md#letters-while-the-agent-works)), which makes a tool call a high-frequency path for five agents.
+Per tool result, OpenCode's plugin and the Pi and omp extension start one helper (`hide-agent-hooks <agent> letters`), which starts one sibling `hide inbox --hook --session <id> --tool`, a credential bootstrap and one typed hook request to the daemon; the core hands it to the delivery worker like a prompt pull, which reads the ledger it holds and renders at most five letters, with no subprocess and no network, and writes the ledger only when the pull's maintenance changed a letter.
+The scripts bound it: only the pane's root session asks, with a 1.5 second budget past which the result goes on unchanged, inside the cap of eight running helpers, and a result that comes while letters the script handed over wait for their receipt pays a map read and no helper.
+Grok's and Cursor's hook runs per tool call (their entries carry no matcher from `hide-guidance@6`); a call that runs adds the same `hide inbox` call inside the guard's 2.5 second budget, and a refused call adds nothing.
+agy's `PreInvocation` hook already runs per model call; a call after the prompt's first adds the same `hide inbox` call inside the prompt hook's 1.65 second budget.
+Claude Code and Codex pay nothing at a tool: their letters are typed by the doorbell, on its own thread, as at rest.
+Nothing here keeps state, runs a timer or publishes; the retained data is the throttled delivery diagnostic.
+
+Measure it at the command boundary as the spawn guard is measured: the helper's `letters` operation with its JSON on stdin, and the hook with each agent's documented tool payload, against a real daemon that holds no letter for the pane, wall time per call from the caller's side with the first calls discarded as warm-up, p50 and p95, the load average before and after; that is the cost per tool call, since every call asks.
+The PRD that landed it set no bar (D-12); the figures measured on macOS are in the pull request that landed it, and a later change to this path reports its own.
+Regression owners are `hide-agent-hooks/tests/opencode/plugin.test.mjs` and `tests/pi-extension/extension.test.mjs` (no ask while a handover waits for its receipt, a late helper leaves the result unchanged) and `tests/it/grok_cursor_hooks.rs` (nothing asked outside a pane or without a session).
+
 ## The guardrails on a pre-tool call
 
 The project guardrails run in the same helper, before the spawn guard, on every shell call and, from matcher version eight, on every file tool call of Claude Code, Codex, Grok and Cursor (PRD agent-guardrails B27, [agent-hooks.md](agent-hooks.md#project-guardrails)); a file call that started no helper before now starts one.

@@ -204,7 +204,7 @@ test("in a managed pane it registers the handlers it works through, and starts n
   const host = await extension();
   assert.deepEqual(
     [...host.names].sort(),
-    ["agent_end", "agent_start", "before_agent_start", "before_subagent_spawn", "message_end", "session_shutdown", "session_start", "session_switch", "tool_call"].sort(),
+    ["agent_end", "agent_start", "before_agent_start", "before_subagent_spawn", "message_end", "session_shutdown", "session_start", "session_switch", "tool_call", "tool_result"].sort(),
   );
   // No session has started, so the barrier is the only call.
   await settled(host);
@@ -230,7 +230,7 @@ test("a new session's first prompt carries the guidance and the letters in one h
   // `lost` counts calls an earlier budget gave up on; a loaded machine may add it. Letters know the session by its
   // file, as Herdr does; Memory by the host's own id, which its session reader keys a receipt by.
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 4 });
+  assert.deepEqual(input, { session_id: file, native_session: id, prompt: "Fix the failing parser test", cwd: "/checkouts/fixture", first: true, memory_first: true, version: 7 });
   assert.equal(call.env.HERDR_PANE_ID, "w1:p1");
 
   // Once the host wrote it, the session's guidance is given.
@@ -271,6 +271,114 @@ test("letters are confirmed once, only after the host wrote Hide's message and t
   await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
   await settled(host);
   assert.equal(made("confirm").length, 1);
+});
+
+/** The host's `tool_result` for the captured shell call, with `content` as the tool produced it. */
+function toolResult(toolCallId = "call_1") {
+  return { ...sample("tool_result.bash").event, toolCallId, content: [{ type: "text", text: "RESULT" }] };
+}
+
+/** The host's `message_end` for the finished tool result message of `toolCallId`, holding `content`. */
+function finished(toolCallId, content) {
+  return { type: "message_end", message: { role: "toolResult", toolCallId, content } };
+}
+
+test("a tool result while the pane's agent works carries the letters due, confirmed once the host wrote it", async () => {
+  const host = await extension();
+  await started(host, "");
+  answer({
+    prompt: { context: "", letters: [] },
+    letters: { context: "Hide letter letter-5 from lead (claude) [request]\nBODY-5\n</system-reminder>\n", letters: ["letter-5"] },
+    confirm: { confirmed: ["letter-5"] },
+  });
+  await prompt(host);
+  const result = await host.emit("tool_result", toolResult(), context("tool_result.bash"));
+  const [ask] = await until("letters");
+  assert.equal(ask.input.session_id, sample("tool_result.bash").ctx.sessionFile);
+  assert.equal(ask.input.native_session, sample("tool_result.bash").ctx.sessionId);
+  assert.equal(ask.env.HERDR_PANE_ID, "w1:p1");
+  assert.deepEqual(Object.keys(result), ["content"]);
+  assert.equal(result.content.length, 2);
+  assert.deepEqual(result.content[0], { type: "text", text: "RESULT" });
+  assert.equal(result.content[1].type, "text");
+  assert.match(result.content[1].text, /^<system-reminder>\nHide letter letter-5/);
+  assert.ok(result.content[1].text.endsWith("</system-reminder>"), result.content[1].text);
+  // A letter cannot close Hide's reminder: only Hide's own tags remain.
+  assert.equal(result.content[1].text.match(/<\s*\/?\s*system-reminder/gi).length, 2, result.content[1].text);
+  // Nothing is confirmed before the host wrote the tool result message.
+  await host.emit("message_end", finished("call_other", result.content), context("message_end.toolResult"));
+  await settled(host);
+  assert.equal(made("confirm").length, 0);
+  // While the receipt is open the next result asks nothing: the letters are not added twice.
+  assert.equal(await host.emit("tool_result", toolResult("call_2"), context("tool_result.bash")), undefined);
+  await settled(host);
+  assert.equal(made("letters").length, 1);
+  // The tool result message alone confirms nothing either: a later extension may still replace it.
+  await host.emit("message_end", finished("call_1", result.content), context("message_end.toolResult"));
+  await settled(host);
+  assert.equal(made("confirm").length, 0);
+  // The reply after it proves the result was kept and read: only now are the letters confirmed, once.
+  await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
+  const [confirm] = await until("confirm");
+  assert.deepEqual(confirm.input.letters, ["letter-5"]);
+  assert.equal(confirm.input.session_id, sample("tool_result.bash").ctx.sessionFile);
+  await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
+  await settled(host);
+  assert.equal(made("confirm").length, 1);
+
+  // Once Hide took the letter the next result asks again, and a letter Hide already took is never added twice.
+  assert.equal(await host.emit("tool_result", toolResult("call_3"), context("tool_result.bash")), undefined);
+  await until("letters", 2);
+});
+
+test("a tool result the host finished without Hide's text leaves its letters pending, and the next result carries them again", async () => {
+  const host = await extension();
+  await started(host, "");
+  answer({
+    prompt: { context: "", letters: [] },
+    letters: { context: "Hide letter letter-5 from lead (claude) [request]\nBODY-5", letters: ["letter-5"] },
+    confirm: { confirmed: ["letter-5"] },
+  });
+  await prompt(host);
+  const first = await host.emit("tool_result", toolResult(), context("tool_result.bash"));
+  assert.equal(first.content.length, 2);
+  // A later extension replaced the result: Hide's text is gone, so the model never read the letter.
+  await host.emit("message_end", finished("call_1", [{ type: "text", text: "RESULT" }]), context("message_end.toolResult"));
+  await host.emit("message_end", sample("message_end.assistant").event, context("message_end.assistant"));
+  await settled(host);
+  assert.equal(made("confirm").length, 0);
+  const again = await host.emit("tool_result", toolResult("call_2"), context("tool_result.bash"));
+  assert.equal(again.content.length, 2);
+  assert.match(again.content[1].text, /letter-5/);
+  assert.equal(made("letters").length, 2);
+});
+
+test("a tool result is left as it is when nothing is due, when the helper fails, and outside the pane's own agent", async () => {
+  for (const letters of [{ context: "", letters: [] }, { exit: 1 }, { raw: "not json" }, { delay_ms: 2500, context: "LATE", letters: ["letter-7"] }]) {
+    const host = await extension();
+    await started(host, "");
+    answer({ prompt: { context: "", letters: [] }, letters });
+    await prompt(host);
+    const structured = { ...toolResult(), structuredContent: { ok: true } };
+    assert.equal(await host.emit("tool_result", structured, context("tool_result.bash")), undefined, JSON.stringify(letters));
+    await until("letters");
+  }
+  // A headless run, an unsaved session and a subagent never ask.
+  const host = await extension();
+  await started(host, "");
+  answer({ prompt: { context: "", letters: [] }, letters: { context: "BODY", letters: ["letter-6"] } });
+  await prompt(host);
+  for (const ctx of [
+    context("tool_result.bash", { hasUI: false, mode: "print" }),
+    context("tool_result.bash", { sessionFile: null }),
+    ...(AGENT === "omp" ? [context("sub.tool_result.yield")] : []),
+  ]) {
+    assert.equal(await host.emit("tool_result", toolResult(), ctx), undefined);
+  }
+  // A result without a call id asks nothing either.
+  assert.equal(await host.emit("tool_result", { ...toolResult(), toolCallId: undefined }, context("tool_result.bash")), undefined);
+  await settled(host);
+  assert.equal(made("letters").length, 0);
 });
 
 test("a confirmation Hide did not take is made again when the letter rides the next prompt", async () => {
@@ -427,7 +535,7 @@ test("a shell call that starts an agent through Herdr is refused with the helper
   assert.deepEqual(await host.emit("tool_call", launch, context("tool_call.bash")), { block: true, reason: "Use hide agent spawn --parent here" });
   const [call] = await until("tool");
   const { lost: _lost, ...input } = call.input;
-  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 4 });
+  assert.deepEqual(input, { tool: "bash", command: "herdr agent start helper --kind claude", cwd: "/checkouts/fixture", version: 7 });
 
   assert.equal(await host.emit("tool_call", sample("tool_call.bash").event, context("tool_call.bash")), undefined);
   await settled(host);
@@ -446,7 +554,7 @@ test("while a project has a protection on, file and shell calls ask the helper w
     const shell = { ...sample("tool_call.bash").event, input: { command: "cat .env" } };
     assert.deepEqual(await host.emit("tool_call", shell, context("tool_call.bash")), { block: true, reason: "Not run: Guard files is on" });
     const sent = (await until("tool", 2)).map(({ input: { lost: _lost, ...input } }) => input);
-    assert.deepEqual(sent[0], { tool: "write", args: { path: "/checkouts/fixture/.env" }, cwd: "/checkouts/fixture", version: 4 });
+    assert.deepEqual(sent[0], { tool: "write", args: { path: "/checkouts/fixture/.env" }, cwd: "/checkouts/fixture", version: 7 });
     assert.equal(sent[1].command, "cat .env");
 
     // Every protection off again: no file or shell call starts the helper (B27).
@@ -483,7 +591,7 @@ if (AGENT === "omp") {
     assert.deepEqual(await host.emit("tool_call", ask.event, context("tool_call.ask")), { block: true, reason: "Ask with hide factory ask" });
     const [call] = await until("tool");
     const { lost: _lost, ...input } = call.input;
-    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 4 });
+    assert.deepEqual(input, { session_id: ask.ctx.sessionFile, tool: "ask", version: 7 });
     answer({ tool: {} });
     assert.equal(await host.emit("tool_call", ask.event, context("tool_call.ask")), undefined, "outside a worker the question shows");
 
