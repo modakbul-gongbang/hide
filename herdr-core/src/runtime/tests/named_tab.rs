@@ -307,3 +307,29 @@ fn retry_closes_beside_a_shell_the_worker_made_but_could_not_hand_over() {
         "the worker adopts the shell already in the tab"
     );
 }
+
+/// A shell the worker made in time but handed over after the close moved on
+/// (its deadline passed, or the connection changed) is still the close's own,
+/// so Retry closes beside it rather than refusing the tab as changed.
+#[test]
+fn a_shell_handed_over_after_the_close_moved_on_still_counts_for_retry() {
+    let mut runtime = started("Planning", true);
+    close_pane(&mut runtime, AGENT);
+    let effect = captured(&mut runtime);
+    let key = effect.key.clone();
+    runtime.close_operations.get_mut(&key).unwrap().phase = "unknown".into();
+    assert!(
+        runtime
+            .ingest_close_replacement(&effect, SHELL, session("Planning", true, &[AGENT, SHELL]))
+            .is_err()
+    );
+
+    // Herdr's events show the shell; the status check found the agent pane
+    // still open.
+    runtime.ingest_session(Ok(session("Planning", true, &[AGENT, SHELL])));
+    runtime.close_operations.get_mut(&key).unwrap().phase = "refused".into();
+    assert!(runtime.retry_agent_close(&key));
+    let operation = &runtime.close_operations[&key];
+    assert_eq!(operation.phase, "preparing", "the close goes on");
+    assert!(!operation.allow_replacement_create);
+}

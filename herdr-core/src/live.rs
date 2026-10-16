@@ -2234,10 +2234,12 @@ fn reopen_pane(
                 connector,
                 &format!("herdr-core:{key}:pane-layout"),
                 "layout.apply",
+                // The tab is still there under the name it has now, which
+                // may be a rename made after the close.
                 wire::layout_apply_params(
                     &current_layout.workspace_id,
                     Some(&context.tab_id),
-                    context.herdr_tab_label(),
+                    None,
                     &root,
                 )?,
             )?;
@@ -4715,8 +4717,8 @@ mod tests {
                         "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}
             }}),
             "layout.apply" => {
-                // An unnamed tab keeps its own label: Herdr would keep any
-                // label sent as the tab's name.
+                // The tab keeps its own label: Herdr would keep any label
+                // sent as the tab's name.
                 assert!(params["tab_label"].is_null());
                 let root = &params["root"];
                 assert_eq!(root["direction"], "right");

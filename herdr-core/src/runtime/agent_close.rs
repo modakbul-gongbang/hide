@@ -51,6 +51,15 @@ impl Runtime {
         shell: &str,
         payload: SessionSnapshotPayload,
     ) -> Result<(), String> {
+        // A shell made in the closing tab is the close's own even when the
+        // close moved on while it was made, so a retry closes beside it.
+        if request
+            .replacement
+            .as_ref()
+            .is_some_and(|context| context.replacement_in_tab)
+        {
+            self.note_shell_in_tab(&request.key, shell);
+        }
         let operation = self
             .close_operations
             .get(&request.key)
@@ -135,7 +144,6 @@ impl Runtime {
         shell: &str,
         payload: SessionSnapshotPayload,
     ) -> Result<(), String> {
-        self.note_shell_in_tab(&request.key, shell);
         let closing = self
             .close_operations
             .get(&request.key)
