@@ -536,7 +536,7 @@ function BodyRow({ card, actions, projectId, number, open, onToggle }: { card: P
 /**
  * 바뀐 파일 N (B36, B49): +/- at the right; opened, the files with generated
  * ones folded into one line. A file opens as D-27 says: the diff in this
- * Agent tab's Files, where the lane turns while the 보기 slot stays on the
+ * checkout's Files, where the lane turns while the 보기 slot stays on the
  * rail, or GitHub's files page.
  */
 function FilesRow({ pr, project, card, actions, open, onToggle }: { pr: PullRequest; project: Workspace; card: PrCard | null; actions: Actions; open: boolean; onToggle: () => void }) {

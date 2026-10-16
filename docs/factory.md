@@ -507,6 +507,9 @@ A refused merge is tried once and then waits for a person, never once per tick; 
 While a merge's commit is unnamed, a red run on a main head the Factory has not recorded is read as pending, not as an outside push.
 `request-changes --comment` returns the Task to `running`, clears its gates and sends the worker the comment.
 
+A Factory does not stack Tasks: a Task starts after every Task it depends on has merged ([When a Task may start](#when-a-task-may-start)), and each merges into main on its own.
+People and their agents stack by [CONTRIBUTING.md, Starting work beside open pull requests](../CONTRIBUTING.md#starting-work-beside-open-pull-requests): of two pull requests that conflict in code, the one green later goes on top of the other, only the bottom layer merges main, and a stack merges from the bottom; overlapping Tasks that join the top of a stack when they finish, rather than main, would follow the same rules (issue #645).
+
 **GitHub.** The merge is `gh pr merge` with the Factory's `merge_method` and `--match-head-commit` set to the commit the Task-stage verification passed on, so a push after it makes GitHub refuse the merge; a Factory without verification pins the head a person reviewed.
 A verified Factory with no passed commit refuses to merge, a pull request already merged returns its merge commit, and a merge GitHub answered before naming its commit is read again rather than recorded empty.
 `init` picks the first merge method the repository allows, in the order merge, squash, rebase, and `config` changes it.

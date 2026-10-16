@@ -57,8 +57,8 @@ impl Runtime {
             _ => return Ok(()),
         };
         let in_scope = self
-            .all_view_layouts(key)
-            .find_map(|layout| layout.area(expected_area))
+            .view_layout_of(key)
+            .and_then(|layout| layout.area(expected_area))
             .is_some_and(|area| {
                 area.displays
                     .iter()
@@ -81,9 +81,9 @@ impl Runtime {
         if let Some(area_id) = area_id {
             let empty = crate::view_layout::Layout::default();
             let known = self
-                .all_view_layouts(key)
-                .any(|layout| layout.area(area_id).is_some())
-                || (self.view_layout_of(key).is_none() && empty.area(area_id).is_some());
+                .view_layout_of(key)
+                .map_or(empty.area(area_id), |layout| layout.area(area_id))
+                .is_some();
             if !known {
                 return Err(layout_refusal(
                     crate::view_layout::LayoutError::UnknownArea(area_id.to_owned()),
@@ -99,20 +99,8 @@ impl Runtime {
         key: &(String, String),
         request_id: &str,
         caller_id: &str,
-        bound_browser: bool,
     ) {
-        let tab = self.control_caller_tab(key, caller_id).or_else(|| {
-            if bound_browser {
-                self.workspace_views
-                    .as_ref()?
-                    .views
-                    .get(&key.0, &key.1)?
-                    .view_owner
-                    .clone()
-            } else {
-                None
-            }
-        });
+        let tab = self.control_caller_tab(key, caller_id);
         if context.device_id == self.node.as_str() {
             if let Some(tab_id) = tab {
                 self.apply(super::Event::FocusTab(super::FocusTabPayload {
@@ -126,9 +114,6 @@ impl Runtime {
                 self.focus_checkout(&context.workspace_id, &context.checkout_id);
             }
         } else {
-            if let Some(tab) = &tab {
-                self.choose_remote_view_presentation(&context.device_id, tab);
-            }
             self.request_remote_control(super::RemoteControlPayload {
                 target_id: context.device_id.clone(),
                 request_id: format!("{request_id}-reveal"),
@@ -175,15 +160,9 @@ impl Runtime {
             return None;
         }
         let key = (device_id.to_owned(), checkout_path.to_owned());
-        let display = self
-            .all_view_layouts(&key)
-            .flat_map(|layout| layout.areas())
-            .flat_map(|area| area.displays.iter())
-            .find(|display| {
-                display.id == view_id
-                    && display.kind == DisplayKind::Browser
-                    && display.load == load
-            })?;
+        let display = self.view_displays(&key).find(|display| {
+            display.id == view_id && display.kind == DisplayKind::Browser && display.load == load
+        })?;
         Some(BrowserRouteSource {
             device_id: device_id.to_owned(),
             checkout_path: checkout_path.to_owned(),
@@ -393,57 +372,42 @@ impl Runtime {
             self.reconcile_view_displays();
             if self.open_adds_view(
                 &key,
-                pane_id,
                 &action,
                 material.as_ref().map(|material| material.path.as_str()),
             ) {
-                let tab = self.caller_parked_tab(&key, pane_id);
-                self.make_view_room(&key, tab.as_deref());
+                self.make_view_room(&key);
             }
-            // A pane of a tab the operator is not looking at keeps the
-            // operator's fronts and only bookmarks its own tab (D-05).
-            let parked = self.parked_caller(&key, pane_id, &action)?;
+            // A pane of a tab the operator is not looking at leaves the
+            // selection and the lane as they were and only bookmarks its own
+            // tab (D-04, B7); `--reveal` brings the View forward instead.
+            let kept = (!super::view_bookmarks::action_reveals(&action))
+                .then(|| self.background_caller_tab(&key, pane_id))
+                .flatten()
+                .map(|_| self.keep_front(&key));
             // An open the operator is looking at calls the lane as a click
             // does: from the front tab of the front Workspace, or revealed
             // (PRD right-lane B17), and keeps a tree that showed alone.
             let calls_lane = lane_call(&action).is_some_and(|reveal| {
-                reveal || parked.is_none() && self.front_workspace_key().as_ref() == Some(&key)
+                reveal || kept.is_none() && self.front_workspace_key().as_ref() == Some(&key)
             });
             let lone_tree = calls_lane && self.front_lone_tree().as_ref() == Some(&key);
-            let projected_action = parked
-                .as_ref()
-                .map_or_else(|| action.clone(), |parked| parked.action(action.clone()));
-            let mut applied = (|| {
-                self.check_browser_scope(&key, &projected_action)?;
-                if let Action::OpenBrowser { area_id, .. } = &projected_action {
-                    self.check_browser_area(&key, area_id.as_deref())?;
-                }
-                self.apply_workspace_action(
-                    &key,
-                    &context,
-                    request_id,
-                    pane_id,
-                    &projected_action,
-                    material,
-                )
-            })();
-            match &mut applied {
-                Ok(done) => {
-                    // Marked before the presentation is parked back, so the
-                    // mark lands in the layout the View is in (D-02).
-                    self.stamp_control_opener(&key, pane_id, &projected_action, &done.view_id);
-                    self.note_control_view(&key, pane_id, &action, &done.view_id, parked)?;
-                    if calls_lane {
-                        self.apply_area_intent_to(&key, AreaIntent::Files);
-                        if lone_tree {
-                            self.keep_lone_tree(&key);
-                        }
-                        // A view already in front still calls the lane, which
-                        // the page sees only if the change is announced.
-                        done.changed = true;
+            let mut applied =
+                self.apply_workspace_action(&key, &context, request_id, pane_id, &action, material);
+            if let Ok(done) = &mut applied {
+                self.stamp_control_opener(&key, pane_id, &action, &done.view_id);
+                self.note_caller_view(&key, pane_id, &action, &done.view_id);
+                if calls_lane {
+                    self.apply_area_intent_to(&key, AreaIntent::Files);
+                    if lone_tree {
+                        self.keep_lone_tree(&key);
                     }
+                    // A view already in front still calls the lane, which
+                    // the page sees only if the change is announced.
+                    done.changed = true;
                 }
-                Err(_) => self.put_back_parked(&key, parked),
+            }
+            if let Some(kept) = kept {
+                self.restore_front(kept);
             }
             applied
         })();
@@ -538,13 +502,7 @@ impl Runtime {
                 .and_then(|layout| layout.area_of(&view_id))
                 .map(|area| area.id.clone());
             if *reveal {
-                self.reveal_workspace_control(
-                    context,
-                    key,
-                    request_id,
-                    caller_id,
-                    area_id.is_some(),
-                );
+                self.reveal_workspace_control(context, key, request_id, caller_id);
             }
             return Ok(ActionResult {
                 context: context.clone(),
@@ -675,7 +633,7 @@ impl Runtime {
                 .view_layout_of(key)
                 .map(|layout| layout.active_area().id.clone());
             if *reveal {
-                self.reveal_workspace_control(context, key, request_id, caller_id, false);
+                self.reveal_workspace_control(context, key, request_id, caller_id);
             }
             return Ok(ActionResult {
                 context: context.clone(),
@@ -708,19 +666,7 @@ impl Runtime {
                     .and_then(|layout| layout.area_of(view_id))
                     .map(|area| area.id.clone());
                 if *reveal {
-                    self.reveal_workspace_control(
-                        context,
-                        key,
-                        request_id,
-                        caller_id,
-                        matches!(
-                            action,
-                            Action::Select {
-                                expected_browser_area: Some(_),
-                                ..
-                            }
-                        ),
-                    );
+                    self.reveal_workspace_control(context, key, request_id, caller_id);
                 }
                 (view_id.clone(), selected || *reveal, area)
             }
@@ -767,16 +713,13 @@ impl Runtime {
                         load: None,
                     });
                 };
-                let shared = self
-                    .all_view_layouts(key)
-                    .flat_map(|layout| layout.displays())
-                    .any(|other| {
-                        other.id != *view_id
-                            && match &display.tab_id {
-                                Some(tab) => other.tab_id.as_ref() == Some(tab),
-                                None => other.shows(&display.path, display.kind, display.committed),
-                            }
-                    });
+                let shared = self.view_displays(key).any(|other| {
+                    other.id != *view_id
+                        && match &display.tab_id {
+                            Some(tab) => other.tab_id.as_ref() == Some(tab),
+                            None => other.shows(&display.path, display.kind, display.committed),
+                        }
+                });
                 if !shared
                     && display
                         .tab_id
@@ -927,7 +870,7 @@ impl Runtime {
         // An untouched Workspace has no stored row yet. Its View tree is the
         // default one-empty-area layout, even when it is not the front one.
         let empty = crate::view_layout::Layout::default();
-        let layout = self.caller_view_layout(&key, pane_id).unwrap_or(&empty);
+        let layout = self.view_layout_of(&key).unwrap_or(&empty);
         let views = (query == Query::ViewList).then(|| {
             layout
                 .areas()

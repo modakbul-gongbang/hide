@@ -164,7 +164,7 @@ test("the pin docks the lane once, keeps it through a terminal click, a tool and
     await expect(page.locator("[data-lane]")).toHaveAttribute("data-lane", "prs");
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "docked");
 
-    // Another Agent tab keeps the lane and shows its own views.
+    // Another Agent tab keeps the lane and adds its view to the checkout's one list.
     await railTool(page, "files").click();
     const tab = (id: string) => page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`);
     await tab(lane.second.tab).click();
@@ -173,7 +173,7 @@ test("the pin docks the lane once, keeps it through a terminal click, a tool and
     await tab(lane.herdr.tab).click();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "docked");
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
-    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);
+    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(2);
 
     lane.daemon = await lane.daemon.restart();
     await page.goto("about:blank");

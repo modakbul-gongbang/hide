@@ -2,21 +2,28 @@ import { deviceScope } from "./agentScope";
 // What ⌘n and ⌥n select, and the number each tab and agent row carries
 // while a hold reveals it (PRD electron-digit-shortcuts-hints D-02). The
 // number is the screen order at that moment, first to ninth: the strip's
-// tabs left to right, the Agents list's drawn rows top to bottom. A tenth
-// item has no number, and a number with nothing at it selects nothing.
+// tabs left to right, the sidebar list's drawn rows top to bottom, the
+// 프로젝트 tree's roots or, while the `프로젝트 | 태스크` switch shows the 태스크
+// list, its task rows (PRD sidebar-task-lens). A tenth item has no number,
+// and a number with nothing at it selects nothing.
 
 import { areasOf } from "./areaLayout";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { frontDeviceId } from "./devices";
 import { deviceListedAgents } from "./navigation";
+import { agentsByPane, allAgents as everyPaneAgent } from "./paneAgents";
 import { projectRows, activeCheckouts, inactiveCheckouts, folderCheckout, projectExpanded } from "./projects";
 import { checkoutAgentRows } from "./projectBoard";
 import { sidebarTabGroups } from "./sidebarTabs";
 import { contextWorkspaces, contextAgents } from "./remote";
 import { DIGITS, type Digit } from "./shortcuts";
-import type { AgentRow, Checkout, SnapshotRest } from "./snapshot";
+import { catalogWorkspaces, type AgentRow, type Checkout, type SnapshotRest } from "./snapshot";
+import { drawnTasks, taskList, taskSections } from "./taskList";
 import { agentEntries } from "./workspace";
+
+/** The page-local folds the two lists' drawn orders depend on (`ui.ts`). */
+export type SidebarFolds = { raisedOpen: readonly string[]; taskFoldsOpen: readonly string[] };
 
 /** Local area tree order, then each bar left to right; devices retain their strip order. */
 export function numberedTabs(checkout: Checkout, layout?: AgentLayout | null): Map<Digit, string> {
@@ -29,12 +36,17 @@ export function numberedTabs(checkout: Checkout, layout?: AgentLayout | null): M
   return numbered;
 }
 
-/** The pane id at each number of the Agents list's drawn rows, in number order. */
-export function numberedAgents(rows: readonly TreeRow[]): Map<Digit, string> {
+/** The pane id at each number, the first nine of `panes` in their order, a pane counted once. */
+export function numberedPanes(panes: readonly string[]): Map<Digit, string> {
   const numbered = new Map<Digit, string>();
   const seen = new Set<string>();
-  rows.filter((row) => !seen.has(row.agent.pane_id) && !!seen.add(row.agent.pane_id)).slice(0, DIGITS.length).forEach((row, index) => numbered.set(DIGITS[index]!, row.agent.pane_id));
+  panes.filter((pane) => !seen.has(pane) && !!seen.add(pane)).slice(0, DIGITS.length).forEach((pane, index) => numbered.set(DIGITS[index]!, pane));
   return numbered;
+}
+
+/** The pane id at each number of the Agents list's drawn rows, in number order. */
+export function numberedAgents(rows: readonly TreeRow[]): Map<Digit, string> {
+  return numberedPanes(rows.map((row) => row.agent.pane_id));
 }
 
 /** The number an item holds, by its id, or null past the ninth. */
@@ -96,7 +108,29 @@ export function sidebarAgentNumbers(state: { rest: SnapshotRest | null; agents: 
   return (pane: string, place: string | null) => first.has(pane) && first.get(pane) === place ? numberOf(numbers, pane) : null;
 }
 
+/** Which sidebar list ⌥n counts: the one the `프로젝트 | 태스크` switch shows, whether or not the sidebar is open. */
+export function numberedList(rest: SnapshotRest | null): "projects" | "tasks" {
+  return rest?.ui_state?.sidebar_lens === "tasks" ? "tasks" : "projects";
+}
+
+/**
+ * The 태스크 list's task rows top to bottom as the page draws them (PRD
+ * sidebar-task-lens B4-B6): each group's rows, the rows of the 쉬는 중 and
+ * 정리할 것 folds the page opened, a task's children never among them.
+ */
+export function taskListOrder(state: { rest: SnapshotRest | null; agents: AgentRow[] }, taskFoldsOpen: readonly string[]): string[] {
+  const { rest } = state;
+  const view = rest?.ui_state?.task_view ?? "status";
+  const list = taskList(deviceScope(rest, frontDeviceId(rest))?.tasks, agentsByPane(everyPaneAgent(state.agents, rest?.status?.remote)), catalogWorkspaces(rest), view);
+  return drawnTasks(taskSections(list, view, new Set(taskFoldsOpen))).map(({ agent }) => agent.pane_id);
+}
+
+/** The pane at each ⌥n now: the 태스크 list's rows while the switch shows that list, else the 프로젝트 list's roots. */
+export function sidebarNumbers(state: { rest: SnapshotRest | null; agents: AgentRow[] }, folds: SidebarFolds): Map<Digit, string> {
+  return numberedList(state.rest) === "tasks" ? numberedPanes(taskListOrder(state, folds.taskFoldsOpen)) : numberedAgents(agentListOrder(state, folds.raisedOpen));
+}
+
 /** The number ⌥n selects an agent by now, or null past the ninth row. */
-export function agentNumber(state: { rest: SnapshotRest | null; agents: AgentRow[] }, paneId: string, raisedOpen: readonly string[] = []): Digit | null {
-  return numberOf(numberedAgents(agentListOrder(state, raisedOpen)), paneId);
+export function agentNumber(state: { rest: SnapshotRest | null; agents: AgentRow[] }, paneId: string, folds: SidebarFolds = { raisedOpen: [], taskFoldsOpen: [] }): Digit | null {
+  return numberOf(sidebarNumbers(state, folds), paneId);
 }

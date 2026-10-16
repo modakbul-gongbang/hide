@@ -83,3 +83,46 @@ export function taskList(tasks: ProjectTasksScope | null | undefined, rows: Read
 function ordered(entries: TaskEntry[]): TaskEntry[] {
   return [...entries.filter(({ card }) => card.state !== "waiting"), ...entries.filter(({ card }) => card.state === "waiting")];
 }
+
+/** A fold's key in the page's open set (B5): `rest:` or `cleanup:` and the group it belongs to, the empty group being the 상태별 view's folds under every group. */
+export function taskFoldKey(kind: "rest" | "cleanup", group: string): string {
+  return `${kind}:${group}`;
+}
+
+export type TaskSection = {
+  group: TaskGroup;
+  /** The group's open rows, then the rows of each of its folds the page opened (프로젝트별 only). */
+  resting: TaskEntry[];
+  cleanup: TaskEntry[];
+};
+
+export type TaskSections = {
+  sections: TaskSection[];
+  /** The 상태별 view's folds under every group, their rows only while open. */
+  resting: TaskEntry[];
+  cleanup: TaskEntry[];
+};
+
+/**
+ * What the list draws for one page: every group's rows and the rows of the
+ * folds in `open`. The list draws from this, and the ⌥n numbers read it, so
+ * a number always names a row the operator can see.
+ */
+export function taskSections(list: TaskList, view: TaskView, open: ReadonlySet<string>): TaskSections {
+  const folded = (entries: TaskEntry[], key: string) => (open.has(key) ? entries : []);
+  const sections = list.groups.map((group) => ({
+    group,
+    resting: view === "project" ? folded(group.resting, taskFoldKey("rest", group.key)) : [],
+    cleanup: view === "project" ? folded(group.cleanup, taskFoldKey("cleanup", group.key)) : [],
+  }));
+  return {
+    sections,
+    resting: view === "status" ? folded(list.resting, taskFoldKey("rest", "")) : [],
+    cleanup: view === "status" ? folded(list.cleanup, taskFoldKey("cleanup", "")) : [],
+  };
+}
+
+/** The task rows top to bottom as the page draws them, a task's children not among them: what ⌥1 to ⌥9 count. */
+export function drawnTasks(drawn: TaskSections): TaskEntry[] {
+  return [...drawn.sections.flatMap(({ group, resting, cleanup }) => [...group.entries, ...resting, ...cleanup]), ...drawn.resting, ...drawn.cleanup];
+}

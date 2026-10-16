@@ -229,6 +229,18 @@ html[data-view-drag="row-resize"] * {
 }
 
 /*
+ * A lane, or the files tool kept mounted under another tool, out of sight
+ * (Tools.tsx, WorkspaceScreen.tsx). Opacity goes with visibility because a
+ * descendant can set `visibility: visible` of its own (a selected view tab's
+ * close button does) and would show through a hidden ancestor; nothing
+ * undoes an ancestor's opacity. `inert` on the same element keeps input out.
+ */
+[data-lane-hidden] {
+  visibility: hidden;
+  opacity: 0;
+}
+
+/*
  * The sidebar list scrolls under its stuck section header (D-05), so a
  * focused row is brought into view below it, never under it (B10).
  */

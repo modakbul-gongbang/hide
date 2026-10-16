@@ -1192,16 +1192,16 @@ mod tests {
         };
         write(
             WORKSPACE_VIEWS,
-            json!({"schema_version": 2, "workspaces": [
+            json!({"schema_version": 3, "workspaces": [
                 {"device_id": M, "path": M_ROOT, "agent_layout": layout(&tabs[0]),
-                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "view_owner": tabs[0], "view_presentations": {tabs[0].clone(): {"views": false, "layout": {"root": {"area": {"id": "a3", "displays": [{"id": "d5", "opener": {"device_id": ALIAS, "terminal_id": "t5"}}]}}}}},
-                 "layout": {"root": {"split": {"id": "s1", "first": {"area": {"id": "a1", "displays": [{"id": "d1", "opener": {"device_id": M, "terminal_id": "t1"}}]}},
+                 "tab_views": {tabs[0].clone(): "d1"},
+                 "view_layout": {"root": {"split": {"id": "s1", "first": {"area": {"id": "a1", "displays": [{"id": "d1", "opener": {"device_id": M, "terminal_id": "t1"}}]}},
                      "second": {"area": {"id": "a2", "displays": [{"id": "d2", "opener": {"device_id": ALIAS, "terminal_id": "t2"}}, {"id": "d3", "opener": {"device_id": X, "terminal_id": "t3"}}]}}}}},
                  "feedback": {"comments": feedback_comments, "waiting": feedback_waiting}},
                 {"device_id": ALIAS, "path": C_ROOT, "agent_layout": layout(&tabs[1]),
-                 "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "view_owner": tabs[1], "view_presentations": {tabs[1].clone(): {"views": true, "layout": {}}}, "layout": {}},
+                 "tab_views": {tabs[1].clone(): "d2"}, "view_layout": {}},
                 {"device_id": X, "path": X_ROOT, "agent_layout": layout(&tabs[2]),
-                 "view_bookmarks": {tabs[2].clone(): {"a1": "d3"}}, "view_owner": tabs[2], "view_presentations": {tabs[2].clone(): {"views": false, "layout": {}}}, "layout": {}},
+                 "tab_views": {tabs[2].clone(): "d3"}, "view_layout": {}},
             ]}),
         );
         write(
@@ -1378,7 +1378,7 @@ mod tests {
         // A View's opener on the mini names it by the new owner's node id,
         // wherever in a layout it sits (PRD view-opener-feedback B41).
         let mac_views = &views["workspaces"][0];
-        let split = &mac_views["layout"]["root"]["split"];
+        let split = &mac_views["view_layout"]["root"]["split"];
         assert_eq!(
             split["first"]["area"]["displays"][0]["opener"]["device_id"],
             json!(M)
@@ -1390,11 +1390,6 @@ mod tests {
         assert_eq!(
             split["second"]["area"]["displays"][1]["opener"]["device_id"],
             json!(X)
-        );
-        assert_eq!(
-            mac_views["view_presentations"][&shapes("tab")[0].1]["layout"]["root"]["area"]["displays"]
-                [0]["opener"]["device_id"],
-            json!(C)
         );
         let mac = &views["workspaces"][0]["agent_layout"];
         let tab = format!("remote:{M}:tab:w1:t1");

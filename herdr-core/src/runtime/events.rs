@@ -2457,7 +2457,6 @@ impl Runtime {
                     return true;
                 };
                 let checkout_path = checkout.path.clone();
-                let presentation_key = (self.node.as_str().to_owned(), checkout_path.clone());
                 // Hide owns the visible tab, so the active mark moves here,
                 // on the frame the operator asked for it, and Herdr is told
                 // afterwards. Focusing a tab still does not reorder the
@@ -2487,7 +2486,6 @@ impl Runtime {
                 // answers.
                 self.select_terminal_pane(next_pane_id.clone());
                 self.sync_active_tab_projection();
-                self.choose_view_presentation(presentation_key, payload.tab_id.clone());
                 // The operator chose this tab, so its pane now holds Hide's
                 // keyboard and the read record follows it. Leaving the record
                 // on the pane of the tab just left kept marking that pane read
@@ -3157,12 +3155,7 @@ impl Runtime {
                 }
                 true
             }
-            Event::RemoteControl(payload) => {
-                if let RemoteControlRequest::FocusTab { tab_id } = &payload.request {
-                    self.choose_remote_view_presentation(&payload.target_id, tab_id);
-                }
-                self.request_remote_control(payload)
-            }
+            Event::RemoteControl(payload) => self.request_remote_control(payload),
             Event::RemoteFileList(payload) => self.request_remote_file_list(payload),
             Event::FileOpen(payload) if payload.view.is_some() && self.separate_view_areas() => {
                 let view = payload.view.as_ref().expect("matched above");

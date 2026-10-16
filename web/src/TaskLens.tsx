@@ -14,6 +14,7 @@ import { Elapsed } from "./components/elapsed";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
+import { Keycap } from "./components/ui/keycap";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuShortcut, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Hint } from "./components/ui/tooltip";
 import { deviceConnected, frontDeviceId } from "./devices";
@@ -21,6 +22,7 @@ import { hideAiWords, homeTurnLine } from "./hideAiOrigin";
 import { hostBridge } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
+import { numberedPanes, numberOf } from "./numbering";
 import { allAgents as everyPaneAgent, agentsByPane } from "./paneAgents";
 import { sessionPulls, type SessionPull } from "./prMark";
 import { remoteTargetOfPane } from "./remote";
@@ -32,7 +34,7 @@ import { revealRow, sidebarFocusPane } from "./sidebarFocus";
 import type { SidebarTreeLine } from "./sidebarTree";
 import { catalogWorkspaces, localDeviceId, type AgentRow, type TaskView } from "./snapshot";
 import { useShellStore } from "./store";
-import { taskList, type TaskEntry, type TaskGroup, type TaskGroupState } from "./taskList";
+import { drawnTasks, taskFoldKey, taskList, taskSections, type TaskEntry, type TaskGroup, type TaskGroupState } from "./taskList";
 import { useUiStore } from "./ui";
 import type { TaskState } from "./agentScope";
 
@@ -171,18 +173,20 @@ const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds,
   list: ReturnType<typeof taskList>; view: TaskView; byPane: ReadonlyMap<string, AgentRow>; agents: readonly AgentRow[]; folds: string[]; focusedPane: string | null; disabled: boolean; actions: Actions;
 }) {
   const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
-  // The resting and cleanup folds open in place for this page only (B5).
-  const [openFolds, setOpenFolds] = useState<ReadonlySet<string>>(NO_PANES);
+  // The resting and cleanup folds open in place for this page only (B5); the
+  // page keeps them, so the ⌥n numbers read the same drawn order.
+  const foldsOpen = useUiStore((s) => s.taskFoldsOpen);
+  const toggleFold = useUiStore((s) => s.toggleTaskFold);
+  const openFolds = useMemo(() => new Set(foldsOpen), [foldsOpen]);
   const opened = useMemo(() => new Set(folds), [folds]);
-  const toggleFold = (key: string) => setOpenFolds((before) => {
-    const next = new Set(before);
-    if (!next.delete(key)) next.add(key);
-    return next;
-  });
+  const shown = taskSections(list, view, openFolds);
+  // An ⌥ hold numbers the task rows top to bottom, nine at most, and ⌥n opens that row (electron-digit-shortcuts-hints D-02).
+  const numbered = useUiStore((s) => s.hint === "agents");
+  const numbers = numbered ? numberedPanes(drawnTasks(shown).map(({ agent }) => agent.pane_id)) : null;
   const treesOf = (entries: TaskEntry[]) => entries.map((entry) => ({ entry, lines: sessionTreeLines(entry.agent, byPane, opened, shownAll) }));
-  const sections = list.groups.map((group) => ({ group, trees: treesOf(group.entries), resting: openFolds.has(`rest:${group.key}`) ? treesOf(group.resting) : [], cleanup: openFolds.has(`cleanup:${group.key}`) ? treesOf(group.cleanup) : [] }));
-  const restingTrees = openFolds.has("rest:") ? treesOf(list.resting) : [];
-  const cleanupTrees = openFolds.has("cleanup:") ? treesOf(list.cleanup) : [];
+  const sections = shown.sections.map(({ group, resting, cleanup }) => ({ group, trees: treesOf(group.entries), resting: treesOf(resting), cleanup: treesOf(cleanup) }));
+  const restingTrees = treesOf(shown.resting);
+  const cleanupTrees = treesOf(shown.cleanup);
   const drawn = new Set([...sections.flatMap(({ trees, resting, cleanup }) => [...trees, ...resting, ...cleanup]), ...restingTrees, ...cleanupTrees]
     .flatMap(({ lines }) => lines.flatMap((line) => (line.kind === "agent" ? [line.row.agent.pane_id] : []))));
   const selected = sidebarFocusPane(focusedPane, agents, drawn);
@@ -199,7 +203,7 @@ const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds,
   }, [selected]);
   const showAll = (parent: string) => setShownAll((before) => new Set(before).add(parent));
   const rows = (trees: ReturnType<typeof treesOf>) => trees.map(({ entry, lines }) => (
-    <TaskTree key={entry.card.root} entry={entry} lines={lines} byPane={byPane} opened={opened} selected={selected} showProject={view === "status"} disabled={disabled} actions={actions} onShowAll={showAll} />
+    <TaskTree key={entry.card.root} entry={entry} lines={lines} byPane={byPane} opened={opened} selected={selected} number={numbers ? numberOf(numbers, entry.agent.pane_id) : null} showProject={view === "status"} disabled={disabled} actions={actions} onShowAll={showAll} />
   ));
   return (
     <div ref={scroller} className={cn("min-h-0 flex-1 overflow-y-auto px-sm pb-md", disabled && "opacity-(--opacity-disabled)")} data-task-list="true" onKeyDown={moveFocus}>
@@ -255,7 +259,7 @@ function Folds({ group, resting, cleanup, open, onToggle, rows }: {
   const { t } = useInterfaceTranslation();
   const fold = (kind: "rest" | "cleanup", count: number, trees: typeof resting) => {
     if (count === 0) return null;
-    const key = `${kind}:${group.key}`;
+    const key = taskFoldKey(kind, group.key);
     const expanded = open.has(key);
     return (
       <div data-task-fold={kind}>
@@ -275,12 +279,12 @@ function Folds({ group, resting, cleanup, open, onToggle, rows }: {
 }
 
 /** A task's row and, through every opened row, its descendants (B10). */
-function TaskTree({ entry, lines, byPane, opened, selected, showProject, disabled, actions, onShowAll }: { entry: TaskEntry; lines: SidebarTreeLine[]; byPane: ReadonlyMap<string, AgentRow>; opened: ReadonlySet<string>; selected: string | null; showProject: boolean; disabled: boolean; actions: Actions; onShowAll: (parent: string) => void }) {
+function TaskTree({ entry, lines, byPane, opened, selected, number, showProject, disabled, actions, onShowAll }: { entry: TaskEntry; lines: SidebarTreeLine[]; byPane: ReadonlyMap<string, AgentRow>; opened: ReadonlySet<string>; selected: string | null; number: number | null; showProject: boolean; disabled: boolean; actions: Actions; onShowAll: (parent: string) => void }) {
   const { agent } = entry;
   const family = useMemo(() => (childrenOf(agent, byPane).length > 0 ? sessionPulls(agent, byPane) : undefined), [agent, byPane]);
   const openOf = (of: AgentRow) => (childrenOf(of, byPane).length > 0 ? opened.has(of.pane_id) : null);
   return <>
-    <TaskRow entry={entry} family={family} byPane={byPane} open={openOf(agent)} selected={selected === agent.pane_id} showProject={showProject} disabled={disabled} actions={actions} />
+    <TaskRow entry={entry} family={family} byPane={byPane} open={openOf(agent)} selected={selected === agent.pane_id} number={number} showProject={showProject} disabled={disabled} actions={actions} />
     {lines.slice(1).map((line) => {
       if (line.kind === "more") return <TreeMoreRow key={`more:${line.parent}`} line={line} onShowAll={onShowAll} />;
       const child = line.row.agent;
@@ -290,7 +294,8 @@ function TaskTree({ entry, lines, byPane, opened, selected, showProject, disable
   </>;
 }
 
-function TaskRow({ entry, family, byPane, open, selected, showProject, disabled, actions }: { entry: TaskEntry; family?: SessionPull[]; byPane: ReadonlyMap<string, AgentRow>; open: boolean | null; selected: boolean; showProject: boolean; disabled: boolean; actions: Actions }) {
+/** A task's row; `number` is the digit an ⌥ hold shows on it, floating at its top right over the time, moving nothing. */
+function TaskRow({ entry, family, byPane, open, selected, number, showProject, disabled, actions }: { entry: TaskEntry; family?: SessionPull[]; byPane: ReadonlyMap<string, AgentRow>; open: boolean | null; selected: boolean; number: number | null; showProject: boolean; disabled: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const { agent, card, project } = entry;
   const staleness = useAgentStaleness(agent, family);
@@ -324,6 +329,7 @@ function TaskRow({ entry, family, byPane, open, selected, showProject, disabled,
         </div>
         <SecondLine entry={entry} showProject={showProject} />
       </div>
+      {number !== null ? <Keycap number={number} /> : null}
     </li>
   );
 }

@@ -201,6 +201,7 @@ POLICY_ONLY = (
     "scripts/check-no-workstation-identity.*", "scripts/check-worktree-removal-boundary.sh",
     "scripts/check-hide-full.sh", "scripts/check-hide-screens.mjs", "scripts/check-typed-live-remote.sh",
     "scripts/check-release-assets.mjs", "scripts/release-draft.mjs", "scripts/premerge-check.py",
+    "scripts/merge-order.py", "scripts/pull_requests.py",
     "scripts/pen-*.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/*",
     # The design contract's generators, their token map and its checks:
     # `design-contract.yml` runs the checks on every pull request, and what
