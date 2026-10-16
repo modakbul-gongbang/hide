@@ -21,7 +21,7 @@ import { IssuePicker } from "./PrLinks";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
-// The PRs basis of the Work tool (PRD work-tab-pr-lens B6-B19, B39-B43, B47):
+// The PRs tool's list (PRD work-tab-pr-lens B6-B19, B39-B43, B47; sidebar-task-lens D-17):
 // the pull requests the core lists, grouped by whose move it is, two lines
 // each. Nothing here decides a group or a reason; the core did.
 

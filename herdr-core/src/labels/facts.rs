@@ -7,7 +7,7 @@
 //! stored rather than reading its conversation again (B31). The request and
 //! the reply are the conversation's own words, each cut to
 //! [`MAX_TEXT_BYTES`]; local records live in the private `labels.json`.
-//! Device records stay in memory and are read again after a daemon restart.
+//! Device records stay in memory, bar their marks: the session proof, the analyzed turns and the label (`store.rs`).
 //!
 //! Who sent a request is decided once per message and kept with its offset
 //! (D-19): the Hide letter envelope's sender; else the operator when Hide saw them
@@ -673,6 +673,11 @@ mod tests {
             10_400,
             5,
         );
+        let progress = human(
+            "Hide letter letter-4 from lead (claude) [progress]\nPlan: core first",
+            10_500,
+            6,
+        );
         fold(
             &mut facts,
             &[
@@ -681,17 +686,18 @@ mod tests {
                 parent.clone(),
                 report.clone(),
                 peer.clone(),
+                progress.clone(),
             ],
             &[submit(1, 10_000, false)],
             &mut None,
         );
         assert!(facts.feeds_work(&initial, Some("lead")));
         assert!(facts.feeds_work(&parent, Some("lead")));
-        for event in [&direct, &report, &peer] {
+        for event in [&direct, &report, &peer, &progress] {
             assert!(!facts.feeds_work(event, Some("lead")));
         }
         assert!(facts.feeds_work(&direct, None));
-        for event in [&parent, &report, &peer] {
+        for event in [&parent, &report, &peer, &progress] {
             assert!(!facts.feeds_work(event, None));
         }
     }

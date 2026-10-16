@@ -38941,7 +38941,7 @@
           "fill": "$--muted-foreground",
           "textGrowth": "fixed-width",
           "width": 1180,
-          "content": "PRD right-lane: Agent Views, one right lane and a 48px tool rail. The rail holds Files, Changes, Work and Memory, the pressed tool with a 2px primary bar, the Files badge while the lane shows another tool, Work's count of what needs the operator (a warning badge), and Memory's dot. The lane opens over the agents or, pinned, docks beside them (Agent Views keep 480); its header names the tool and scope with Pin, Expand and Close. Documents ≥360, ideal 520; the tree ≥180, ideal 240, turned on by the document header's tree button. Dividers move a guide and land once.",
+          "content": "PRD right-lane, sidebar-task-lens: Agent Views, one right lane and a 48px tool rail. The rail holds Memory and PRs over the divider and Files and Changes under it, the pressed tool with a 2px primary bar, the Files badge while the lane shows another tool, PRs' count of what needs the operator (a warning badge), and Memory's dot; while the lane's 보기 slot holds a card or a record, its button stands above Memory. The lane opens over the agents or, pinned, docks beside them (Agent Views keep 480); its header names the tool and scope with Pin, Expand and Close. Documents ≥360, ideal 520; the tree ≥180, ideal 240, turned on by the document header's tree button. Dividers move a guide and land once.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
           "fontWeight": "normal"
@@ -39546,17 +39546,6 @@
           "name": "Component / Tool rail",
           "children": [
             {
-              "id": "lane-rail-work",
-              "type": "ref",
-              "ref": "lane-tool",
-              "name": "Work",
-              "descendants": {
-                "lane-tool-glyph": {
-                  "icon": "square-kanban"
-                }
-              }
-            },
-            {
               "id": "lane-rail-memory",
               "type": "ref",
               "ref": "lane-tool",
@@ -39564,6 +39553,17 @@
               "descendants": {
                 "lane-tool-glyph": {
                   "icon": "brain"
+                }
+              }
+            },
+            {
+              "id": "lane-rail-prs",
+              "type": "ref",
+              "ref": "lane-tool",
+              "name": "PRs",
+              "descendants": {
+                "lane-tool-glyph": {
+                  "icon": "git-pull-request"
                 }
               }
             },
@@ -39927,33 +39927,33 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "lane-l-rail-work-cell",
-                  "name": "Work pressed",
+                  "id": "lane-l-rail-prs-cell",
+                  "name": "PRs pressed",
                   "children": [
                     {
                       "type": "text",
-                      "id": "lane-l-rail-work-cap",
-                      "name": "Work pressed",
-                      "content": "Work pressed",
+                      "id": "lane-l-rail-prs-cap",
+                      "name": "PRs pressed",
+                      "content": "PRs pressed",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
                       "fontWeight": "600"
                     },
                     {
-                      "id": "lane-l-rail-work",
+                      "id": "lane-l-rail-prs",
                       "type": "ref",
                       "ref": "lane-rail",
-                      "name": "Work pressed",
+                      "name": "PRs pressed",
                       "height": 260,
                       "descendants": {
-                        "lane-rail-work": {
+                        "lane-rail-prs": {
                           "fill": "$--secondary"
                         },
-                        "lane-rail-work/lane-tool-bar": {
+                        "lane-rail-prs/lane-tool-bar": {
                           "enabled": true
                         },
-                        "lane-rail-work/lane-tool-glyph": {
+                        "lane-rail-prs/lane-tool-glyph": {
                           "fill": "$--foreground"
                         }
                       }
@@ -40141,21 +40141,21 @@
                           "id": "lane-l-tip-files",
                           "type": "ref",
                           "ref": "tip-open-l",
-                          "name": "Files · settings-ui ⇧⌘B",
+                          "name": "Files · settings-ui",
                           "descendants": {
                             "tip-open-l-t": {
-                              "content": "Files · settings-ui ⇧⌘B"
+                              "content": "Files · settings-ui"
                             }
                           }
                         },
                         {
-                          "id": "lane-l-tip-sessions",
+                          "id": "lane-l-tip-prs",
                           "type": "ref",
                           "ref": "tip-open-l",
-                          "name": "Sessions · all of hide ⌘E",
+                          "name": "PRs · all of hide ⇧⌘R",
                           "descendants": {
                             "tip-open-l-t": {
-                              "content": "Sessions · all of hide ⌘E"
+                              "content": "PRs · all of hide ⇧⌘R"
                             }
                           }
                         },
@@ -40251,27 +40251,27 @@
                 },
                 {
                   "type": "frame",
-                  "id": "lane-l-header-sessions-cell",
-                  "name": "Sessions · pinned",
+                  "id": "lane-l-header-prs-cell",
+                  "name": "PRs · pinned",
                   "children": [
                     {
                       "type": "text",
-                      "id": "lane-l-header-work-cap",
-                      "name": "Work · pinned",
-                      "content": "Work · pinned",
+                      "id": "lane-l-header-prs-cap",
+                      "name": "PRs · pinned",
+                      "content": "PRs · pinned",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
                       "fontWeight": "600"
                     },
                     {
-                      "id": "lane-l-header-work",
+                      "id": "lane-l-header-prs",
                       "type": "ref",
                       "ref": "lane-header",
-                      "name": "Work · pinned",
+                      "name": "PRs · pinned",
                       "descendants": {
                         "lane-header-tool": {
-                          "content": "Work"
+                          "content": "PRs"
                         },
                         "lane-header-scope": {
                           "content": "all of hide"
@@ -40828,33 +40828,33 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "lane-d-rail-work-cell",
-                  "name": "Work pressed",
+                  "id": "lane-d-rail-prs-cell",
+                  "name": "PRs pressed",
                   "children": [
                     {
                       "type": "text",
-                      "id": "lane-d-rail-work-cap",
-                      "name": "Work pressed",
-                      "content": "Work pressed",
+                      "id": "lane-d-rail-prs-cap",
+                      "name": "PRs pressed",
+                      "content": "PRs pressed",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
                       "fontWeight": "600"
                     },
                     {
-                      "id": "lane-d-rail-work",
+                      "id": "lane-d-rail-prs",
                       "type": "ref",
                       "ref": "lane-rail",
-                      "name": "Work pressed",
+                      "name": "PRs pressed",
                       "height": 260,
                       "descendants": {
-                        "lane-rail-work": {
+                        "lane-rail-prs": {
                           "fill": "$--secondary"
                         },
-                        "lane-rail-work/lane-tool-bar": {
+                        "lane-rail-prs/lane-tool-bar": {
                           "enabled": true
                         },
-                        "lane-rail-work/lane-tool-glyph": {
+                        "lane-rail-prs/lane-tool-glyph": {
                           "fill": "$--foreground"
                         }
                       }
@@ -41042,21 +41042,21 @@
                           "id": "lane-d-tip-files",
                           "type": "ref",
                           "ref": "tip-open-l",
-                          "name": "Files · settings-ui ⇧⌘B",
+                          "name": "Files · settings-ui",
                           "descendants": {
                             "tip-open-l-t": {
-                              "content": "Files · settings-ui ⇧⌘B"
+                              "content": "Files · settings-ui"
                             }
                           }
                         },
                         {
-                          "id": "lane-d-tip-sessions",
+                          "id": "lane-d-tip-prs",
                           "type": "ref",
                           "ref": "tip-open-l",
-                          "name": "Sessions · all of hide ⌘E",
+                          "name": "PRs · all of hide ⇧⌘R",
                           "descendants": {
                             "tip-open-l-t": {
-                              "content": "Sessions · all of hide ⌘E"
+                              "content": "PRs · all of hide ⇧⌘R"
                             }
                           }
                         },
@@ -41152,27 +41152,27 @@
                 },
                 {
                   "type": "frame",
-                  "id": "lane-d-header-sessions-cell",
-                  "name": "Sessions · pinned",
+                  "id": "lane-d-header-prs-cell",
+                  "name": "PRs · pinned",
                   "children": [
                     {
                       "type": "text",
-                      "id": "lane-d-header-work-cap",
-                      "name": "Work · pinned",
-                      "content": "Work · pinned",
+                      "id": "lane-d-header-prs-cap",
+                      "name": "PRs · pinned",
+                      "content": "PRs · pinned",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
                       "fontWeight": "600"
                     },
                     {
-                      "id": "lane-d-header-work",
+                      "id": "lane-d-header-prs",
                       "type": "ref",
                       "ref": "lane-header",
-                      "name": "Work · pinned",
+                      "name": "PRs · pinned",
                       "descendants": {
                         "lane-header-tool": {
-                          "content": "Work"
+                          "content": "PRs"
                         },
                         "lane-header-scope": {
                           "content": "all of hide"
@@ -67736,7 +67736,7 @@
     },
     "--size-view-opener-mark": {
       "type": "number",
-      "value": 10
+      "value": 14
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

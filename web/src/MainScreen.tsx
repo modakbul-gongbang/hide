@@ -8,7 +8,6 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenu
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
-import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { useEscapeLayer } from "./components/ui/layer";
 import { cn } from "./lib/utils";
 import { boardProjects, mainSections, type DeviceAvailability } from "./navigation";
@@ -18,25 +17,23 @@ import type { Device } from "./snapshot";
 import { ageWords } from "./overviewLens";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { useShellStore } from "./store";
-import { MAIN_VIEWS, useUiStore, type MainView, type TaskFilter } from "./ui";
+import { MAIN_VIEWS, useUiStore, type MainView } from "./ui";
 import { hostBridge } from "./host";
 import { commandLabel } from "./shortcutLabels";
-import { emptyHome, type EmptyHome } from "./firstRun";
-import { everyAgent, taskTally, type TaskTally } from "./overviewTasks";
+import { everyAgent } from "./overviewTasks";
 import { backlogTally } from "./overviewBacklog";
-import { OverviewTasks } from "./TasksTab";
 import { TaskRecordPanel } from "./OverviewRecord";
 import { BacklogItemPanel, BacklogLabelFilter, OverviewBacklog } from "./BacklogTab";
 import { OverviewProjects, ProjectPanel } from "./ProjectsTab";
 
-// The Overview of one device (PRD overview-device-tasks D-01..D-03, B1-B5):
-// Tasks, 백로그 and Projects with Usage at the end, each tab's controls at
-// the row's right, and the panel a card, a row or a project opens beside the
-// tab. Everything drawn is a value the snapshot carries; a device that cannot
-// answer shows why in the body and dims the tabs (B4).
+// The Overview of one device (PRD overview-device-tasks D-01..D-03, B1-B5;
+// PRD sidebar-task-lens D-20, B38): 백로그 and Projects with Usage at the
+// end, each tab's controls at the row's right, and the panel a record, a row
+// or a project opens beside the tab. The device's tasks are the sidebar's
+// 태스크 list. Everything drawn is a value the snapshot carries; a device that
+// cannot answer shows why in the body and dims the tabs (B4).
 
-const TAB_LABEL: Record<MainView, "overview.tasks" | "overviewTasks.backlogTab" | "overview.projects" | "usage.title"> = {
-  tasks: "overview.tasks",
+const TAB_LABEL: Record<MainView, "overviewTasks.backlogTab" | "overview.projects" | "usage.title"> = {
   backlog: "overviewTasks.backlogTab",
   projects: "overview.projects",
   usage: "usage.title",
@@ -53,12 +50,11 @@ export function MainScreen({ actions, deviceId }: { actions: Actions; deviceId: 
   const availability: DeviceAvailability = section?.availability ?? { state: "ready" };
   const projects = useMemo(() => boardProjects(rest, agents, deviceId), [rest, agents, deviceId]);
   const rows = useMemo(() => everyAgent(rest, agents), [rest, agents]);
-  const tally = useMemo(() => taskTally(projects), [projects]);
   const backlog = useMemo(() => backlogTally(projects), [projects]);
-  // Every Git project whose issues the core reads is read while Tasks or the backlog is on screen.
+  // Every Git project whose issues the core reads is read while the backlog is on screen.
   const devices = rest?.navigator?.devices;
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && readsHere(workspace, devices)).map(({ workspace }) => workspace.id).join("\n"), [projects, devices]);
-  const reads = view === "tasks" || view === "backlog";
+  const reads = view === "backlog";
   useEffect(() => {
     if (!reads || !localGit) return;
     for (const id of localGit.split("\n")) actions.readProjectTasks(id);
@@ -66,9 +62,9 @@ export function MainScreen({ actions, deviceId }: { actions: Actions; deviceId: 
   // Esc closes the panel before the Overview (B16).
   useEscapeLayer(panel !== null, () => useUiStore.getState().setOverview({ panel: null }));
   const unavailable = availability.state === "unavailable" && section ? section.device : null;
-  const homeEmpty = availability.state === "ready" ? emptyHome(projects.length, tally.total) : null;
+  // A Home with no project says what to do first in the backlog's and the Projects' place (sidebar-task-lens B42).
+  const noProject = availability.state === "ready" && projects.length === 0;
   const counts: Record<MainView, ReactNode> = {
-    tasks: <TasksCount tally={tally} />,
     backlog: <Count value={backlog.open} />,
     projects: <Count value={projects.length} />,
     usage: null,
@@ -87,7 +83,7 @@ export function MainScreen({ actions, deviceId }: { actions: Actions; deviceId: 
             ))}
           </TabsList>
         </Tabs>
-        {unavailable ? null : view === "tasks" ? <TaskControls projects={projects.map(({ workspace }) => workspace)} needsYou={tally.needsYou} /> : view === "backlog" ? <BacklogControls projects={projects} /> : null}
+        {unavailable || noProject ? null : view === "backlog" ? <BacklogControls projects={projects} /> : null}
       </div>
       {unavailable ? (
         <DeviceUnanswered device={unavailable} availability={availability} actions={actions} />
@@ -97,12 +93,10 @@ export function MainScreen({ actions, deviceId }: { actions: Actions; deviceId: 
             {availability.state === "loading" ? <p role="status" className="px-lg pt-sm text-caption text-muted-foreground" data-device-loading="true">{availability.text}</p> : null}
             {view === "usage" ? (
               <UsageOverview actions={actions} />
-            ) : view === "tasks" && homeEmpty ? (
-              <EmptyHomeView state={homeEmpty} actions={actions} />
-            ) : view === "tasks" ? (
-              <OverviewTasks projects={projects} rows={rows} deviceId={deviceId} actions={actions} />
+            ) : noProject ? (
+              <NoProjectView actions={actions} />
             ) : view === "backlog" ? (
-              <OverviewBacklog projects={projects} rows={rows} deviceId={deviceId} actions={actions} />
+              <OverviewBacklog projects={projects} deviceId={deviceId} actions={actions} />
             ) : (
               <OverviewProjects projects={projects} deviceId={deviceId} actions={actions} />
             )}
@@ -112,8 +106,8 @@ export function MainScreen({ actions, deviceId }: { actions: Actions; deviceId: 
               className="flex w-(--size-lane-min) shrink-0 flex-col border-l border-border bg-background overview-narrow:absolute overview-narrow:inset-y-0 overview-narrow:right-0 overview-narrow:z-10 overview-narrow:shadow-lg"
               data-overview-panel={panel.kind}
             >
-              {panel.kind === "task" || panel.kind === "record" ? (
-                <TaskRecordPanel key={panel.kind === "task" ? `${panel.root}:${panel.focus ?? ""}` : `${panel.session.device_id}:${panel.session.session_id}`} panel={panel} projects={projects} rows={rows} actions={actions} />
+              {panel.kind === "record" ? (
+                <TaskRecordPanel key={`${panel.session.device_id}:${panel.session.session_id}`} panel={panel} rows={rows} actions={actions} />
               ) : panel.kind === "item" ? (
                 <BacklogItemPanel key={`${panel.workspaceId}:${panel.taskKey}`} panel={panel} projects={projects} actions={actions} />
               ) : (
@@ -131,30 +125,7 @@ function Count({ value }: { value: number }) {
   return <span className="font-mono text-caption tabular-nums text-muted-foreground" data-tab-count={value}>{value}</span>;
 }
 
-/** Tasks' count, its Needs You in the warning colour and the thin bar of where the tasks stand (B3). */
-function TasksCount({ tally }: { tally: TaskTally }) {
-  const { t } = useInterfaceTranslation();
-  const parts = [
-    { key: "needs_you", value: tally.needsYou, tone: "bg-warning" },
-    { key: "working", value: tally.working, tone: "bg-agent-working" },
-    { key: "waiting", value: tally.waiting, tone: "bg-success" },
-    { key: "resting", value: tally.resting, tone: "bg-muted-foreground" },
-  ].filter((part) => part.value > 0);
-  const sum = parts.reduce((total, part) => total + part.value, 0);
-  return (
-    <span className="relative flex items-baseline gap-xs" data-tasks-tally={`${tally.total}:${tally.needsYou}`}>
-      <Count value={tally.total} />
-      {tally.needsYou > 0 ? <span className="font-mono text-caption tabular-nums text-warning" aria-label={t("overviewTasks.needsYouCount", { count: tally.needsYou })}>{tally.needsYou}</span> : null}
-      {sum > 0 ? (
-        <span aria-hidden="true" className="absolute inset-x-0 -bottom-xxs flex h-(--size-hairline) gap-px overflow-hidden rounded-full" data-tasks-bar="true">
-          {parts.map((part) => <span key={part.key} className={part.tone} style={{ flexGrow: part.value }} />)}
-        </span>
-      ) : null}
-    </span>
-  );
-}
-
-/** The project chip of Tasks and the backlog (B5): All projects, or one project of the device. */
+/** The backlog's project chip (B5): All projects, or one project of the device. */
 function ProjectChip({ projects }: { projects: readonly { id: string; label: string }[] }) {
   const { t } = useInterfaceTranslation();
   const projectId = useUiStore((s) => s.overview.projectId);
@@ -183,25 +154,6 @@ function SearchBox({ value, placeholder, onChange, name }: { value: string; plac
     <span className="relative flex w-(--size-panel-min) items-center">
       <SearchIcon aria-hidden="true" className="pointer-events-none absolute left-sm size-(--size-icon) text-muted-foreground" />
       <Input type="search" value={value} placeholder={placeholder} aria-label={placeholder} className="pl-xl" onChange={(event) => onChange(event.target.value)} data-overview-search={name} />
-    </span>
-  );
-}
-
-/** Tasks' chips and search (B11), and the project chip (B5). */
-function TaskControls({ projects, needsYou }: { projects: readonly { id: string; label: string }[]; needsYou: number }) {
-  const { t } = useInterfaceTranslation();
-  const filter = useUiStore((s) => s.overview.taskFilter);
-  const query = useUiStore((s) => s.overview.taskQuery);
-  const set = useUiStore((s) => s.setOverview);
-  return (
-    <span className="flex flex-wrap items-center gap-sm" data-task-controls="true">
-      <ToggleGroup type="single" value={filter} onValueChange={(value) => { if (value) set({ taskFilter: value as TaskFilter }); }} aria-label={t("overview.tasks")}>
-        <ToggleGroupItem value="all" size="sm" data-task-chip="all">{t("overviewTasks.chipAll")}</ToggleGroupItem>
-        <ToggleGroupItem value="needs_you" size="sm" data-task-chip="needs_you">{t("overviewTasks.chipNeedsYou", { count: needsYou })}</ToggleGroupItem>
-        <ToggleGroupItem value="working" size="sm" data-task-chip="working">{t("overviewTasks.chipWorking")}</ToggleGroupItem>
-      </ToggleGroup>
-      <ProjectChip projects={projects} />
-      <SearchBox value={query} placeholder={t("overviewTasks.search")} onChange={(taskQuery) => set({ taskQuery })} name="tasks" />
     </span>
   );
 }
@@ -242,23 +194,20 @@ function DeviceUnanswered({ device, availability, actions }: { device: Device; a
 }
 
 /**
- * The Home with nothing to draw (PRD first-run-onboarding D-16, B27-B29):
- * the next step in one sentence with its button and chord. A browser tab
- * cannot pick a folder, so with no project it shows the sentence alone.
+ * The Home with no project (PRD first-run-onboarding D-16, B27; PRD
+ * sidebar-task-lens B42): the next step in one sentence with Add project and
+ * its chord. A browser tab cannot pick a folder, so it shows the sentence alone.
  */
-function EmptyHomeView({ state, actions }: { state: Exclude<EmptyHome, null>; actions: Actions }) {
+function NoProjectView({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const add = state === "no_project";
-  const command = add ? "new_workspace" : "start_agent";
-  const chord = commandLabel(command);
-  const button = add ? (hostBridge() ? t("firstRun.home.addProject") : null) : t("firstRun.home.startAgent");
+  const chord = commandLabel("new_workspace");
   return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-md p-xl text-center" data-main-empty-home={state}>
-      <p className="text-subhead text-subtle-foreground">{add ? t("firstRun.home.noProject") : t("firstRun.home.noAgent")}</p>
-      {button ? (
+    <div className="flex flex-1 flex-col items-center justify-center gap-md p-xl text-center" data-main-empty-home="no_project">
+      <p className="text-subhead text-subtle-foreground">{t("firstRun.home.noProject")}</p>
+      {hostBridge() ? (
         <span className="flex items-center gap-sm">
-          <Button onClick={() => (add ? actions.openAddProject() : actions.openStartPanel())} data-main-empty-home-action={command}>
-            {button}
+          <Button onClick={() => actions.openAddProject()} data-main-empty-home-action="new_workspace">
+            {t("firstRun.home.addProject")}
           </Button>
           {chord ? <Kbd aria-hidden="true">{chord}</Kbd> : null}
         </span>

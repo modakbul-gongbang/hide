@@ -155,6 +155,7 @@ All test daemons and temporary files are cleaned up on failure as well as succes
 
 `desktop/` is a pnpm workspace member; `pnpm install` at the root installs it with the web shell.
 Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the first launch rather than at install, so a lane that only typechecks never fetches it.
+`desktop/scripts/package.mjs` turns off Electron's `GrantFileProtocolExtraPrivileges` fuse in the built app before it is signed (`desktop/scripts/fuses.mjs`) and reads it back from the result, and the desktop end-to-end suite runs on a copy of Electron flipped the same way, made once into `desktop/dist/electron-fused/` before its tests.
 CI acquires that lock-resolved runtime once with `bash scripts/verify-web.sh desktop electron-install` before desktop or packaged-app fixtures, using the dependency's own checksum-verifying installer within a five-minute step.
 An acquisition failure blocks the suite at that prerequisite and retains the upstream error instead of retrying the download in each test.
 

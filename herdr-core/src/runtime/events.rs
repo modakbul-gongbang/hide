@@ -1030,6 +1030,11 @@ pub(super) struct PrOpenPayload {
     pub(super) pr_number: u32,
     #[serde(default)]
     pub(super) checkout_id: Option<String>,
+    /// Asked with no Workspace in front (Home): the pull request's
+    /// Workspace opens too, with the card in its lane (PRD
+    /// sidebar-task-lens B17). Otherwise the screen stays where it is.
+    #[serde(default)]
+    pub(super) open_workspace: bool,
 }
 
 /// `pr_delegate`: an agent started on a pull request's branch with the
@@ -1440,6 +1445,13 @@ pub(super) enum Event {
     PaneReopen(PaneTargetPayload),
     AgentTreeToggle(PaneTargetPayload),
     SessionTreeToggle(PaneTargetPayload),
+    SidebarLensSet(super::detail::SidebarLensPayload),
+    TaskViewSet(super::detail::TaskViewPayload),
+    TaskReveal(super::detail::TaskRevealPayload),
+    DetailOpen(super::detail::DetailOpenPayload),
+    DetailBack,
+    DetailClose,
+    DetailShow(super::detail::DetailShowPayload),
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
     FileOpen(FileOpenPayload),
@@ -1683,6 +1695,13 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_reopen" => decode!(PaneTargetPayload, PaneReopen),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "session_tree_toggle" => decode!(PaneTargetPayload, SessionTreeToggle),
+        "sidebar_lens_set" => decode!(super::detail::SidebarLensPayload, SidebarLensSet),
+        "task_view_set" => decode!(super::detail::TaskViewPayload, TaskViewSet),
+        "task_reveal" => decode!(super::detail::TaskRevealPayload, TaskReveal),
+        "detail_open" => decode!(super::detail::DetailOpenPayload, DetailOpen),
+        "detail_back" => Ok(Event::DetailBack),
+        "detail_close" => Ok(Event::DetailClose),
+        "detail_show" => decode!(super::detail::DetailShowPayload, DetailShow),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
         "file_open" => decode!(FileOpenPayload, FileOpen),
@@ -2438,7 +2457,6 @@ impl Runtime {
                     return true;
                 };
                 let checkout_path = checkout.path.clone();
-                let presentation_key = (self.node.as_str().to_owned(), checkout_path.clone());
                 // Hide owns the visible tab, so the active mark moves here,
                 // on the frame the operator asked for it, and Herdr is told
                 // afterwards. Focusing a tab still does not reorder the
@@ -2468,7 +2486,6 @@ impl Runtime {
                 // answers.
                 self.select_terminal_pane(next_pane_id.clone());
                 self.sync_active_tab_projection();
-                self.choose_view_presentation(presentation_key, payload.tab_id.clone());
                 // The operator chose this tab, so its pane now holds Hide's
                 // keyboard and the read record follows it. Leaving the record
                 // on the pane of the tab just left kept marking that pane read
@@ -3138,12 +3155,7 @@ impl Runtime {
                 }
                 true
             }
-            Event::RemoteControl(payload) => {
-                if let RemoteControlRequest::FocusTab { tab_id } = &payload.request {
-                    self.choose_remote_view_presentation(&payload.target_id, tab_id);
-                }
-                self.request_remote_control(payload)
-            }
+            Event::RemoteControl(payload) => self.request_remote_control(payload),
             Event::RemoteFileList(payload) => self.request_remote_file_list(payload),
             Event::FileOpen(payload) if payload.view.is_some() && self.separate_view_areas() => {
                 let view = payload.view.as_ref().expect("matched above");
@@ -3979,6 +3991,13 @@ impl Runtime {
             }
             Event::AgentTreeToggle(payload) => self.toggle_agent_tree(payload.pane_id, false),
             Event::SessionTreeToggle(payload) => self.toggle_agent_tree(payload.pane_id, true),
+            Event::SidebarLensSet(payload) => self.set_sidebar_lens(payload),
+            Event::TaskViewSet(payload) => self.set_task_view(payload),
+            Event::TaskReveal(payload) => self.reveal_task(payload),
+            Event::DetailOpen(payload) => self.open_detail(payload.item),
+            Event::DetailBack => self.detail_back(),
+            Event::DetailClose => self.close_detail(),
+            Event::DetailShow(payload) => self.show_detail(payload.shown),
             Event::UiStateUpdate(payload) => {
                 let payload = *payload;
                 if let Some(visible) = payload.usage_window_visible {
@@ -4045,6 +4064,11 @@ impl Runtime {
                     project_settings_writes: current.project_settings_writes,
                     expanded_agent_pane_ids: current.expanded_agent_pane_ids,
                     sessions_expanded_agent_pane_ids: current.sessions_expanded_agent_pane_ids,
+                    // Each has its own event (`sidebar_lens_set`,
+                    // `task_view_set`, `detail_*`).
+                    sidebar_lens: current.sidebar_lens,
+                    task_view: current.task_view,
+                    detail: current.detail,
                     selected_path: payload.selected_path,
                     // The keyboard's pane, checkout and device are the
                     // core's: it moves them on the event that asks for the

@@ -40,6 +40,13 @@ const words = {
   "sessionWork.kind.problem": ["Problem found", "발견한 문제", "見つかった問題", "发现的问题"],
   "sessionWork.kind.follow_up": ["Follow-up", "후속 등록 제안", "フォローアップ", "后续建议"],
   "sessionWork.count": ["{{count}} missed", "놓친 일 {{count}}", "残り {{count}}", "遗漏 {{count}}"],
+  "sessionWork.childWork": ["Children's work", "자식 일", "子の作業", "子任务"],
+  "sessionWork.childState.done": ["Done", "끝남", "完了", "完成"],
+  "sessionWork.childState.working": ["Working", "하는 중", "作業中", "进行中"],
+  "sessionWork.childState.other": ["Stopped or asking", "멈춤·물음", "停止・質問", "停止或提问"],
+  "sessionWork.childState.unjudged": ["Not judged yet", "아직 모름", "未判定", "尚未判断"],
+  "sessionWork.taskChip": ["{{done}} of {{total}} assigned tasks done", "시킨 일 {{total}}개 중 {{done}}개 끝남", "依頼した仕事 {{total}} 件中 {{done}} 件完了", "分配的 {{total}} 项工作完成 {{done}} 项"],
+  "sessionWork.openRecord": ["Open record", "기록 열기", "記録を開く", "打开记录"],
   "sessionWork.draftNote": ["Draft from this turn and the issue template; you can edit it", "그 턴 대화와 이슈 템플릿에서 쓴 초안 · 고칠 수 있음", "このターンとテンプレートから作成・編集できます", "根据本轮对话和议题模板起草，可编辑"],
 } as const;
 

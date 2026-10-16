@@ -1,12 +1,12 @@
-// Sessions on a real isolated Herdr and daemon.
-import { expect, test, type Locator, type Page } from "@playwright/test";
+// The sidebar's 태스크 list on a real isolated Herdr and daemon (PRD sidebar-task-lens).
+import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { declareParent, labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord } from "./chords";
-import { chooseTheme, countSent, screenshot, showTool } from "./wire";
+import { chooseTheme, countSent, openTaskFolds, screenshot, showTasks } from "./wire";
 import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
@@ -41,20 +41,15 @@ const LONG_TITLE = "세션 패널에서 긴 한국어 제목과 브랜치를 한
 const QUESTION = "긴 한국어 요청을 읽은 뒤 질문 표시가 흐려지는지 확인해 주세요";
 
 const sentTotal = (sent: Map<string, number>) => [...sent.values()].reduce((sum, count) => sum + count, 0);
+const resolved = (daemon: Daemon, pane: string) => () => Boolean(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).resolved_sessions?.[pane]);
 
-async function ensureSessions(page: Page) {
-  await showTool(page, "work");
-  await expect(page.locator("[data-session-panel]")).toBeVisible();
+/** The 프로젝트 tree, where a resolved agent leaves the sidebar. */
+async function showProjects(page: Page) {
+  await page.locator('[data-sidebar-lens-option="projects"]').click();
+  await expect(page.locator('[data-sidebar-lens="projects"]')).toBeVisible();
 }
 
-/** Where a laid-out element ends on the right, for checking that rows share a column. */
-async function rightEdge(locator: Locator): Promise<number> {
-  const box = await locator.boundingBox();
-  if (!box) throw new Error("element is not laid out");
-  return box.x + box.width;
-}
-
-test("Sessions groups, read rules, child navigation and durable resolution share one project scope", async ({ page }) => {
+test("the 태스크 list groups the device's tasks, folds children and resting ones, reads questions, and resolves durably", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -81,89 +76,83 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const stopped = await agentAt(herdr, tree("stopped"));
     labelAgent(herdr, stopped, { task: "설정 화면 스위치 추가", progress: "테스트 환경이 없어 멈췄어요", end: "unfinished" });
     daemon = await startHided(herdr, "session-panel");
-    const last = new Map<string, Record<string, unknown>>();
-    const sent = countSent(page, last);
+    const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator(`nav[data-sidebar] [data-agent-open="${parent}"]`).first().click();
-    await expect.poll(() => page.locator("[data-lane-tool]").evaluateAll((tools) => tools.map((tool) => tool.getAttribute("aria-label")))).toEqual(["Work", "Memory", "Files", "Changes"]);
-    await showTool(page, "work");
-    const panel = page.locator("[data-session-panel]");
-    const showSessions = () => ensureSessions(page);
-    const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
-    const group = (name: string) => panel.locator(`[data-session-group="${name}"]`);
-    const head = (name: string) => group(name).locator('[data-session-focus="group"]');
-    // B26 to B32: Needs You asks with the verb; unfinished work is Idle with its line led by its word, a read question rests in Idle unfolded; a
-    // chevron opens children, whose Resolve slot keeps the root's time column; Resolved holds a resolved row, folded.
-    await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approval", { timeout: 30_000 });
-    await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toContainText("Question", { timeout: 30_000 });
-    await expect(group("idle").locator(`[data-session-row="${stopped}"] [data-session-line="unfinished"]`)).toBeVisible({ timeout: 30_000 });
-    await expect(row(stopped)).toContainText("테스트 환경이 없어 멈췄어요");
-    await expect(group("working").locator(`[data-session-row="${parent}"]`)).toBeVisible();
+    // The rail has no Work tool; the Project's Memory and PRs come first (B23).
+    await expect.poll(() => page.locator("[data-lane-tool]").evaluateAll((tools) => tools.map((tool) => tool.getAttribute("aria-label")))).toEqual(["Memory", "PRs", "Files", "Changes"]);
+    const tasks = await showTasks(page);
+    const row = (pane: string) => tasks.locator(`[data-task-row="${pane}"]`);
+    const group = (name: string) => tasks.locator(`[data-task-group="${name}"]`);
+    // B4, B7, B8: Needs You's second line is the question, the working parent stands for its child, unfinished work rests with its line.
+    const ask = (pane: string) => group("needs_you").locator(`[data-task-row="${pane}"] [data-task-line="needs_you"]`);
+    await expect(ask(asking)).toContainText("검증 명령을 승인해 주세요", { timeout: 30_000 });
+    await expect(ask(question)).toContainText(QUESTION, { timeout: 30_000 });
+    await expect(group("working").locator(`[data-task-row="${parent}"]`)).toBeVisible();
     await expect(row(child)).toHaveCount(0);
-    await expect.poll(() => last.get("request_view")?.observing).toBe(true);
-    expect(last.get("ui_state_update")?.right_panel_section).not.toBe("sessions");
-    const children = panel.locator(`[data-session-chevron="${parent}"]`);
-    await expect(row(parent).locator('[data-descendant-mark]')).toHaveCount(0);
-    await children.click();
-    await expect(panel.locator(`[data-session-child="${child}"]`)).toContainText("하위 작업 검증");
-    expect(await rightEdge(panel.locator(`[data-session-child="${child}"] [data-resolve-slot]`))).toBe(await rightEdge(row(parent).locator("[data-session-resolve]")));
-    await children.click();
-    await expect(panel.locator(`[data-session-child="${child}"]`)).toHaveCount(0);
-    await row(question).locator('[data-session-focus="row"]').focus();
+    await expect(row(parent).locator("[data-task-children]")).toHaveAttribute("data-task-children", "1");
+    await openTaskFolds(page);
+    await expect(row(stopped)).toHaveAttribute("data-task-state", "resting");
+    await expect(row(stopped)).toContainText("테스트 환경이 없어 멈췄어요");
+    // B10: the chevron opens the children in place and closes them again.
+    await tasks.locator(`[data-task-chevron="${parent}"]`).click();
+    await expect(tasks.locator(`[data-task-child="${child}"]`)).toContainText("하위 작업 검증");
+    await tasks.locator(`[data-task-chevron="${parent}"]`).click();
+    await expect(tasks.locator(`[data-task-child="${child}"]`)).toHaveCount(0);
+    // B12: Enter goes to the pane; a read question leaves Needs You.
+    await row(question).locator('[data-task-focus="row"]').focus();
     await page.keyboard.press("Enter");
     await expect(page.locator(`[data-pane-view="${question}"]`)).toHaveAttribute("data-focused", "true");
-    await showSessions();
-    await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toHaveCount(0);
-    await expect(group("idle").locator(`[data-session-row="${question}"]`)).toBeVisible();
-    await expect(row(question)).not.toContainText("Question");
-    await row(asking).locator('[data-session-focus="row"]').click();
+    await expect(group("needs_you").locator(`[data-task-row="${question}"]`)).toHaveCount(0);
+    await expect(row(question).locator('[data-task-line="needs_you"]')).toHaveCount(0);
+    await row(asking).locator('[data-task-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${asking}"]`)).toHaveAttribute("data-focused", "true");
-    await showSessions();
-    await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approval");
-    // Keyboard arrows reach the next row; Resolve is a named keyboard action.
-    await row(stopped).locator('[data-session-focus="row"]').focus();
+    await expect(row(asking)).toHaveAttribute("data-selected", "true");
+    await expect(ask(asking)).toContainText("검증 명령을 승인해 주세요");
+    // B12: Home reaches the first group head and the arrows the next row.
+    await row(stopped).locator('[data-task-focus="row"]').focus();
     await page.keyboard.press("Home");
-    await expect(panel.locator('[data-session-focus]').first()).toBeFocused();
+    await expect(tasks.locator('[data-task-list] [data-task-focus]').first()).toBeFocused();
     await page.keyboard.press("ArrowDown");
-    await expect(row(asking).locator('[data-session-focus="row"]')).toBeFocused();
-    await row(stopped).locator("[data-session-resolve]").focus();
-    await page.keyboard.press("Enter");
-    await expect(row(stopped)).toHaveCount(0);
-    await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
-    await head("resolved").click();
-    await expect(row(stopped)).toBeVisible();
-    expect(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "core-state.json"), "utf8")).resolved_sessions[stopped]).toBeTruthy();
-    // A restart keeps the chosen tool up over the agents (PRD right-lane B22), and the resolution.
+    await expect(row(asking).locator('[data-task-focus="row"]')).toBeFocused();
+    // B18: Resolve from the ⋯ menu is saved, and the row stays under 쉬는 중.
+    await row(stopped).hover();
+    await tasks.locator(`[data-task-more="${stopped}"]`).click();
+    await page.locator('[data-task-menu-item="resolve"]').click();
+    await expect.poll(resolved(daemon, stopped)).toBe(true);
+    await expect(row(stopped)).toHaveAttribute("data-task-state", "resting");
+    // B3: a restart keeps the 태스크 list, and the resolution keeps the agent out of the 프로젝트 tree.
     daemon = await daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.locator('[data-workspace-screen][data-lane-mode="overlay"]')).toHaveAttribute("data-lane-shows", "work");
-    await showSessions();
-    await expect(head("resolved")).toContainText("1");
+    await expect(page.locator('[data-sidebar-lens="tasks"]')).toBeVisible();
+    await showProjects(page);
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${parent}"]`).first()).toBeVisible();
     await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`)).toHaveCount(0);
-    await head("resolved").click();
-    await row(stopped).locator('[data-session-focus="row"]').click();
+    await showTasks(page);
+    await openTaskFolds(page);
+    await row(stopped).locator('[data-task-focus="row"]').click();
     await expect(page.locator(`[data-pane-view="${stopped}"]`)).toHaveAttribute("data-focused", "true");
-    await showSessions();
+    // Input brings a resolved task back.
     await page.locator(`[data-pane-view="${stopped}"] .xterm-helper-textarea`).pressSequentially("continue");
-    await expect(group("resolved")).toHaveCount(0);
-    await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`).first()).toBeVisible();
+    await expect.poll(resolved(daemon, stopped)).toBe(false);
     for (const theme of ["light", "dark"] as const) {
       await chooseTheme(page, theme);
-      await screenshot(page, `sessions-panel-${theme}`);
+      await screenshot(page, `task-list-${theme}`);
     }
-    // The Overview is the device's Tasks, backlog, Projects and Usage, with no Conversation history (PRD overview-device-tasks D-01, D-20).
+    await showProjects(page);
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${stopped}"]`).first()).toBeVisible();
+    // The Overview is the device's backlog, Projects and Usage; its tasks are the sidebar's 태스크 list (PRD sidebar-task-lens B38).
     await page.keyboard.press(chord("overview"));
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
-    expect(await modal.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["tasks", "backlog", "projects", "usage"]);
+    expect(await modal.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["backlog", "projects", "usage"]);
     await page.keyboard.press("Escape");
-    await page.locator(`nav[data-sidebar] [data-agent-open="${stopped}"]`).first().click();
-    await showSessions();
+    await showTasks(page);
     await page.mouse.move(2, 998);
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await unchangedForFrames(page, () => sentTotal(sent));
     const quiet = sentTotal(sent);
-    await quietFor(page, 3_000, "idle Sessions sends no events");
+    await quietFor(page, 3_000, "an idle 태스크 list sends no events");
     expect(sentTotal(sent)).toBe(quiet);
   } finally {
     daemon?.stop();

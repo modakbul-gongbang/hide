@@ -1,11 +1,11 @@
-// The Overview's Tasks tab as data (PRD overview-device-tasks B5-B11, B14,
-// B59): which sections stand in which order, what folds, what the chips and
-// the search keep, what a card's lines say, and which card an item or a pane
-// belongs to. The expected answers are the PRD's Behaviors.
+// A device's tasks as the Overview and the record read them (PRD
+// overview-device-tasks B5, B8-B10, B25, B59): the backlog's project order,
+// what a card's lines say, and which card an item or a pane belongs to. The
+// expected answers are the PRD's Behaviors.
 
 import { describe, expect, it } from "vitest";
 import type { IncomingTaskScope, TaskCardScope, TaskState } from "./agentScope";
-import { cardLine, cardOfItem, cardOfPane, cardPulls, cardQuestion, foldsShowing, itemToken, overviewDeviceOf, taskSections, taskTally } from "./overviewTasks";
+import { cardLine, cardOfItem, cardOfPane, cardPulls, cardQuestion, itemToken, overviewDeviceOf, projectOrder } from "./overviewTasks";
 import type { BoardProject } from "./projectBoard";
 import type { AgentRow, SnapshotRest, Workspace } from "./snapshot";
 
@@ -62,69 +62,17 @@ describe("an item's chip (B8)", () => {
   });
 });
 
-describe("the sections (B6, B7, B5, B11)", () => {
+describe("the backlog's project order (B25, B5)", () => {
   it("puts a project with a task waiting on the operator first, then the most recently active, then by name", () => {
     const calm = project("b-calm", [card("c1", "working")], { recency: "0000000000009" });
     const asking = project("z-asking", [card("a1", "needs_you")], { recency: "0000000000001" });
     const older = project("a-older", [card("o1", "working")], { recency: "0000000000005" });
     const tie = project("a-tie", [card("t1", "working")], { recency: "0000000000005" });
-    expect(taskSections([calm, older, asking, tie], new Map(), "all", "", null).map((section) => section.project.id)).toEqual(["z-asking", "b-calm", "a-older", "a-tie"]);
-  });
-
-  it("keeps the core's order of the open cards and folds the resting and the cleanup ones apart", () => {
-    const cards = [card("n", "needs_you"), card("b", "blocked"), card("w", "working"), card("r", "resting"), card("c", "cleanup"), card("d", "done")];
-    const [section] = taskSections([project("p", cards)], new Map(), "all", "", null);
-    expect(section!.open.map((one) => one.root)).toEqual(["n", "b", "w", "d"]);
-    expect(section!.resting.map((one) => one.root)).toEqual(["r"]);
-    expect(section!.cleanup.map((one) => one.root)).toEqual(["c"]);
-    expect(section!.count).toBe(6);
-  });
-
-  it("keeps a project with no task as an empty section while nothing filters", () => {
-    const [section] = taskSections([project("empty", [])], new Map(), "all", "", null);
-    expect(section).toMatchObject({ open: [], resting: [], cleanup: [], count: 0 });
+    expect(projectOrder([calm, older, asking, tie], null).map((one) => one.id)).toEqual(["z-asking", "b-calm", "a-older", "a-tie"]);
   });
 
   it("shows only the chosen project (B5)", () => {
-    expect(taskSections([project("a", [card("1", "working")]), project("b", [card("2", "working")])], new Map(), "all", "", "b").map((section) => section.project.id)).toEqual(["b"]);
-  });
-
-  it("lets Needs You keep the blocked cards too, keeps the section order, and drops a section the chip empties (B11)", () => {
-    const first = project("first", [card("q", "needs_you"), card("w1", "working")], { recency: "2" });
-    const second = project("second", [card("x", "blocked")], { recency: "1" });
-    const third = project("third", [card("w2", "working")], { recency: "3" });
-    const shown = taskSections([first, second, third], new Map(), "needs_you", "", null);
-    expect(shown.map((section) => [section.project.id, section.open.map((one) => one.root)])).toEqual([["first", ["q"]], ["second", ["x"]]]);
-    expect(taskSections([first, second, third], new Map(), "working", "", null).map((section) => section.project.id)).toEqual(["first", "third"]);
-  });
-
-  it("finds a card by a member's title, a checkout's branch, an issue chip and a PR number, and returns nothing for a word none carries", () => {
-    const rows = rowsOf(
-      agent("root", { identity_label: "Fix the login race" }),
-      agent("child", { identity_label: "Write the test", request: { pull_requests: [{ number: 812, url: "https://example.invalid/pull/812" }] }, state: { pr: { pulls: [{ index: 0, state: "pending" }] } } }),
-    );
-    const seeded = project("p", [card("root", "working", { members: ["root", "child"], checkouts: ["c1"] })], { checkouts: [{ id: "c1", branch: "feature/login-race", task_key: "github:acme/app#77" }], tasks: [{ key: "github:acme/app#77", id: "#77" }] });
-    for (const query of ["login race", "WRITE THE", "feature/login", "#77", "#812"]) expect(taskSections([seeded], rows, "all", query, null).length, query).toBe(1);
-    expect(taskSections([seeded], rows, "all", "nothing like this", null)).toEqual([]);
-  });
-
-  it("does not count a dashed card another device left in the project's tasks or Needs You (B14)", () => {
-    const incoming: IncomingTaskScope = { root: "far", root_device_id: "laptop", root_device_label: "MacBook", root_project_id: "x", pane_ids: ["child"] };
-    const seeded = project("p", [card("own", "working")], { incoming: [incoming] });
-    const [section] = taskSections([seeded], new Map(), "all", "", null);
-    expect(section!.incoming).toEqual([incoming]);
-    expect(section!.count).toBe(1);
-    expect(taskTally([seeded])).toMatchObject({ total: 1, needsYou: 0 });
-  });
-});
-
-describe("the tab's numbers (B3)", () => {
-  it("counts every card once, Needs You from the core, and the bar's working, waiting and resting shares", () => {
-    const tally = taskTally([
-      project("a", [card("1", "needs_you"), card("2", "working"), card("3", "done")]),
-      project("b", [card("4", "waiting"), card("5", "resting"), card("6", "cleanup"), card("7", "blocked")]),
-    ]);
-    expect(tally).toEqual({ total: 7, needsYou: 2, working: 1, waiting: 2, resting: 2 });
+    expect(projectOrder([project("a", [card("1", "working")]), project("b", [card("2", "working")])], "b").map((one) => one.id)).toEqual(["b"]);
   });
 });
 
@@ -188,13 +136,5 @@ describe("the card an item or a pane belongs to (D-31, B59)", () => {
     expect(cardOfPane([other, started], "child")?.card.root).toBe("root");
     expect(cardOfPane([other, started], "solo")?.project.id).toBe("q");
     expect(cardOfPane([other, started], "stranger")).toBeNull();
-  });
-
-  it("opens the fold a resting or cleanup card stands in, so the card it opens on shows selected (B7, B59)", () => {
-    expect(foldsShowing([], { state: "resting" }, "q")).toEqual(["rest:q"]);
-    expect(foldsShowing(["more:p"], { state: "cleanup" }, "q")).toEqual(["more:p", "cleanup:q"]);
-    const open = ["rest:q"];
-    expect(foldsShowing(open, { state: "resting" }, "q")).toBe(open);
-    expect(foldsShowing(open, { state: "working" }, "p")).toBe(open);
   });
 });

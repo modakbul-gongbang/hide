@@ -5,12 +5,18 @@ import { DatabaseSync } from "node:sqlite";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "./session-work-fixture";
-import { enterWorkspace, showProjectRow, showTool } from "./wire";
+import { enterWorkspace, showProjectRow, taskRow } from "./wire";
 import { chord } from "./chords";
+import { openOverview } from "./overview-entry";
 
 test.describe.configure({ timeout: 180_000 });
 
+/** A session's record in the lane's 보기 slot (PRD sidebar-task-lens B15). */
+const RECORD = 'aside[data-lane="detail"][data-detail="record"] [data-session-record]';
+
 async function connectRepository(page: import("@playwright/test").Page, repository: string) {
+  // The project's gear is on its row in the sidebar's 프로젝트 tree.
+  await page.locator('[data-sidebar-lens-option="projects"]').click();
   const gear = page.locator('[data-project]', { hasText: "fixture" }).locator('[data-row-settings]').first();
   await (await showProjectRow(page, gear)).click();
   const sheet = page.locator('[data-project-settings]');
@@ -28,6 +34,26 @@ function originalRepository(stateDir: string, session: string) {
   finally { db.close(); }
 }
 
+/**
+ * Show task list pins the focused pane's checklist and the chord again closes
+ * it; a press on the chip pins it and a second press closes it under the
+ * pointer (PRD task-split-checklist B12, D-06).
+ */
+async function pinAndClose(page: import("@playwright/test").Page, pane: string, names: string[]) {
+  const chip = page.locator(`[data-pane-task-chip="${pane}"]`);
+  const list = page.locator(`[data-pane-task-list="${pane}"]`);
+  await page.locator(`[data-pane-view="${pane}"] .xterm-helper-textarea`).focus();
+  await page.keyboard.press(chord("toggle_task_list"));
+  await expect(list.locator("[data-task-list-name]")).toHaveText(names);
+  await page.keyboard.press(chord("toggle_task_list"));
+  await expect(list).toHaveCount(0);
+  await chip.click();
+  await expect(chip).toHaveAttribute("aria-pressed", "true");
+  await chip.click();
+  await expect(list).toHaveCount(0);
+  await expect(chip).toHaveAttribute("aria-pressed", "false");
+}
+
 test("@platform a native session keeps its chapters, child outputs and reversible missed work through search and summaries off", async ({ page }) => {
   const herdr = await startHerdr();
   let daemon: Daemon | undefined;
@@ -37,15 +63,22 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    await showTool(page, "work");
     const first = Date.now();
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);
-    const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
-    await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
-    await root.hover();
-    await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
-    const record = page.locator("[data-session-record]");
+    const root = await taskRow(page, herdr.panes[0], FIRST_GOAL);
+    // The pane head's chip counts the session's tasks and opens the same
+    // checklist under the pointer, whose 기록 열기 opens the record (PRD
+    // task-split-checklist B9, B11, B12).
+    const chip = page.locator(`[data-pane-task-chip="${herdr.panes[0]}"]`);
+    await expect(chip).toHaveText("1/1", { timeout: 45_000 });
+    await chip.hover();
+    const list = page.locator(`[data-pane-task-list="${herdr.panes[0]}"]`);
+    await expect(list.locator("[data-task-list-name]")).toHaveText(["기록 화면 구현"]);
+    await expect(list.locator("[data-child-progress]")).toHaveAttribute("data-child-progress", /^[01]\/1$/);
+    await list.locator("[data-task-list-record]").click();
+    await expect(list).toHaveCount(0);
+    const record = page.locator(RECORD);
     const tasks = record.locator('[data-record-work]').first().locator('[data-record-task]');
     await expect(tasks).toHaveCount(1, { timeout: 45_000 });
     await expect(tasks.first().locator('[data-task-state="done"]')).toBeVisible();
@@ -59,22 +92,25 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await setFixtureLifecycle(herdr, herdr.panes[0], "working");
     await expect(root).toContainText(NEXT_GOAL, { timeout: 45_000 });
     await setFixtureLifecycle(herdr, herdr.panes[0], "idle");
-    // Typing in the terminal chose its agent, which put the unpinned lane away (PRD right-lane B15).
-    await showTool(page, "work");
-    await record.getByRole("button", { name: "Back to Sessions" }).click();
+    // The record button shows the record whether or not typing in the
+    // terminal put the unpinned lane away (PRD right-lane B15).
     await root.hover();
-    await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
-    await expect(tasks).toHaveCount(2, { timeout: 45_000 });
+    await page.locator(`[data-task-record="${herdr.panes[0]}"]`).click();
+    // The second request asked for two deliverables: two tasks of one group.
+    await expect(tasks).toHaveCount(3, { timeout: 45_000 });
     await expect(record).toContainText(FIRST_GOAL);
     await expect(record).toContainText(NEXT_GOAL);
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
-    // First asked first: the finished task, then the one whose PR failed CI.
-    expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed"]);
-    // A child is a row that opens its own record in place, under `← <parent>` (B20).
+    // First asked first: the finished task, then the split request's two, which share the failed CI of its PR.
+    expect(await tasks.evaluateAll((rows) => rows.map((row) => row.querySelector("[data-task-state]")?.getAttribute("data-task-state")))).toEqual(["done", "ci_failed", "ci_failed"]);
+    await expect(chip).toHaveText("1/3");
+    await pinAndClose(page, herdr.panes[0], ["기록 화면 구현", "이슈와 검색 검증", "좁은 열 줄바꿈 확인"]);
+    // A child is a row that opens its own record in the slot, and the head's ← comes back (PRD sidebar-task-lens B16).
     await record.locator(`[data-record-child="${child}"]`).click();
-    await expect(record.locator("[data-record-task]")).toContainText("자식 연결 검증");
-    await record.locator("[data-record-up]").click();
-    await expect(tasks).toHaveCount(2);
+    // The slot swaps the parent's three tasks for the child's one, so wait for that whole list.
+    await expect(record.locator("[data-record-task]")).toHaveText([/자식 연결 검증/]);
+    await page.locator("[data-detail-back]").click();
+    await expect(tasks).toHaveCount(3);
     const missed = record.locator("[data-missed-work]", { hasText: MISSED });
     await missed.getByRole("button", { name: "Dismiss", exact: true }).click();
     // A closed one is a muted line that says how it closed; Undo shows under the pointer.
@@ -82,6 +118,21 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await missed.hover();
     await missed.getByRole("button", { name: "Undo", exact: true }).click();
     await expect(missed).toHaveAttribute("data-missed-status", "open");
+    // The device's open missed work also folds above the Overview backlog,
+    // newest first, and 무시 there closes the same item (PRD sidebar-task-lens B52).
+    await openOverview(page, "backlog");
+    const group = page.locator("[data-open-missed]");
+    await expect(group.locator("[data-missed-work]")).toHaveCount(0);
+    await group.locator("[data-open-missed-toggle]").click();
+    const rows = group.locator("[data-missed-work]");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.last()).toContainText(MISSED);
+    await rows.last().getByRole("button", { name: "Dismiss", exact: true }).click();
+    await expect(rows).toHaveCount(1);
+    // Closing the Overview shows the Workspace again, its slot still holding the record.
+    await page.getByRole("button", { name: "Close Overview", exact: true }).click();
+    await expect(page.locator("[data-overview-page]")).toHaveCount(0);
+    await expect(missed).toHaveAttribute("data-missed-status", "dismissed");
     await page.keyboard.press(chord("search"));
     await page.locator("[data-palette-input]").fill(NEXT_GOAL);
     const hits = page.locator('[data-palette-group="sessions"]');
@@ -102,6 +153,10 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await expect(record.locator('[data-record-child]')).toContainText('Claude');
     // Only the child's pull request names its maker; the session's own say nothing.
     await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
+    // With summaries off the backlog draws no missed line, though one is still open (B52).
+    await openOverview(page, "backlog");
+    await expect(page.locator("[data-backlog-section]").first()).toBeVisible();
+    await expect(page.locator("[data-open-missed]")).toHaveCount(0);
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
@@ -114,18 +169,16 @@ test("@platform 백로그로 makes one title-only issue, a lost create response 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    await showTool(page, "work");
     const first = Date.now();
     github.clock(first, first);
     const { session } = seedFirstWork(herdr, first);
-    const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
-    await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
+    const root = await taskRow(page, herdr.panes[0], FIRST_GOAL);
     // 백로그로 creates only in the repository the ledger proved the session
     // started in, so wait for that proof as an operator's later press would.
     await expect.poll(() => originalRepository(daemon!.stateDir, session), { timeout: 30_000 }).toBe("acme/repo");
     await root.hover();
-    await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
-    const missed = page.locator("[data-session-record] [data-missed-work]", { hasText: MISSED });
+    await page.locator(`[data-task-record="${herdr.panes[0]}"]`).click();
+    const missed = page.locator(RECORD).locator("[data-missed-work]", { hasText: MISSED });
     // PRD overview-device-tasks B43-B45: one press, no form; GitHub made the
     // issue but its answer was lost, so the line fails, and the retry joins
     // the issue GitHub already has instead of making a second one.
@@ -207,12 +260,12 @@ function createdIn(contexts: string): (string | null)[] {
     .filter((call) => call.args[0] === "issue" && call.args[1] === "create").map((call) => call.repository);
 }
 
+/** The record of the 태스크 list row of `pane`, once the row says `goal`, opened in the 보기 slot; returns its missed line. */
 async function openRecord(page: import("@playwright/test").Page, pane: string, goal: string) {
-  const root = page.locator(`[data-session-row="${pane}"]`);
-  await expect(root).toContainText(goal, { timeout: 45_000 });
+  const root = await taskRow(page, pane, goal);
   await root.hover();
-  await page.locator(`[data-session-record-button="${pane}"]`).click();
-  const missed = page.locator("[data-session-record]").locator("[data-missed-work]", { hasText: MISSED });
+  await page.locator(`[data-task-record="${pane}"]`).click();
+  const missed = page.locator(RECORD).locator("[data-missed-work]", { hasText: MISSED });
   await expect(missed).toBeVisible({ timeout: 45_000 });
   return missed;
 }
@@ -226,7 +279,6 @@ test("@platform 백로그로 keeps a session's original repository after a conne
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    await showTool(page, "work");
     const original = seedFirstWork(herdr, Date.now()).session;
     let missed = await openRecord(page, herdr.panes[0]!, FIRST_GOAL);
     await expect.poll(() => originalRepository(daemon!.stateDir, original), { timeout: 30_000 }).toBe("acme/repo");
@@ -239,7 +291,6 @@ test("@platform 백로그로 keeps a session's original repository after a conne
     expect(originalRepository(daemon.stateDir, original)).toBe("acme/repo");
     // A session that starts after the edit belongs to acme/override.
     const fresh = seedFirstWork(herdr, Date.now(), NEXT_GOAL).session;
-    await page.locator("[data-session-record]").getByRole("button", { name: "Back to Sessions" }).click();
     await expect.poll(() => originalRepository(daemon!.stateDir, fresh), { timeout: 45_000 }).toBe("acme/override");
     missed = await openRecord(page, herdr.panes[0]!, NEXT_GOAL);
     await missed.locator("[data-missed-backlog-add]").click();
@@ -258,7 +309,6 @@ test("@platform a 백로그로 create in flight across an A-to-B-to-A connection
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    await showTool(page, "work");
     const { session } = seedFirstWork(herdr, Date.now());
     const missed = await openRecord(page, herdr.panes[0]!, FIRST_GOAL);
     await expect.poll(() => originalRepository(daemon!.stateDir, session), { timeout: 30_000 }).toBe("acme/repo");
@@ -292,7 +342,6 @@ test("@platform a migrated session's unknown original repository refuses 백로�
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await workRepositoryReady(daemon.stateDir);
     await enterWorkspace(page, "fixture");
-    await showTool(page, "work");
     const identity = seedFirstWork(herdr, Date.now()).session;
     await openRecord(page, herdr.panes[0]!, FIRST_GOAL);
     // This migration starts from completed, durable native work. Windows
@@ -317,9 +366,6 @@ test("@platform a migrated session's unknown original repository refuses 백로�
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    await showTool(page, "work");
-    const back = page.getByRole("button", { name: "Back to Sessions", exact: true });
-    if (await back.isVisible()) await back.click();
     const missed = await openRecord(page, herdr.panes[0]!, FIRST_GOAL);
     await missed.locator("[data-missed-backlog-add]").click();
     await expect(missed.locator('[data-missed-failed="repository_changed"]')).toBeVisible({ timeout: 30_000 });

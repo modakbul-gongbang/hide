@@ -15,7 +15,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-readers=(changes ports worktrees github disk ai usage)
+readers=(changes ports worktrees github github_poll disk ai usage)
 
 # These readers reach the network, walk a whole tree, or start a provider CLI,
 # so they must also move the blocking part off the coordinator thread itself.
@@ -23,7 +23,7 @@ readers=(changes ports worktrees github disk ai usage)
 # probe starts a `codex app-server` child and runs `claude auth status`, and
 # the usage reader runs `claude -p /usage` for seconds; run inline, any of
 # them would be that much added latency on every Herdr pane event.
-worker_readers=(changes worktrees github disk ai usage)
+worker_readers=(changes worktrees github github_poll disk ai usage)
 
 # 1. The module that holds the mutex, its runtime submodules, and the file
 #    module it calls synchronously while holding it, execute no subprocess at
@@ -110,7 +110,7 @@ fi
 
 # 6. The coordinator reads each request under the lock and releases it before
 #    the reader runs.
-for request in read_worktrees_request read_github_request read_disk_request read_ai_request; do
+for request in read_worktrees_request read_github_request read_github_poll_request read_disk_request read_ai_request; do
     # The binding may destructure - one lock acquisition can answer for more
     # than the request - so what is asserted is that the request is read out of
     # a `let Some(...)` before the reader runs, not the exact binding shape.

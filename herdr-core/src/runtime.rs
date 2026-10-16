@@ -16,6 +16,7 @@ mod clone;
 mod control_lane;
 pub(crate) mod core_move;
 pub(crate) mod delivery;
+mod detail;
 mod device_catalog;
 mod devices;
 mod disk_sweep;
@@ -25,6 +26,7 @@ mod editor;
 mod events;
 mod factory;
 mod first_run;
+mod github_poll;
 mod guardrails;
 mod home;
 mod hosts;
@@ -1474,7 +1476,7 @@ pub struct Runtime {
     /// What the link worker was last handed, and its panel reads.
     links_work: links::LinksWork,
     backlog_work: backlog::BacklogWork,
-    /// The minute the Work tab's PRs list was last judged against the clock
+    /// The minute the PRs tool's list was last judged against the clock
     /// (`runtime/request_view.rs`, `tick_work_clock`).
     work_clock_minute: u64,
     /// Project Memory's background pass, receipts and analysis state
@@ -1758,6 +1760,13 @@ pub struct Runtime {
     /// The number of local Git projects past `GITHUB_PROJECT_LIMIT` last
     /// stated, so a count is logged once rather than on every wake.
     github_over_limit: usize,
+    /// Projects the advisory poll saw change and the full read has not been
+    /// asked for yet (`Runtime::ask_polled_changes`); at most one per read
+    /// project.
+    github_polled: BTreeSet<String>,
+    /// The count past `POLL_PROJECT_LIMIT` last stated, so it is logged once
+    /// when it changes rather than on every wake.
+    github_poll_over_limit: usize,
     /// Where the last answer is kept across a restart; absent in a runtime
     /// that has no state folder to keep it in.
     github_store: Option<crate::github_store::GithubStore>,
@@ -1936,6 +1945,14 @@ impl Runtime {
                     persistence::UnrecognizedField::AgentLogoMode => (
                         "ui_state.agent_logo_mode_unknown",
                         "The stored agent logo mode was not recognized; hidden was used",
+                    ),
+                    persistence::UnrecognizedField::SidebarLens => (
+                        "ui_state.sidebar_lens_unknown",
+                        "The stored sidebar lens or task view was not recognized; the projects, by state, were used",
+                    ),
+                    persistence::UnrecognizedField::Detail => (
+                        "ui_state.detail_unknown",
+                        "The stored 보기 slot was not recognized; it loaded empty",
                     ),
                 })
                 .collect(),
@@ -2277,6 +2294,8 @@ impl Runtime {
             github_settled: HashSet::new(),
             merged_here: HashMap::new(),
             github_over_limit: 0,
+            github_polled: BTreeSet::new(),
+            github_poll_over_limit: 0,
             github_store: None,
             disk_generation: 0,
             disk_sweeps: Default::default(),

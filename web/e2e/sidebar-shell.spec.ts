@@ -102,11 +102,11 @@ test("the Search row and the Overview row under the device, with no Home row and
     await page.keyboard.press(chord("new_workspace", "electron"));
     await expect(page.locator("[data-add-project]")).toHaveCount(0);
 
-    // The direct commands focus this one list or open the Overview's Tasks over the Workspace.
+    // The direct commands focus this one list or open the Overview over the Workspace, on its 백로그 the first time (PRD sidebar-task-lens B38).
     await page.keyboard.press(chord("sidebar_projects"));
     await expect.poll(() => sidebar.evaluate((node) => node.contains(document.activeElement))).toBe(true);
     await page.keyboard.press(chord("overview"));
-    await expect(modal.locator('[data-main-view="tasks"]')).toBeVisible();
+    await expect(modal.locator('[data-main-view="backlog"]')).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(sidebar).toHaveAttribute("data-sidebar", "projects");
     await expect(list).toBeVisible();
@@ -145,14 +145,17 @@ test("the window's top row names the device over the rail and the sidebar, and c
       await page.mouse.move(640, 600);
       await screenshot(page, `title-row-workspace-${theme}`);
     }
-    // B18: the checkout's right-click is the path's menu, and the project opens the Overview's Tasks filtered to it (PRD overview-device-tasks B60).
+    // B18: the checkout's right-click is the path's menu, and the project opens its panel on the Overview's Projects (PRD sidebar-task-lens B41).
     await center.locator("[data-workspace-location]").click({ button: "right" });
     await expect(page.locator('[role="menu"] [data-menu-item="copy_path"]')).toBeVisible();
     await page.keyboard.press("Escape");
     await project.click();
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
-    await expect(modal.locator('[data-main-view="tasks"]')).toBeVisible();
-    await expect(modal.locator("[data-overview-project-chip]")).toContainText("fixture");
+    await expect(modal.locator('[data-main-view="projects"]')).toBeVisible();
+    await expect(modal.locator('[data-overview-panel="project"] h2')).toHaveText("fixture");
+    // Escape closes the panel first and the Overview after it (B16).
+    await page.keyboard.press("Escape");
+    await expect(modal.locator("[data-overview-panel]")).toHaveCount(0);
     await page.keyboard.press("Escape");
     await expect(modal).toHaveCount(0);
 

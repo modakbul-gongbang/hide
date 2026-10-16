@@ -20,17 +20,13 @@
 
 use serde::{Deserialize, Serialize};
 
-/// View areas one tab's layout may hold at once.
+/// View areas one checkout's layout may hold at once.
 pub const MAX_VIEW_AREAS: usize = 6;
 /// Split nodes on the path from the root to any area.
 pub const MAX_SPLIT_DEPTH: usize = 3;
-/// Views one tab keeps open; an open past it closes that tab's view looked
-/// at longest ago.
-pub const MAX_TAB_VIEWS: usize = 16;
-/// Displays one Workspace may hold at once, across every tab's layout. It is
-/// also the tree's own cap, since no tab holds more than its Workspace; a tab
-/// saved with more than `MAX_TAB_VIEWS` keeps them until its next open.
-pub const MAX_VIEW_DISPLAYS: usize = 256;
+/// Displays one checkout may hold at once; an open past it closes the view
+/// looked at longest ago (PRD lane-files-checkout-views D-07).
+pub const MAX_VIEW_DISPLAYS: usize = 32;
 #[cfg(test)]
 use crate::split_tree::successor;
 use crate::split_tree::{AreaItem, TreeLimits};
@@ -58,11 +54,10 @@ pub enum DisplayKind {
     File,
     Diff,
     /// A page the desktop host draws; `path` is empty and `url` names it.
+    /// A pull request's card was a kind of View once; it opens in the
+    /// lane's 보기 slot now, and a stored card is dropped as the file loads
+    /// (PRD sidebar-task-lens D-50, `workspace_views::drop_retired_cards`).
     Browser,
-    /// A pull request's decision card (PRD work-tab-pr-lens D-02): the web
-    /// draws it from the Work tab's PR facts, `path` is empty and `pr`
-    /// names it. It has no document and no tab.
-    PullRequest,
 }
 
 impl DisplayKind {
@@ -136,10 +131,6 @@ pub struct Display {
     /// The title its page last reported; absent until it reports one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
-    /// The pull request a card display shows, by number in the Workspace's
-    /// project. Absent for every other kind.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pr: Option<u32>,
     /// Raised each time the operator asks a browser display to load `url`,
     /// which is how the host tells a request from the page's own
     /// navigation. Never stored: a restart loads every page once anyway.
@@ -190,10 +181,7 @@ impl AreaItem for Display {
         self.preview = false;
     }
     fn same_content(&self, other: &Self) -> bool {
-        match (self.kind, other.kind) {
-            (DisplayKind::PullRequest, DisplayKind::PullRequest) => self.pr == other.pr,
-            _ => self.shows(&other.path, other.kind, other.committed),
-        }
+        self.shows(&other.path, other.kind, other.committed)
     }
     fn repair_area(items: &mut [Self], active: Option<&str>, notes: &mut Vec<String>) {
         let mut groups = 0;
@@ -204,7 +192,7 @@ impl AreaItem for Display {
             // without its group would never find its tab again.
             let group = match display.kind {
                 DisplayKind::Diff => Some(display.committed.unwrap_or(false)),
-                DisplayKind::File | DisplayKind::Browser | DisplayKind::PullRequest => None,
+                DisplayKind::File | DisplayKind::Browser => None,
             };
             if display.committed != group {
                 display.committed = group;
@@ -231,21 +219,6 @@ impl AreaItem for Display {
             } else if display.url.is_some() || display.title.is_some() {
                 display.url = None;
                 display.title = None;
-                addresses += 1;
-            }
-            // A card names a pull request and nothing else; a card stored
-            // with none has nothing to show and becomes the new tab page.
-            if display.kind == DisplayKind::PullRequest {
-                if display.pr.is_none() || !display.path.is_empty() || display.preview {
-                    if display.pr.is_none() {
-                        display.kind = DisplayKind::Browser;
-                    }
-                    display.path.clear();
-                    display.preview = false;
-                    addresses += 1;
-                }
-            } else if display.pr.is_some() {
-                display.pr = None;
                 addresses += 1;
             }
         }
@@ -285,7 +258,7 @@ impl LayoutError {
             Self::UnknownArea(_) => "view_layout.unknown_area",
             Self::UnknownSplit(_) => "view_layout.unknown_split",
             Self::AreaLimit | Self::DepthLimit => "view_layout.limit",
-            Self::DisplayLimit | Self::TabDisplayLimit => "view_layout.display_limit",
+            Self::DisplayLimit => "view_layout.display_limit",
             Self::NothingToSplit => "view_layout.nothing_to_split",
             Self::InvalidRatio => "view_layout.invalid_ratio",
         }
@@ -297,7 +270,7 @@ impl LayoutError {
             Self::UnknownArea(id) => format!("View area {id} is not in this Workspace"),
             Self::UnknownSplit(id) => format!("Divider {id} is not in this Workspace"),
             Self::AreaLimit => format!(
-                "This tab already has {MAX_VIEW_AREAS} view areas. Close a view to split again."
+                "This Workspace already has {MAX_VIEW_AREAS} view areas. Close a view to split again."
             ),
             Self::DepthLimit => format!(
                 "This view area is already split {MAX_SPLIT_DEPTH} levels deep. Split another area instead."
@@ -305,9 +278,6 @@ impl LayoutError {
             Self::DisplayLimit => format!(
                 "This Workspace has {MAX_VIEW_DISPLAYS} views open. Close a view to open another."
             ),
-            Self::TabDisplayLimit => {
-                format!("This tab has {MAX_TAB_VIEWS} views open. Close a view to open another.")
-            }
             Self::NothingToSplit => {
                 "This view is the only one in its area, so splitting it there would change nothing"
                     .to_owned()
@@ -336,18 +306,8 @@ impl Layout {
             tab_id: None,
             url: None,
             title: None,
-            pr: None,
             load: 0,
             opener: None,
-        }
-    }
-
-    /// A new card display for pull request `number`, not yet in any area.
-    /// It is never a preview: a card is opened on purpose.
-    pub fn new_pull_request_display(&mut self, number: u32) -> Display {
-        Display {
-            pr: Some(number),
-            ..self.new_display("", DisplayKind::PullRequest, None, false)
         }
     }
 
@@ -455,7 +415,7 @@ mod tests {
         assert_eq!(layout, before);
     }
 
-    /// B19: the 64th display fits, and every way of adding one more is
+    /// B19: the 33rd display fits, and every way of adding one more is
     /// refused and changes nothing, whichever path asked.
     #[test]
     fn every_way_of_adding_a_display_past_the_cap_is_refused() {

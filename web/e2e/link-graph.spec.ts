@@ -108,21 +108,23 @@ function writeSessions(projects: string, cwd: string): Record<string, string> {
   return { "s-maker": file("s-maker"), "s-review": file("s-review"), "s-gone": file("s-gone") };
 }
 
-/** The pull request's card, opened from the Work tool's PRs lens (PRD work-tab-pr-lens B17). */
+/**
+ * The pull request's card, opened from the PRs tool into the lane's 보기
+ * slot (PRD sidebar-task-lens B27), its folded `연결` line opened so the link
+ * record shows; the card keeps that line open while the app runs.
+ */
 async function openCard(page: Page, number: number, fresh = true): Promise<Locator> {
-  if (fresh) {
-    await (await showProjectRow(page, page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first())).click();
-    await showTool(page, "work");
-  } else if (!(await page.locator("[data-work-panel]").isVisible())) {
-    // The card opened in the files tool; the rail's Work icon brings the list back.
-    await showTool(page, "work");
-  }
-  await page.locator('[data-work-lens="prs"]').click();
+  if (fresh) await (await showProjectRow(page, page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first())).click();
+  await showTool(page, "prs");
   // Waiting starts folded (B7); a group opens from its header.
   await page.locator('[data-pr-group] [data-pr-focus="group"]').first().waitFor({ timeout: 30_000 });
   for (const header of await page.locator('[data-pr-group][data-folded="true"] [data-pr-focus="group"]').all()) await header.click();
   await page.locator(`[data-pr-row="${number}"]`).click({ timeout: 30_000 });
-  return page.locator(`[data-pr-card="${number}"]`);
+  const card = page.locator(`aside[data-lane="detail"] [data-pr-card="${number}"]`);
+  const links = card.locator('[data-pr-card-toggle="links"]');
+  await links.waitFor({ timeout: 30_000 });
+  if ((await links.getAttribute("aria-expanded")) !== "true") await links.click();
+  return card;
 }
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
@@ -180,21 +182,22 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await screenshot(page, "link-graph-panel-light");
 
     // A line's buttons stand under it on the pointer; View conversation opens
-    // that session's record in the lane (B10, B11; PRD overview-device-tasks
-    // B58), and the files tool still holds the card.
+    // that session's record in the 보기 slot (B10, B11; PRD sidebar-task-lens
+    // B47), and the slot's ← comes back to the card.
     await maker.hover();
     await expect(maker.locator('[data-link-button="view"]')).toBeVisible();
     await expect(maker.locator('[data-link-button="resume"]')).toBeVisible();
     await maker.locator('[data-link-button="view"]').click();
-    await expect(page.locator('[data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('aside[data-lane="detail"] [data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator("[data-overview-page]")).toHaveCount(0);
-    await showTool(page, "files");
+    await page.locator("[data-detail-back]").click();
     await expect(panel).toBeVisible();
 
     // A session whose file is gone stays as a dim line, and Resume says why (B15);
-    // the card reads the record again when it opens.
+    // the card reads the record again when it opens. The close chord, pressed
+    // with the keyboard in the lane (← took it), closes the slot as its ✕ does.
     fs.rmSync(files["s-gone"]);
-    await page.locator('[data-view-tab-bar] [role="tab"]', { hasText: "#31" }).getByRole("button", { name: /^Close/ }).click();
+    await page.keyboard.press(chord("close_tab"));
     await expect(panel).toHaveCount(0);
     await openCard(page, 31, false);
     const gone = panel.locator('[data-link-session="s-gone"]');
@@ -258,10 +261,10 @@ test(`a ${kind} archive resume keeps its selected source and uses the current co
     await expect(resume).toBeEnabled();
     await archived.hover();
     await archived.locator('[data-link-button="view"]').click();
-    await expect(page.locator('[data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('aside[data-lane="detail"] [data-session-record="lane"]')).toBeVisible({ timeout: 30_000 });
     await screenshot(page, `${kind}-archive-record`);
-    // The record took the lane; the card waits in the files tool.
-    await showTool(page, "files");
+    // The record took the 보기 slot; its ← brings the card back.
+    await page.locator("[data-detail-back]").click();
     await expect(panel.locator(`[data-pr-panel-worktree="${tree}"]`)).not.toHaveAttribute("data-removed", "true");
     await expect(panel.locator("[data-link-loading]")).toHaveCount(0, { timeout: 60_000 });
     // The card's own parts settle first: a failed part draws a line that moves the row under the pointer.

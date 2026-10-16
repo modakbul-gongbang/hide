@@ -9,7 +9,9 @@ real CLI is never called from a test.
 FAKE_MODE selects the frame: ok (default), no_structured_output,
 null_structured_output, api_401, api_403, api_429, api_500, api_400,
 structured_output_retries, context_limit, no_result_frame, init_frame_only,
-slow, no_account, auth_broken, auth_without_field.
+slow, no_account, auth_broken, auth_without_field, thinking_leak (the usage
+reports thinking tokens), fenced_result (a plain answer in a code fence, no
+structured_output) and prose_result (a plain answer that holds no JSON).
 FAKE_ARGS_FILE records the argument vector, FAKE_STDIN_FILE the prompt body,
 FAKE_THINKING_FILE the MAX_THINKING_TOKENS value the child received ("unset"
 when it had none). FAKE_STARTED_FILE is created once a slow turn has started
@@ -172,6 +174,16 @@ ANSWER = json.loads(os.environ.get(
 FRAME = {**BASE, "subtype": "success", "is_error": False,
          "api_error_status": None, "terminal_reason": "completed",
          "result": json.dumps(ANSWER)}
+
+if MODE == "fenced_result":
+    emit({**FRAME, "result": "```json\n" + json.dumps(ANSWER) + "\n```"})
+
+if MODE == "prose_result":
+    emit({**FRAME, "result": "I could not classify that."})
+
+if MODE == "thinking_leak":
+    emit({**FRAME, "structured_output": ANSWER,
+          "usage": {**USAGE, "output_tokens_details": {"thinking_tokens": 384}}})
 
 if MODE == "no_structured_output":
     # The answer text is there and schema-shaped; the schema-bound field is

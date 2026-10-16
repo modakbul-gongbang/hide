@@ -92,6 +92,9 @@ impl Sink for RuntimeSink {
     fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>) {
         self.apply(move |runtime| runtime.ingest_link_summaries(summaries));
     }
+    fn progress(&self, progress: Vec<crate::links::ledger::WorkProgress>) {
+        self.apply(move |runtime| runtime.ingest_work_progress(progress));
+    }
 
     fn panel(&self, generation: u64, answer: Result<PanelAnswer, String>) {
         self.apply(move |runtime| runtime.ingest_link_panel(generation, answer));
@@ -904,6 +907,23 @@ impl Runtime {
         true
     }
 
+    /// The pane chips' tasks and children; the worker sends them only when
+    /// one changed, so an equal answer publishes nothing.
+    pub(super) fn ingest_work_progress(
+        &mut self,
+        progress: Vec<crate::links::ledger::WorkProgress>,
+    ) -> bool {
+        let summaries = self
+            .snapshot
+            .link_summaries
+            .get_or_insert_with(LinkSummariesSnapshot::default);
+        if summaries.progress == progress {
+            return false;
+        }
+        summaries.progress = progress;
+        true
+    }
+
     pub(super) fn ingest_link_filling(&mut self, filling: bool) -> bool {
         let summaries = self
             .snapshot
@@ -943,7 +963,7 @@ pub(super) fn associate_landed(
 }
 
 /// Attaches to each pull request the sessions the link record says made or
-/// worked on it and the checkouts they ran in: what the Work tab's PRs list
+/// worked on it and the checkouts they ran in: what the PRs tool's list
 /// reads to find a pull request's live agents (PRD work-tab-pr-lens D-09).
 pub(super) fn associate_pr_sessions(
     pull_requests: &mut [crate::model::PullRequestSnapshot],

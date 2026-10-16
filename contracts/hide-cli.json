@@ -1545,7 +1545,8 @@
                 "agent_not_installed",
                 "intent_conflict",
                 "shell_starting",
-                "agent_not_started"
+                "agent_not_started",
+                "worktree_unconfirmed"
             ],
             "repeats_at_most": null,
             "rest": "the agent's own arguments"
@@ -1589,7 +1590,8 @@
                         "values": [
                             "request",
                             "block",
-                            "report"
+                            "report",
+                            "progress"
                         ]
                     }
                 }
@@ -1850,7 +1852,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:303916961363f3bd60bb93ebea0832127465086e579fd464ac818e77ccf54dbe",
+    "digest": "sha256:70fb06036493e7d6849fc4279d194b90bc35bb15da0bd127050b68fda7ec324b",
     "envelopes": {
         "agent": {
             "answer": "value",

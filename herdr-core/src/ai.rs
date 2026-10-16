@@ -738,6 +738,7 @@ pub(crate) fn suggest_worktree_name(
         pick: None,
         // A Git name is lowercase ASCII whatever the operator reads (D-07).
         output_language: None,
+        answer: hide_ai::AnswerMode::PlainJson,
     };
     let router = waited_router(node, settings, usage);
     let answer = router
@@ -815,6 +816,7 @@ pub(crate) fn summarize_pull_request(
         schema_version: "2".into(),
         pick: None,
         output_language: Some(language),
+        answer: hide_ai::AnswerMode::PlainJson,
     };
     let answer = labels_router(node, settings, gate, usage)
         .execute(&request, &hide_ai::CancelToken::new())

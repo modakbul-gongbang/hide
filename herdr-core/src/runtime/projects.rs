@@ -1068,7 +1068,7 @@ impl Runtime {
     /// returned in path order so the request does not move when the projects'
     /// activity order does; the second value is how many local Git projects
     /// there are in all.
-    fn github_projects(&self) -> (Vec<&WorkspaceSnapshot>, usize) {
+    pub(super) fn github_projects(&self) -> (Vec<&WorkspaceSnapshot>, usize) {
         let in_front = self
             .focused_local_checkout()
             .map(|(workspace, _)| workspace.path.as_str());
@@ -1184,6 +1184,7 @@ impl Runtime {
             .retain(|path| registered.contains(path.as_str()));
         let known = |path: &String| paths.contains(path);
         self.github_clock.retain(|path, _| known(path));
+        self.github_polled.retain(|path| known(path));
         self.github_answered.retain(|path, _| known(path));
         self.github_remotes.retain(|path, _| known(path));
         self.github_read_generation.retain(|path, _| known(path));
@@ -4556,7 +4557,7 @@ pub(super) fn associate_pull_requests(
 }
 
 /// A pull request's lowercase `owner/name` and number, from its address.
-fn pull_request_address(url: &str) -> Option<(String, u64)> {
+pub(super) fn pull_request_address(url: &str) -> Option<(String, u64)> {
     hide_session::pull_request_addresses(url)
         .into_iter()
         .next()

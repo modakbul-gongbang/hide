@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vitest";
-import { TOOLS } from "./laneTools";
 import { FACTORY_OPEN } from "./factory/launch";
 import {
   DIGITS,
@@ -39,9 +38,10 @@ describe("shortcut registry", () => {
     }
   });
 
-  it("marks exactly the eight moved chords", () => {
+  it("marks exactly the ten moved chords", () => {
     const moved = REGISTRY.filter((command) => command.moved).map((command) => command.id).sort();
-    expect(moved).toEqual(["add_backlog", "close_pane", "close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "settings"].sort());
+    // Chrome keeps ⇧⌘R (reload) and ⇧⌘B (bookmarks bar), so PRs and the sidebar lens move to ⌥⇧ in a tab (PRD sidebar-task-lens D-32).
+    expect(moved).toEqual(["add_backlog", "close_pane", "close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "settings", "toggle_lane_prs", "toggle_sidebar_lens"].sort());
   });
 
   it("adds to the backlog with ⇧⌘M in the desktop app and ⌥⇧M in a browser, where Chrome keeps ⇧⌘M (PRD overview-device-tasks B37)", () => {
@@ -80,6 +80,7 @@ describe("shortcut registry", () => {
       search: "⌘K",
       open_file: "⌘P",
       toggle_left_sidebar: "⌘B",
+      toggle_sidebar_lens: "⇧⌘B",
       // ⌘E shows the Explorer in both hosts (issue 170); the macOS set keeps
       // it on the sidebar switch, which has no chord here until one is bound.
       overview: "⇧⌘O",
@@ -88,7 +89,10 @@ describe("shortcut registry", () => {
       sidebar_projects: "⇧⌘P",
       toggle_device_rail: "",
       toggle_lane: "⌘E",
-      ...Object.fromEntries(TOOLS.map((tool, index) => [`toggle_lane_${tool}`, `⌥⌘${index + 1}`])),
+      toggle_lane_memory: "⇧⌘L",
+      toggle_lane_prs: "⇧⌘R",
+      toggle_lane_files: "",
+      toggle_lane_changes: "⇧⌘G",
       toggle_file_tree: "⇧⌘E",
       find_in_pane: "⌘F",
       save_file: "⌘S",
@@ -96,6 +100,7 @@ describe("shortcut registry", () => {
       split_right: "⌘D",
       split_down: "⇧⌘D",
       toggle_zoom: "⇧⌘↩",
+      toggle_task_list: "⇧⌘U",
       close_pane: "⇧⌘W",
       text_larger: "⌘=",
       text_smaller: "⌘-",
@@ -157,7 +162,8 @@ describe("shortcut registry", () => {
     it("refuses a pane chord bound onto a numbered one by that command's name", () => {
       expect(bindingProblem("split_right", { code: "Digit3", meta: true }, REGISTRY, "electron", "mac")).toEqual({ code: "conflict", chord: "⌘3", commandId: "select_tab_3" });
       expect(bindingProblem("split_right", { code: "Digit5", alt: true, meta: true }, REGISTRY, "electron", "mac")).toBeNull();
-      expect(bindingProblem("split_right", { code: "Digit3", alt: true, meta: true }, REGISTRY, "electron", "mac")).toEqual({ code: "conflict", chord: "⌥⌘3", commandId: `toggle_lane_${TOOLS[2]}` });
+      // ⌥⌘1-4 are free since the lane tools took letters (PRD sidebar-task-lens B24).
+      expect(bindingProblem("split_right", { code: "Digit3", alt: true, meta: true }, REGISTRY, "electron", "mac")).toBeNull();
       expect(effectiveRegistry({ split_right: "command+3" }, "electron", "mac").diagnostic).toContain("conflict select_tab_3");
     });
 
@@ -284,8 +290,8 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect([...EDITABLE_PANE_COMMANDS].sort()).toEqual(
       [
         "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
-        "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "overview", "sidebar_projects", "toggle_zoom",
-        "toggle_lane_work", "toggle_lane_files", "toggle_lane_changes", "toggle_lane_memory",
+        "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "overview", "sidebar_projects", "toggle_zoom", "toggle_task_list",
+        "toggle_sidebar_lens", "toggle_lane_memory", "toggle_lane_prs", "toggle_lane_files", "toggle_lane_changes",
         "focus_next_agent_area", "focus_previous_agent_area", "grow_agent_area", "shrink_agent_area",
         "focus_next_view_area", "focus_previous_view_area", "grow_view_area", "shrink_view_area",
         "copy_path", "copy_relative_path",
@@ -416,13 +422,17 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       search: "Ctrl+Shift+K",
       open_file: "Ctrl+Shift+P",
       toggle_left_sidebar: "Ctrl+Shift+B",
+      toggle_sidebar_lens: "Alt+Shift+B",
       overview: "Alt+Shift+O",
       add_backlog: "Alt+Shift+M",
       ...(FACTORY_OPEN ? { factory_open: "Alt+Shift+F" } : {}),
       sidebar_projects: "Alt+Shift+P",
       toggle_device_rail: "",
       toggle_lane: "Ctrl+Shift+E",
-      ...Object.fromEntries(TOOLS.map((tool, index) => [`toggle_lane_${tool}`, `Alt+Shift+${index + 1}`])),
+      toggle_lane_memory: "Alt+Shift+L",
+      toggle_lane_prs: "Alt+Shift+R",
+      toggle_lane_files: "",
+      toggle_lane_changes: "Alt+Shift+G",
       toggle_file_tree: "Alt+Shift+E",
       find_in_pane: "Ctrl+Shift+F",
       save_file: "Ctrl+Shift+S",
@@ -430,13 +440,14 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       split_right: "Ctrl+Shift+D",
       split_down: "Alt+Shift+D",
       toggle_zoom: "Alt+Shift+Enter",
+      toggle_task_list: "Alt+Shift+U",
       close_pane: "Alt+Shift+W",
       text_larger: "Ctrl+=",
       text_smaller: "Ctrl+-",
       text_reset: "Ctrl+0",
       move_to_trash: "Delete",
       copy_path: "Alt+Shift+C",
-      copy_relative_path: "Alt+Shift+R",
+      copy_relative_path: "Alt+Shift+H",
       explorer_cut: "Ctrl+X",
       explorer_copy: "Ctrl+C",
       explorer_paste: "Ctrl+V",
@@ -462,13 +473,13 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     expect(pc.some((command) => command.electron?.meta || command.browser?.meta)).toBe(false);
   });
 
-  it("presses no chord with more than three keys but the two that Chrome or a held cycle forces (operator decision 2026-10-03)", () => {
+  it("presses no chord with more than three keys but the ones that Chrome or a held cycle forces (operator decision 2026-10-03)", () => {
     const heavy = pc.flatMap((command) =>
       (["browser", "electron"] as const)
         .filter((host) => { const chord = host === "electron" ? command.electron : command.browser; return chord && [chord.ctrl, chord.alt, chord.shift].filter(Boolean).length === 3; })
         .map((host) => `${command.id} ${host}`),
     );
-    expect(heavy.sort()).toEqual(["previous_recent_project browser", "previous_recent_project electron", "reopen_closed_tab browser"]);
+    expect(heavy.sort()).toEqual(["previous_recent_project browser", "previous_recent_project electron", "reopen_closed_tab browser", "toggle_sidebar_lens browser"]);
   });
 
   it("binds every chord once on each host, and claims none that Chrome or the system keeps", () => {
@@ -483,10 +494,15 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   });
 
   it("notes a browser chord as moved only where Chrome keeps the desktop chord on this system", () => {
-    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab"]);
+    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "toggle_sidebar_lens"]);
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "new_tab")).toMatchObject({ chord: "Alt+T", moved: true, movedFrom: "Ctrl+Shift+T" });
     // Chrome keeps Alt+Shift+T for its toolbar, and the macOS ⌥⇧T is those keys.
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "reopen_closed_tab")).toMatchObject({ chord: "Ctrl+Alt+Shift+T", moved: true, movedFrom: "Alt+Shift+T" });
+    // Chrome keeps Alt+Shift+B for its bookmarks bar, and the macOS ⌥⇧B is those keys (PRD sidebar-task-lens B25).
+    expect(sheetRows("Panels", pc, "browser", "pc").find((row) => row.id === "toggle_sidebar_lens")).toMatchObject({ chord: "Ctrl+Alt+Shift+B", moved: true, movedFrom: "Alt+Shift+B" });
+    expect(matchHost(pcPress("KeyB", { alt: true, shift: true }), pc, "browser")).toBeNull();
+    expect(matchHost(pcPress("KeyB", { ctrl: true, alt: true, shift: true }), pc, "browser")?.id).toBe("toggle_sidebar_lens");
+    expect(matchHost(pcPress("KeyB", { alt: true, shift: true }), pc, "electron")?.id).toBe("toggle_sidebar_lens");
     // Every other browser chord is the desktop chord.
     const differs = pc.filter((command) => command.browser && command.electron && !command.moved && displayChord(command.browser, "pc") !== displayChord(command.electron, "pc"));
     expect(differs.map((command) => command.id)).toEqual([]);
@@ -507,32 +523,34 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     expect(matchHost(pcPress("Delete"), pc, "electron")).toBeNull();
   });
 
-  it("answers ⌥⌘1-4 as the lane tools on a Mac and Alt+Shift+1-4 elsewhere, in both hosts, and takes no key Chrome keeps", () => {
-    const tools = TOOLS.map((tool) => `toggle_lane_${tool}`);
-    for (const host of ["electron", "browser"] as const) {
-      tools.forEach((id, index) => {
-        const code = `Digit${index + 1}`;
-        expect(matchHost({ code, metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, host)?.id, `${host} mac ${id}`).toBe(id);
+  it("opens Memory, PRs and Changes with ⇧⌘L/R/G and turns the sidebar lens with ⇧⌘B on a Mac, Alt+Shift elsewhere, ⌥⇧R and ⌥⇧B in a Mac browser tab, and leaves ⌥⌘1-4 unbound (PRD sidebar-task-lens B24, B25)", () => {
+    const letters = { toggle_lane_memory: "KeyL", toggle_lane_prs: "KeyR", toggle_lane_changes: "KeyG", toggle_sidebar_lens: "KeyB" } as const;
+    for (const [id, code] of Object.entries(letters)) {
+      expect(matchHost({ code, metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, REGISTRY, "electron")?.id, `electron mac ${id}`).toBe(id);
+      for (const host of ["electron", "browser"] as const) {
+        // Chrome keeps Alt+Shift+B in a Windows or Linux browser tab; that one is Ctrl+Alt+Shift+B (below).
+        if (host === "browser" && id === "toggle_sidebar_lens") continue;
         expect(matchHost(pcPress(code, { alt: true, shift: true }), pc, host)?.id, `${host} pc ${id}`).toBe(id);
-      });
+      }
     }
-    for (const command of pc.filter((row) => tools.includes(row.id))) {
-      expect(command.moved, command.id).toBe(false);
-      expect(command.browser && isChromeReserved(command.browser, "pc"), command.id).toBeFalsy();
+    expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: true, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("toggle_lane_prs");
+    expect(matchHost({ code: "KeyB", metaKey: false, altKey: true, shiftKey: true, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("toggle_sidebar_lens");
+    for (const command of pc.filter((row) => row.id in letters)) expect(command.browser && isChromeReserved(command.browser, "pc"), command.id).toBeFalsy();
+    for (const host of ["electron", "browser"] as const) {
+      for (const index of [1, 2, 3, 4]) expect(matchHost({ code: `Digit${index}`, metaKey: true, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, host), `${host} ⌥⌘${index}`).toBeNull();
     }
     // Alt+n still selects the nth agent, and Ctrl+Shift+n the nth tab.
     expect(matchHost(pcPress("Digit1", { alt: true }), pc, "electron")?.id).toBe("select_agent_1");
     expect(matchHost(pcPress("Digit1", { ctrl: true, shift: true }), pc, "electron")?.id).toBe("select_tab_1");
   });
 
-  it("reads a stored lane tool chord on both systems, and refuses ⇧⌘1 on Windows and Linux where it is ⌥⌘1", () => {
-    const first = `toggle_lane_${TOOLS[0]}`;
+  it("reads a stored lane tool chord on both systems, drops a stored Work tool chord without refusing the set, and refuses a chord a lane tool holds", () => {
     const stored = { toggle_lane_memory: "command+option+9" };
     expect(displayCommand("toggle_lane_memory", "electron", effectiveRegistry(stored, "electron", "mac").registry, "mac")).toBe("⌥⌘9");
     expect(displayCommand("toggle_lane_memory", "electron", effectiveRegistry(stored, "electron", "pc").registry, "pc")).toBe("Alt+Shift+9");
-    const crossing = { split_right: "command+shift+1" };
-    expect(effectiveRegistry(crossing, "electron", "mac").diagnostic).toBeNull();
-    expect(effectiveRegistry(crossing, "electron", "pc").diagnostic).toContain(`conflict ${first}`);
+    const retired = effectiveRegistry({ toggle_lane_work: "command+option+1", split_right: "command+option+1" }, "electron", "mac");
+    expect(retired.registry.find((command) => command.id === "split_right")?.electron).toEqual({ code: "Digit1", meta: true, alt: true });
+    expect(effectiveRegistry({ split_right: "command+shift+l" }, "electron", "mac").diagnostic).toContain("conflict toggle_lane_memory");
   });
 
   it("stores a chord as the macOS chord it stands for, so one set reads the same on both systems", () => {
@@ -559,6 +577,7 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
     expect(bindingProblem("split_right", { code: "KeyR", ctrl: true }, pc, "electron", "pc")).toEqual({ code: "modifier", modifier: "desktop_pc" });
     expect(bindingProblem("split_right", { code: "KeyR", alt: true }, pc, "electron", "pc")).toMatchObject({ code: "modifier" });
     expect(bindingProblem("split_right", { code: "KeyY", alt: true, shift: true }, pc, "electron", "pc")).toBeNull();
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true, shift: true }, pc, "electron", "pc")).toEqual({ code: "conflict", chord: "Alt+Shift+R", commandId: "toggle_lane_prs" });
     // Ctrl+Alt+Shift stands for no macOS chord, so a set holding it would be refused on a Mac.
     expect(bindingProblem("split_right", { code: "KeyR", ctrl: true, alt: true, shift: true }, pc, "electron", "pc")).toMatchObject({ code: "modifier" });
     expect(bindingProblem("split_right", { code: "KeyD", alt: true, shift: true }, pc, "electron", "pc")).toEqual({ code: "conflict", chord: "Alt+Shift+D", commandId: "split_down" });

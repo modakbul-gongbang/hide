@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { accountHome, emptyHome, failedAgents, underHome, firstRunStep, firstStartAgent, notificationState, notSignedIn, tileStatus, whatChanges } from "./firstRun";
+import { accountHome, failedAgents, underHome, firstRunStep, firstStartAgent, notificationState, notSignedIn, tileStatus, whatChanges } from "./firstRun";
 import type { AiProvider, Kit, KitAgent, SnapshotRest } from "./snapshot";
 
 const agent = (id: string, overrides: Partial<KitAgent> = {}): KitAgent => ({
@@ -131,13 +131,5 @@ describe("the notification line (B14-B19, B30)", () => {
   it("says only that nothing can be shown where no notification service answers, whatever the switch says (B47, B48)", () => {
     expect(notificationState(false, "no_service", "wizard")).toBe("no_service");
     expect(notificationState(true, "no_service", "settings")).toBe("no_service");
-  });
-});
-
-describe("the empty Home (D-16, B27-B29)", () => {
-  it("draws the graph whenever it has an agent, and otherwise the next step", () => {
-    expect(emptyHome(0, 0)).toBe("no_project");
-    expect(emptyHome(2, 0)).toBe("no_agent");
-    expect(emptyHome(0, 1)).toBeNull();
   });
 });

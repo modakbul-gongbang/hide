@@ -337,16 +337,17 @@ describe("the chords the tree answers itself", () => {
     expect(treeCommandFor(press("KeyC", { ctrl: true, shift: true }), systemRegistry("pc"), "electron")).toBeNull();
   });
 
-  it("reads them on Windows and Linux as Alt+Shift+C, Alt+Shift+R and Delete", () => {
+  it("reads them on Windows and Linux as Alt+Shift+C, Alt+Shift+H and Delete, leaving Alt+Shift+R to the PRs tool", () => {
     const pc = systemRegistry("pc");
     expect(treeCommandFor(press("KeyC", { alt: true, shift: true }), pc, "electron")).toBe("copy_path");
-    expect(treeCommandFor(press("KeyR", { alt: true, shift: true }), pc, "electron")).toBe("copy_relative_path");
+    expect(treeCommandFor(press("KeyH", { alt: true, shift: true }), pc, "electron")).toBe("copy_relative_path");
+    expect(treeCommandFor(press("KeyR", { alt: true, shift: true }), pc, "electron")).toBeNull();
     expect(treeCommandFor(press("Delete"), pc, "electron")).toBe("move_to_trash");
   });
 
   it("follows the chord the operator bound, and has none in a browser tab until one is bound", () => {
-    const bound = effectiveRegistry({ copy_path: "cmd+shift+u" }, "electron", "mac").registry;
-    expect(treeCommandFor(press("KeyU", { meta: true, shift: true }), bound, "electron")).toBe("copy_path");
+    const bound = effectiveRegistry({ copy_path: "cmd+shift+y" }, "electron", "mac").registry;
+    expect(treeCommandFor(press("KeyY", { meta: true, shift: true }), bound, "electron")).toBe("copy_path");
     expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), bound, "electron")).toBeNull();
     expect(treeCommandFor(press("KeyC", { meta: true, alt: true }), systemRegistry("mac"), "browser")).toBeNull();
   });

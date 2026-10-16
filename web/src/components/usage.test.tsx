@@ -29,7 +29,7 @@ const inWorkspace = {
 // UI_BEHAVIOR.md, Usage: full history opens the device Overview's Usage tab with no project chosen.
 async function clickHistory(rest: SnapshotRest | null) {
   useShellStore.setState({ connection: "live", usage: { nodes: [node] }, rest });
-  useUiStore.setState({ screen: { kind: "workspace" }, overviewOpen: false, mainView: "tasks" });
+  useUiStore.setState({ screen: { kind: "workspace" }, overviewOpen: false, mainView: "projects" });
   useUiStore.getState().setOverview({ projectId: "app" });
   const container = document.createElement("div");
   document.body.append(container);

@@ -148,6 +148,13 @@ fn run_coordinator(
     let mut github_reader = context
         .login()
         .map(|node| crate::github::GithubReader::new(Arc::clone(node)));
+    // The advisory poll asks GitHub each minute whether a list behind a pull
+    // request mark changed, and only says so (`github_poll`); this machine's
+    // projects only, through the same login.
+    let mut github_poll_reader = context
+        .login()
+        .filter(|_| matches!(context.target, SessionSyncTarget::Local { .. }))
+        .map(|node| crate::github_poll::GithubPollReader::new(Arc::clone(node)));
     // Sizes are measured on the machine the folders are on: this one's by
     // its own node, a node that dials this core through its link.
     let mut disk_reader = context
@@ -488,6 +495,19 @@ fn run_coordinator(
                 if let Some(request) = request
                     && let Some(github) = reader.read_if_due(request)
                     && !publish_github(&context, github)
+                {
+                    stop_subscription(&mut subscription);
+                    return;
+                }
+            }
+
+            if let Some(reader) = github_poll_reader.as_mut() {
+                let Some(request) = read_github_poll_request(&context) else {
+                    stop_subscription(&mut subscription);
+                    return;
+                };
+                if let Some(poll) = reader.read_if_due(request)
+                    && !ingest_github_poll(&context, poll)
                 {
                     stop_subscription(&mut subscription);
                     return;
@@ -1834,6 +1854,7 @@ fn read_github_request(
             SessionSyncTarget::Local { .. } => {
                 guard.reread_pending_checks(now);
                 guard.reread_stale_github(now);
+                guard.ask_polled_changes(now);
                 guard.github_request()
             }
             SessionSyncTarget::Remote { target_id, .. } => {
@@ -1843,6 +1864,38 @@ fn read_github_request(
     };
     drop(runtime);
     Some(Some(request))
+}
+
+/// What the advisory poll reads now: this machine's projects with open pull
+/// requests, built from the last answers under the lock and read after it is
+/// released. Empty while the core waits for its move's link.
+fn read_github_poll_request(
+    context: &SessionSyncContext,
+) -> Option<crate::github_poll::PollRequest> {
+    let runtime = context.runtime.upgrade()?;
+    let request = {
+        let mut guard = runtime.lock().ok()?;
+        if guard.effects_held() {
+            crate::github_poll::PollRequest::default()
+        } else {
+            guard.github_poll_request()
+        }
+    };
+    drop(runtime);
+    Some(request)
+}
+
+/// Hands the projects the poll saw change to the runtime, which asks the full
+/// read for them by the rule a look follows. False when the core is gone.
+fn ingest_github_poll(context: &SessionSyncContext, poll: crate::github_poll::PollAnswer) -> bool {
+    let Some(runtime) = context.runtime.upgrade() else {
+        return false;
+    };
+    let Ok(mut guard) = runtime.lock() else {
+        return false;
+    };
+    guard.note_polled_changes(poll.changed);
+    true
 }
 
 fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRequest> {

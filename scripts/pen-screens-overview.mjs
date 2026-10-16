@@ -1,13 +1,14 @@
-// The device Overview (PRD overview-device-tasks D-01..D-38): one device's
-// Tasks, 백로그 and Projects under a title and the device switch, the panel
-// beside the tabs, the device that does not answer, and the ⌘⇧M quick add.
-// Controls are refs of the library's System masters supplied by pen-screens;
-// the rows and cards are drawn here, as web/src/TasksTab.tsx, BacklogTab.tsx
-// and ProjectsTab.tsx draw them from primitives. Pen has no dashed stroke, so
-// the incoming card's dashed edge is drawn as a muted solid one.
+// The device Overview (PRD overview-device-tasks D-01..D-38, sidebar-task-lens
+// D-20): one device's 백로그 and Projects under a title and the device switch,
+// with Usage beside them, the panel beside the tabs (an item, or a session's
+// record at Home), the device that does not answer, and the ⌘⇧M quick add. A
+// device's tasks are the sidebar's 태스크 list, not a tab here. Controls are
+// refs of the library's System masters supplied by pen-screens; the rows are
+// drawn here, as web/src/BacklogTab.tsx and ProjectsTab.tsx draw them from
+// primitives.
 import {num} from './pen-system.mjs';
 
-export function overviewScreens(tokens, {frame, text, icon, screenButton, screenIconButton, screenInput, screenToggleGroup, screenPrMark, screenStatusMark}) {
+export function overviewScreens(tokens, {frame, text, icon, screenButton, screenIconButton, screenInput}) {
   const FG = '$--foreground', SUBTLE = '$--subtle-foreground', MUTED = '$--muted-foreground';
   const HAIR = num(tokens, '--size-hairline');
   const XXS = num(tokens, '--spacing-xxs'), XS = num(tokens, '--spacing-xs'), SM = num(tokens, '--spacing-sm'), MD = num(tokens, '--spacing-md'), LG = num(tokens, '--spacing-lg');
@@ -15,7 +16,7 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
   const DOT = num(tokens, '--size-tab-status-dot');
   const CARD_W = num(tokens, '--size-panel-min');
   const PANEL_W = num(tokens, '--size-lane-min');
-  // StageBar's four steps (web/src/TasksTab.tsx).
+  // StageBar's four steps (web/src/SessionRecord.tsx).
   const STAGE_W = 32;
   const spacer = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
   const rule = (id, width = 'fill_container') => frame(id, 'Rule', {width, height: HAIR, fill: '$--border'}, []);
@@ -60,17 +61,9 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
       ...extra,
     ], {height: num(tokens, '--size-control-sm'), padding: [0, SM], cornerRadius: '$--radius-sm', ...(active ? {fill: '$--background'} : {})});
   }
-  // Tasks' count, its Needs You and the thin bar of where the tasks stand (TasksCount, B3).
-  function tasksTab(id, active) {
-    const bar = frame(`${id}-bar`, 'Tasks bar', {layout: 'horizontal', gap: 1, width: 28, height: HAIR, cornerRadius: HAIR, clip: true}, [
-      ['needs', 2, '$--warning'], ['working', 3, '$--agent-working'], ['waiting', 1, '$--success'], ['resting', 1, MUTED],
-    ].map(([key, value, fill]) => frame(`${id}-bar-${key}`, key, {width: value * 4 - 1, height: HAIR, fill}, [])));
-    return tab(id, '태스크', '7', active, [caption(`${id}-ny`, '2', '$--warning', {mono: true}), bar]);
-  }
   function tabs(id, active, controls) {
     return row(id, 'Tabs and controls', [
       row(`${id}-list`, 'Tabs', [
-        tasksTab(`${id}-tasks`, active === 'tasks'),
         tab(`${id}-backlog`, '백로그', '5', active === 'backlog'),
         tab(`${id}-projects`, '프로젝트', '4', active === 'projects'),
         frame(`${id}-gap`, 'Gap', {width: MD, height: 1}, []),
@@ -82,84 +75,19 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
   }
   const projectChip = id => screenButton(id, '모든 프로젝트  ▾', {variant: 'outline'});
   const search = (id, placeholder) => screenInput(id, {placeholder, width: CARD_W});
-  const taskControls = id => [screenToggleGroup(`${id}-chips`, ['전체', '내 차례 2', '일하는 중'], 0), projectChip(`${id}-project`), search(`${id}-search`, '일감, 브랜치, #PR, 이슈 검색')];
   const backlogControls = id => [screenButton(`${id}-labels`, '라벨  ▾', {variant: 'outline'}), projectChip(`${id}-project`), search(`${id}-search`, '이슈, 메모 검색')];
 
-  // -- Tasks (TasksTab.tsx) -----------------------------------------------------------------
-  const LINK_CHIP = (id, label, glyphs = [], fill = SUBTLE) => row(id, label, [...glyphs.map(([g, at]) => at === 'lead' ? icon(`${id}-g`, g, {size: ICON_SM, fill}) : null).filter(Boolean), caption(`${id}-t`, label, fill), ...glyphs.map(([g, at]) => at === 'tail' ? icon(`${id}-gt`, g, {size: ICON_SM, fill}) : null).filter(Boolean)], {gap: XXS, padding: [0, XXS], cornerRadius: '$--radius-xs'});
   function stageBar(id, stage, fill) {
     return frame(id, `Stage ${stage}`, {layout: 'horizontal', gap: 1, width: STAGE_W}, [1, 2, 3, 4].map(step => frame(`${id}-${step}`, `Step ${step}`, {width: (STAGE_W - 3) / 4, height: HAIR, cornerRadius: HAIR, fill: step <= stage ? fill : '$--muted'}, [])));
-  }
-  function card(id, {mark, markFill, title, age, question, children, prs = [], items = [], outProject, outDevice, stage, stageFill, line, lineFill = SUBTLE, needs = false, selected = false}) {
-    const chips = [
-      ...(children ? [row(`${id}-kids`, 'Children', [...children.map(([symbol, fill], index) => screenStatusMark(tokens, `${id}-kid${index}`, symbol, fill)), caption(`${id}-kidt`, `자식 ${children.length}`, MUTED)], {gap: XXS})] : []),
-      ...prs.map((pr, index) => screenPrMark(`${id}-pr${index}`, pr)),
-      ...items.map((item, index) => LINK_CHIP(`${id}-item${index}`, item, [[item.startsWith('L-') ? 'file-text' : 'circle-dot', 'lead']])),
-      ...(outProject ? [LINK_CHIP(`${id}-outp`, outProject, [['arrow-right', 'lead']])] : []),
-      ...(outDevice ? [LINK_CHIP(`${id}-outd`, outDevice, [['arrow-right', 'lead']])] : []),
-    ];
-    return col(id, title, [
-      row(`${id}-top`, 'Title row', [
-        screenStatusMark(tokens, `${id}-mark`, mark, markFill),
-        caption(`${id}-title`, title, FG, {weight: '500'}),
-        spacer(`${id}-sp`),
-        micro(`${id}-age`, age, MUTED, {mono: true}),
-      ], {width: 'fill_container'}),
-      ...(question ? [caption(`${id}-q`, question, '$--warning', {width: CARD_W - 2 * SM})] : []),
-      ...(chips.length ? [row(`${id}-chips`, 'Chips', chips, {gap: XS})] : []),
-      row(`${id}-line`, 'Line', [...(stage ? [stageBar(`${id}-stage`, stage, stageFill)] : []), caption(`${id}-lt`, line, lineFill)], {gap: SM}),
-    ], {width: CARD_W, padding: [XS, SM], fill: '$--card', cornerRadius: '$--radius-md', stroke: needs ? '$--warning' : selected ? '$--ring' : '$--border', strokeWidth: selected ? 2 : HAIR, strokeAlignment: 'inner'});
-  }
-  // Work a root on another device delegated here (B14): never counted, its child's mark and title.
-  function incoming(id, {from, children}) {
-    return col(id, 'Incoming', [
-      caption(`${id}-from`, `← ${from}에서 맡긴 일`, MUTED),
-      ...children.map(([symbol, fill, title], index) => row(`${id}-c${index}`, title, [screenStatusMark(tokens, `${id}-c${index}-m`, symbol, fill), caption(`${id}-c${index}-t`, title, FG)])),
-    ], {width: CARD_W, padding: [XS, SM], cornerRadius: '$--radius-md', stroke: MUTED, strokeWidth: HAIR, strokeAlignment: 'inner'});
-  }
-  const foldChip = (id, label, fill) => row(id, label, [caption(`${id}-t`, label, fill), icon(`${id}-g`, 'chevron-right', {size: ICON_SM, fill})], {gap: XXS, padding: [XXS, SM], cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'});
-  function sectionHead(id, {label, counts, needs, backlog}) {
-    return row(id, label, [
-      text(`${id}-name`, label, {size: '$--text-subhead', weight: '600'}),
-      caption(`${id}-counts`, counts, MUTED),
-      ...(needs ? [caption(`${id}-needs`, `· 내 차례 ${needs}`, '$--warning')] : []),
-      spacer(`${id}-sp`),
-      ...(backlog ? [LINK_CHIP(`${id}-backlog`, `백로그 ${backlog}`, [['circle-dot', 'lead'], ['chevron-right', 'tail']])] : []),
-      LINK_CHIP(`${id}-open`, '열기', [['external-link', 'tail']]),
-    ], {width: 'fill_container', gap: SM, padding: [0, 0, XS, 0]});
-  }
-  const grid = (id, cards, width) => frame(id, 'Cards', {layout: 'horizontal', gap: SM, width, alignItems: 'start'}, cards);
-  function tasksBody(p, width, {selected = false} = {}) {
-    return col(`${p}-tasks`, 'Tasks', [
-      col(`${p}-hide`, 'hide', [
-        sectionHead(`${p}-hide-h`, {label: 'hide', counts: '일감 4 · 일하는 중 2', needs: 1, backlog: 3}),
-        grid(`${p}-hide-g1`, [
-          card(`${p}-c1`, {mark: '?', markFill: '$--warning', title: 'SIGTERM 처리와 자식 정리', age: '4m', question: '기존 stdin 종료 경로도 남길까요?', children: [['●', '$--agent-working'], ['○', MUTED]], prs: [{state: 'failed', number: 216}], items: ['#192'], stage: 2, stageFill: '$--warning', line: '답 · Claude Code가 기다림', lineFill: '$--warning', needs: true, selected}),
-          card(`${p}-c2`, {mark: '●', markFill: '$--agent-working', title: '사이드바 타이포그래피 정리', age: '12m', prs: [{state: 'pending', number: 208}], items: ['#186'], outProject: 'sasu', stage: 3, stageFill: '$--agent-working', line: '#208 검토 대기'}),
-          incoming(`${p}-c3`, {from: 'mini', children: [['●', '$--agent-working', '원격 빌드 캐시 측정']]}),
-        ], width),
-        grid(`${p}-hide-g2`, [
-          card(`${p}-c4`, {mark: '●', markFill: '$--agent-working', title: 'Overview 백로그 빠른 추가', age: '1m', items: ['L-3'], outDevice: 'mini', stage: 1, stageFill: '$--agent-working', line: '일하는 중 · 에이전트 2'}),
-          row(`${p}-folds`, 'Folds', [foldChip(`${p}-fold-clean`, '정리할 것 1', '$--pr-merged'), foldChip(`${p}-fold-rest`, '쉬는 일감 2', MUTED)], {gap: XS, alignItems: 'start'}),
-        ], width),
-      ], {gap: XS, width}),
-      col(`${p}-sasu`, 'sasu', [
-        sectionHead(`${p}-sasu-h`, {label: 'sasu', counts: '일감 1'}),
-        grid(`${p}-sasu-g`, [card(`${p}-c5`, {mark: '✓', markFill: '$--success', title: 'judge backend 전환 검증', age: '25m', prs: [{state: 'merged', number: 14}], stage: 4, stageFill: '$--success', line: '끝남 · 아직 안 봄', lineFill: '$--success'})], width),
-      ], {gap: XS, width}),
-      col(`${p}-creator`, 'creator', [
-        sectionHead(`${p}-creator-h`, {label: 'creator', counts: '일감 0', backlog: 1}),
-        row(`${p}-creator-empty`, 'Empty', [caption(`${p}-creator-none`, '진행 중인 일감 없음 ·', MUTED), caption(`${p}-creator-new`, 'New agent', FG)]),
-      ], {gap: XS, width}),
-    ], {gap: LG, padding: [MD, LG], width: 'fill_container'});
   }
 
   // -- the panel beside the tabs (OverviewRecord.tsx, BacklogTab.tsx BacklogItemPanel) ------
   function panelHead(id, actions) {
     return row(id, 'Panel head', [screenIconButton(`${id}-x`, 'x'), spacer(`${id}-sp`), ...actions], {width: 'fill_container', padding: [XS, SM]});
   }
-  function taskPanel(p) {
-    return col(`${p}-panel`, 'Task record', [
+  // A session's record at Home, where no Workspace is in front (PRD sidebar-task-lens B17).
+  function recordPanel(p) {
+    return col(`${p}-panel`, 'Session record', [
       panelHead(`${p}-ph`, [screenButton(`${p}-ph-open`, 'Workspace 열기'), screenButton(`${p}-ph-lane`, 'lane에서 보기', {variant: 'outline'})]),
       col(`${p}-rec`, 'Record', [
         text(`${p}-rec-title`, 'SIGTERM 처리와 자식 정리', {size: '$--text-subhead', weight: '600'}),
@@ -205,19 +133,19 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
       ...(github ? [icon(`${id}-gh`, 'external-link', {size: ICON_SM, fill: MUTED})] : []),
     ], {width: 'fill_container', gap: SM, padding: [XS, SM], cornerRadius: '$--radius-sm', ...(selected ? {fill: '$--secondary'} : {})});
   }
-  function backlogBody(p, width) {
+  function backlogBody(p, width, {selected = true} = {}) {
     return col(`${p}-backlog`, 'Backlog', [
       col(`${p}-hide`, 'hide', [
         row(`${p}-hide-h`, 'hide', [
           text(`${p}-hide-n`, 'hide', {size: '$--text-subhead', weight: '600'}),
           sourceChip(`${p}-hide-src`, 'GitHub 이슈'),
           caption(`${p}-hide-open`, '열림 3', MUTED),
-          caption(`${p}-hide-started`, '진행 중 1 → Tasks', MUTED),
+          caption(`${p}-hide-started`, '진행 중 1', MUTED),
         ], {gap: SM, padding: [0, 0, XS, 0]}),
         row(`${p}-hide-in`, 'Input', [screenInput(`${p}-hide-input`, {placeholder: 'hide에 이슈 적기', width: width - 240}), caption(`${p}-hide-dest`, 'Enter · GitHub에 바로 만듦 · 공개', '$--warning')], {gap: SM, padding: [0, 0, XS, 0]}),
         row(`${p}-pending`, 'Creating', [caption(`${p}-pending-t`, '빠른 추가 두 번째 줄 확인', FG), spacer(`${p}-pending-sp`), icon(`${p}-pending-g`, 'loader-circle', {size: ICON_SM, fill: MUTED}), caption(`${p}-pending-w`, '만드는 중', MUTED)], {width: 'fill_container', gap: SM, padding: [XS, SM], opacity: 0.6}),
         row(`${p}-failed`, 'Failed', [caption(`${p}-failed-t`, '원격 빌드 캐시 측정 이슈', FG), spacer(`${p}-failed-sp`), caption(`${p}-failed-why`, '네트워크 또는 사용량 제한', '$--destructive'), screenButton(`${p}-failed-retry`, '다시 시도', {variant: 'ghost'}), screenButton(`${p}-failed-rm`, '지우기', {variant: 'ghost'})], {width: 'fill_container', gap: SM, padding: [XS, SM]}),
-        backlogRow(`${p}-r1`, {token: '#214', title: '좁은 열에서 긴 한국어 요청 줄바꿈 확인', flag: true, labels: [['enhancement', '$--agent-working']], age: '2시간', github: true, selected: true}),
+        backlogRow(`${p}-r1`, {token: '#214', title: '좁은 열에서 긴 한국어 요청 줄바꿈 확인', flag: true, labels: [['enhancement', '$--agent-working']], age: '2시간', github: true, selected}),
         backlogRow(`${p}-r2`, {token: '#211', title: 'hided SIGTERM 뒤 남은 자식 프로세스 정리', labels: [['bug', '$--destructive']], age: '1일', github: true}),
         backlogRow(`${p}-r3`, {token: '#199', title: '원격 기본 체크아웃을 기기 연결로 읽기', age: '3일', github: true}),
       ], {gap: 0, width}),
@@ -297,7 +225,7 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
   function unanswered(id) {
     return frame(id, 'Device does not answer', {width: PAGE_W, height: 320, layout: 'vertical', fill: '$--background', cornerRadius: '$--radius-lg', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner', clip: true}, [
       head(`${id}-head`, {selected: 'studio'}),
-      tabs(`${id}-tabs`, 'tasks', []),
+      tabs(`${id}-tabs`, 'backlog', []),
       col(`${id}-body`, 'Unanswered', [
         text(`${id}-t`, 'studio가 응답하지 않는다 · 연결이 끊김', {size: '$--text-body', fill: SUBTLE}),
         screenButton(`${id}-retry`, '다시 연결', {variant: 'secondary'}),
@@ -335,15 +263,15 @@ export function overviewScreens(tokens, {frame, text, icon, screenButton, screen
   return {
     // The Overview over a Workspace, one board per tab and the states the tabs carry.
     boards(s) {
-      const tasks = page(`ov-tasks-${s}`, 'Tasks · a card selected', {active: 'tasks', controls: taskControls(`ov-tasks-${s}-ctl`), body: tasksBody(`ov-tasks-${s}`, bodyWidth(true), {selected: true}), panel: taskPanel(`ov-tasks-${s}`)});
+      const record = page(`ov-record-${s}`, '백로그 · a session record beside the tabs', {active: 'backlog', controls: backlogControls(`ov-record-${s}-ctl`), body: backlogBody(`ov-record-${s}`, bodyWidth(true), {selected: false}), panel: recordPanel(`ov-record-${s}`)});
       const backlog = page(`ov-backlog-${s}`, '백로그 · an item selected', {active: 'backlog', controls: backlogControls(`ov-backlog-${s}-ctl`), body: backlogBody(`ov-backlog-${s}`, bodyWidth(true)), panel: itemPanel(`ov-backlog-${s}`)});
       const projects = page(`ov-projects-${s}`, '프로젝트', {active: 'projects', controls: [], body: projectsBody(`ov-projects-${s}`)});
       const quick = frame(`ov-quick-${s}`, '⌘⇧M', {layout: 'horizontal', gap: LG, alignItems: 'start'}, ['open', 'creating', 'failed', 'made'].map(state => quickAdd(`ov-quick-${s}-${state}`, state)));
-      return [frame(`ov-column-${s}`, 'Boards', {layout: 'vertical', gap: '$--spacing-xl'}, [tasks, backlog, projects, unanswered(`ov-unanswered-${s}`), quick])];
+      return [frame(`ov-column-${s}`, 'Boards', {layout: 'vertical', gap: '$--spacing-xl'}, [backlog, record, projects, unanswered(`ov-unanswered-${s}`), quick])];
     },
-    // The Overview as the page a device's Home row opens: Tasks, no card selected.
+    // The Overview as the page beside the sidebar with no Workspace in front: 백로그, nothing selected.
     page(s) {
-      return page(`mn-page-${s}`, 'Overview page · Tasks', {active: 'tasks', controls: taskControls(`mn-page-${s}-ctl`), body: tasksBody(`mn-page-${s}`, bodyWidth(false))});
+      return page(`mn-page-${s}`, 'Overview page · 백로그', {active: 'backlog', controls: backlogControls(`mn-page-${s}-ctl`), body: backlogBody(`mn-page-${s}`, bodyWidth(false), {selected: false})});
     },
   };
 }

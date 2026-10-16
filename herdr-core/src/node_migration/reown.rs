@@ -591,7 +591,10 @@ fn is_empty(value: &Value) -> bool {
 
 /// `labels.json` keeps only the owner's records on disk; a device's stay in
 /// memory, because a record holds the conversation it was made from
-/// (`labels/store.rs`). The old owner's records therefore travel one hop as
+/// (`labels/store.rs`), except for the `devices` marks (a session proof,
+/// the hashes of analyzed turns and the label), which this move drops: they only spare a
+/// request, and the new core makes the same turns' labels again. The old
+/// owner's records therefore travel one hop as
 /// `moved`, which the new core takes into memory for that machine and drops
 /// from disk by the save its open makes at once; the new owner's, which the source core held
 /// in memory and wrote to `moved` when it stopped, become its own.
@@ -599,6 +602,7 @@ fn reown_labels(value: &mut Value, change: &OwnerChange) -> Result<(), String> {
     let Some(object) = value.as_object_mut() else {
         return Err("the labels are not a map".to_owned());
     };
+    object.remove("devices");
     // A section this build does not know may name a machine; it stops the
     // move rather than travel unconverted (Q18).
     if let Some(key) = object
@@ -1137,6 +1141,10 @@ mod tests {
                 "selected_pane_id": panes[1],
                 "expanded_agent_pane_ids": panes,
                 "sessions_expanded_agent_pane_ids": panes,
+                "detail": {"items": (0..3).flat_map(|index| [
+                    json!({"kind": "pull_request", "workspace_id": registrations[index], "number": 7}),
+                    json!({"kind": "record", "session": {"device_id": devices[index], "agent": "claude", "session_id": "s"}}),
+                ]).collect::<Vec<_>>(), "shown": true},
                 "recent_pane_ids": panes,
                 "pane_text_scales": keyed("pane", json!(1.2)),
                 "pane_read_records": Value::Object(panes.iter().enumerate().map(|(index, pane)| (
@@ -1184,16 +1192,16 @@ mod tests {
         };
         write(
             WORKSPACE_VIEWS,
-            json!({"schema_version": 2, "workspaces": [
+            json!({"schema_version": 3, "workspaces": [
                 {"device_id": M, "path": M_ROOT, "agent_layout": layout(&tabs[0]),
-                 "view_bookmarks": {tabs[0].clone(): {"a1": "d1"}}, "view_owner": tabs[0], "view_presentations": {tabs[0].clone(): {"views": false, "layout": {"root": {"area": {"id": "a3", "displays": [{"id": "d5", "opener": {"device_id": ALIAS, "terminal_id": "t5"}}]}}}}},
-                 "layout": {"root": {"split": {"id": "s1", "first": {"area": {"id": "a1", "displays": [{"id": "d1", "opener": {"device_id": M, "terminal_id": "t1"}}]}},
+                 "tab_views": {tabs[0].clone(): "d1"},
+                 "view_layout": {"root": {"split": {"id": "s1", "first": {"area": {"id": "a1", "displays": [{"id": "d1", "opener": {"device_id": M, "terminal_id": "t1"}}]}},
                      "second": {"area": {"id": "a2", "displays": [{"id": "d2", "opener": {"device_id": ALIAS, "terminal_id": "t2"}}, {"id": "d3", "opener": {"device_id": X, "terminal_id": "t3"}}]}}}}},
                  "feedback": {"comments": feedback_comments, "waiting": feedback_waiting}},
                 {"device_id": ALIAS, "path": C_ROOT, "agent_layout": layout(&tabs[1]),
-                 "view_bookmarks": {tabs[1].clone(): {"a1": "d2"}}, "view_owner": tabs[1], "view_presentations": {tabs[1].clone(): {"views": true, "layout": {}}}, "layout": {}},
+                 "tab_views": {tabs[1].clone(): "d2"}, "view_layout": {}},
                 {"device_id": X, "path": X_ROOT, "agent_layout": layout(&tabs[2]),
-                 "view_bookmarks": {tabs[2].clone(): {"a1": "d3"}}, "view_owner": tabs[2], "view_presentations": {tabs[2].clone(): {"views": false, "layout": {}}}, "layout": {}},
+                 "tab_views": {tabs[2].clone(): "d3"}, "view_layout": {}},
             ]}),
         );
         write(
@@ -1370,7 +1378,7 @@ mod tests {
         // A View's opener on the mini names it by the new owner's node id,
         // wherever in a layout it sits (PRD view-opener-feedback B41).
         let mac_views = &views["workspaces"][0];
-        let split = &mac_views["layout"]["root"]["split"];
+        let split = &mac_views["view_layout"]["root"]["split"];
         assert_eq!(
             split["first"]["area"]["displays"][0]["opener"]["device_id"],
             json!(M)
@@ -1382,11 +1390,6 @@ mod tests {
         assert_eq!(
             split["second"]["area"]["displays"][1]["opener"]["device_id"],
             json!(X)
-        );
-        assert_eq!(
-            mac_views["view_presentations"][&shapes("tab")[0].1]["layout"]["root"]["area"]["displays"]
-                [0]["opener"]["device_id"],
-            json!(C)
         );
         let mac = &views["workspaces"][0]["agent_layout"];
         let tab = format!("remote:{M}:tab:w1:t1");
@@ -1736,6 +1739,22 @@ mod tests {
             json!(M),
             "the owner is unchanged"
         );
+    }
+
+    /// The marks a device pane keeps (`labels/store.rs`) are the writer's own
+    /// section: a move that refused them would fail on every machine that has
+    /// labelled a device pane.
+    #[test]
+    fn the_device_marks_of_the_labels_do_not_stop_a_move_and_are_dropped() {
+        let dir = macbook_folder();
+        let state = dir.path();
+        let mut labels = read(&state.join(LABELS));
+        labels["devices"] = json!({
+            format!("device:{ALIAS}"): {"w2:p1": {"owner": "v1:o", "analysis_turn_end": 9}}
+        });
+        std::fs::write(state.join(LABELS), serde_json::to_vec(&labels).unwrap()).unwrap();
+        reown(state, &forward(), &forward_ids()).unwrap();
+        assert!(read(&state.join(LABELS)).get("devices").is_none());
     }
 
     #[test]

@@ -379,15 +379,15 @@ fn open_to_the_side_uses_the_neighbour_or_a_new_area_to_the_right() {
 }
 
 /// B18, B19, contract 2: a split past the area cap and an open past the
-/// tab's view cap are refused with a reason, and the tree stays as it was.
+/// checkout's view cap are refused with a reason, and the tree stays as it was.
 #[test]
 fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
-    use crate::view_layout::{DisplayKind, Edge, Layout, MAX_TAB_VIEWS};
+    use crate::view_layout::{DisplayKind, Edge, Layout, MAX_VIEW_DISPLAYS};
     let (mut runtime, checkout_id, directory) = views_runtime("view-caps");
     let root = directory.to_string_lossy().into_owned();
     // Six areas, three splits deep, holding the display cap between them.
     let mut full = Layout::default();
-    for index in 0..MAX_TAB_VIEWS - 5 {
+    for index in 0..MAX_VIEW_DISPLAYS - 5 {
         let shown = full.new_display(
             &format!("{root}/f{index}.md"),
             DisplayKind::File,
@@ -413,7 +413,7 @@ fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
         .entry(crate::node::TEST_NODE, &root)
         .layout = full;
     let before = tree(&mut runtime);
-    assert_eq!(before.display_count, MAX_TAB_VIEWS);
+    assert_eq!(before.display_count, MAX_VIEW_DISPLAYS);
     let tabs = runtime.snapshot.editor.tabs.clone();
 
     let first = areas(&before)[0].2[0].id.clone();
@@ -440,7 +440,7 @@ fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
     assert_eq!(refused.kind, "view_layout.display_limit");
     assert_eq!(
         refused.message,
-        "This tab has 16 views open. Close a view to open another."
+        "This Workspace has 32 views open. Close a view to open another."
     );
     assert_eq!(tree(&mut runtime), before);
     assert_eq!(runtime.snapshot.editor.tabs, tabs, "nothing was read");
@@ -465,13 +465,13 @@ fn fill(runtime: &mut Runtime, directory: &Path, count: usize) {
         .layout = layout;
 }
 
-/// B19: at its 16 views nothing adds a 17th to the tab when none of them
+/// B19: at its 32 views nothing adds a 33rd to the checkout when none of them
 /// can close. Reopen Closed, a created file and a revealed file are refused
 /// with the reason before anything is read or made, and the closed file
 /// stays reopenable.
 #[test]
 fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
-    use crate::view_layout::MAX_TAB_VIEWS;
+    use crate::view_layout::MAX_VIEW_DISPLAYS;
     let (mut runtime, checkout_id, directory) = views_runtime("view-cap-origins");
     files(&directory, &["closed.md"]);
     open(
@@ -487,9 +487,9 @@ fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
         serde_json::json!({"tab_id": closed}),
     ));
     assert_eq!(runtime.snapshot.recent_closed.count, 1);
-    fill(&mut runtime, &directory, MAX_TAB_VIEWS);
+    fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS);
     let before = tree(&mut runtime);
-    assert_eq!(before.display_count, MAX_TAB_VIEWS);
+    assert_eq!(before.display_count, MAX_VIEW_DISPLAYS);
     let tabs = runtime.snapshot.editor.tabs.clone();
 
     for (kind, payload) in [
@@ -524,12 +524,12 @@ fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
     );
 }
 
-/// B19: a file that lands after the tab filled, here a Reopen Closed
-/// admitted at 15 views, is refused with the reason as it lands rather than
-/// making a 17th view; nothing is opened and the file stays reopenable.
+/// B19: a file that lands after the checkout filled, here a Reopen Closed
+/// admitted at 31 views, is refused with the reason as it lands rather than
+/// making a 33rd view; nothing is opened and the file stays reopenable.
 #[test]
 fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() {
-    use crate::view_layout::{DisplayKind, MAX_TAB_VIEWS};
+    use crate::view_layout::{DisplayKind, MAX_VIEW_DISPLAYS};
     let (runtime, checkout_id, directory) = views_runtime("view-cap-landing");
     let shared = SharedRuntime::new(runtime);
     shared
@@ -553,7 +553,7 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
             "file_close",
             serde_json::json!({"tab_id": notes}),
         ));
-        fill(&mut runtime, &directory, MAX_TAB_VIEWS - 1);
+        fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS - 1);
         runtime.dispatch_json(&explorer_event("reopen_closed", serde_json::json!({})));
         assert_eq!(runtime.snapshot.status.last_error, None);
         assert!(runtime.snapshot.recent_closed.restoring);
@@ -579,7 +579,7 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
     let mut runtime = shared.lock().unwrap();
     let refused = runtime.snapshot.status.last_error.clone().unwrap();
     assert_eq!(refused.kind, "view_layout.display_limit");
-    assert_eq!(tree(&mut runtime).display_count, MAX_TAB_VIEWS);
+    assert_eq!(tree(&mut runtime).display_count, MAX_VIEW_DISPLAYS);
     assert!(
         runtime.snapshot.editor.tabs.is_empty(),
         "nothing was opened"
@@ -598,9 +598,9 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
 /// log, and shows once a view is closed.
 #[test]
 fn a_document_the_full_views_cannot_hold_shows_once_a_view_is_closed() {
-    use crate::view_layout::MAX_TAB_VIEWS;
+    use crate::view_layout::MAX_VIEW_DISPLAYS;
     let (mut runtime, checkout_id, directory) = views_runtime("view-cap-reconcile");
-    fill(&mut runtime, &directory, MAX_TAB_VIEWS);
+    fill(&mut runtime, &directory, MAX_VIEW_DISPLAYS);
     let path = directory.join("notes.md").to_string_lossy().into_owned();
     runtime.insert_diff_tab("workspace:order", &checkout_id, &path, false, false);
     let shown = |runtime: &mut Runtime| {
@@ -619,7 +619,7 @@ fn a_document_the_full_views_cannot_hold_shows_once_a_view_is_closed() {
     };
 
     let full = tree(&mut runtime);
-    assert_eq!(full.display_count, MAX_TAB_VIEWS);
+    assert_eq!(full.display_count, MAX_VIEW_DISPLAYS);
     assert!(!shown(&mut runtime));
     layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     assert_eq!(reported(&runtime), 1, "reported once, not on every pass");
@@ -630,7 +630,7 @@ fn a_document_the_full_views_cannot_hold_shows_once_a_view_is_closed() {
         serde_json::json!({"action": "close", "display_id": first}),
     ));
     assert!(shown(&mut runtime));
-    assert_eq!(tree(&mut runtime).display_count, MAX_TAB_VIEWS);
+    assert_eq!(tree(&mut runtime).display_count, MAX_VIEW_DISPLAYS);
 }
 
 /// Engineering principle 11: a split sent twice splits once.
@@ -2023,54 +2023,109 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
         .map(|error| error.kind.as_str())
 }
 
-/// PRD work-tab-pr-lens B20, B22: the decision card of a pull request is one
-/// View tab, opened by one event, brought forward when it is already open,
-/// and refused with a reason when the project has no such pull request.
+/// PRD sidebar-task-lens B14, B27, B47, B48, D-43, D-50: a pull request's
+/// card opens in the lane's 보기 slot, never as a View, with the lane, the
+/// Workspace and its Views where they were; the same card again is not a
+/// second entry, ← steps back, a tool called hides the slot and keeps it on
+/// the rail, ✕ empties it, and an unknown pull request is refused.
 #[test]
-fn a_pull_request_card_opens_once_as_a_view_tab() {
-    let (mut runtime, _, _directory) = views_runtime("pr-card");
+fn a_pull_request_card_opens_in_the_detail_slot_and_never_as_a_view() {
+    let (mut runtime, checkout_id, directory) = views_runtime("pr-card");
+    files(&directory, &["changed.rs"]);
     layout(&mut runtime, serde_json::json!({"tool": null}));
-    let pr: crate::model::PullRequestSnapshot = serde_json::from_value(serde_json::json!({
-        "number":42,"title":"Ship","url":"https://github.com/acme/app/pull/42",
-        "head_branch":"feature","base_branch":"main","badge":"open","checks":"passing",
-        "is_draft":false,"closing_issues":[]
-    }))
-    .unwrap();
-    runtime.snapshot.navigator.workspaces[0].pull_requests = vec![pr];
+    let pull = |number: u32| -> crate::model::PullRequestSnapshot {
+        serde_json::from_value(serde_json::json!({
+            "number":number,"title":"Ship","url":format!("https://github.com/acme/app/pull/{number}"),
+            "head_branch":format!("feature-{number}"),"base_branch":"main","badge":"open","checks":"passing",
+            "is_draft":false,"closing_issues":[]
+        }))
+        .unwrap()
+    };
+    runtime.snapshot.navigator.workspaces[0].pull_requests = vec![pull(42), pull(43)];
     let event = |runtime: &mut Runtime, number: u32| {
         runtime.dispatch_json(&explorer_event(
             "pr_open",
             serde_json::json!({"workspace_id": "workspace:order", "pr_number": number}),
         ))
     };
-    let cards = |runtime: &mut Runtime| {
+    let displays = |runtime: &mut Runtime| {
         areas(&tree(runtime))
             .into_iter()
             .flat_map(|(_, _, displays)| displays)
-            .filter(|display| display.kind == crate::view_layout::DisplayKind::PullRequest)
-            .map(|display| (display.pr, display.label))
-            .collect::<Vec<_>>()
+            .count()
     };
+    let item = |number: u32| crate::model::DetailItem::PullRequest {
+        workspace_id: "workspace:order".into(),
+        number,
+    };
+    let before = displays(&mut runtime);
+    let front = runtime.snapshot.ui_state.focused_checkout_id.clone();
     assert!(event(&mut runtime, 42));
     assert_eq!(runtime.snapshot.status.last_error, None);
-    assert_eq!(cards(&mut runtime), vec![(Some(42), "PR #42".to_owned())]);
+    let detail = runtime.snapshot.ui_state.detail.clone();
+    assert_eq!((detail.items, detail.shown), (vec![item(42)], true));
+    assert_eq!(displays(&mut runtime), before, "no View is opened");
     assert_eq!(
         runtime.snapshot.workspace_view.as_ref().unwrap().tool,
-        Some(crate::workspace_views::Tool::Files),
-        "the lane shows its files tool"
+        None,
+        "the Workspace's own tool is kept for ✕ to return to"
     );
-    event(&mut runtime, 42);
+    assert_eq!(runtime.snapshot.ui_state.focused_checkout_id, front);
+    event(&mut runtime, 43);
+    event(&mut runtime, 43);
     assert_eq!(
-        cards(&mut runtime).len(),
-        1,
-        "the same pull request is not opened twice"
+        runtime.snapshot.ui_state.detail.items,
+        vec![item(42), item(43)]
+    );
+    layout(&mut runtime, serde_json::json!({"tool": "files"}));
+    assert!(
+        !runtime.snapshot.ui_state.detail.shown,
+        "a tool called hides the slot and keeps what it holds"
+    );
+    assert_eq!(runtime.snapshot.ui_state.detail.items.len(), 2);
+    assert!(runtime.dispatch_json(&explorer_event(
+        "detail_show",
+        serde_json::json!({"shown": true})
+    )));
+    assert!(runtime.dispatch_json(&explorer_event("detail_back", serde_json::json!({}))));
+    assert_eq!(runtime.snapshot.ui_state.detail.items, vec![item(42)]);
+    // A changed file opened from the card shows in the checkout's Files, and the
+    // card keeps its rail slot to come back to (B49).
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("changed.rs"),
+        false,
+        false,
+    );
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().tool,
+        Some(crate::workspace_views::Tool::Files)
+    );
+    assert!(!runtime.snapshot.ui_state.detail.shown);
+    assert_eq!(runtime.snapshot.ui_state.detail.items, vec![item(42)]);
+    // The slot is the window's: an open in a Workspace behind the one in
+    // front, such as an agent's `hide view open`, leaves it on screen.
+    assert!(runtime.dispatch_json(&explorer_event(
+        "detail_show",
+        serde_json::json!({"shown": true})
+    )));
+    runtime.apply_area_intent_to(
+        &("local".to_owned(), "/elsewhere".to_owned()),
+        AreaIntent::Files,
+    );
+    assert!(runtime.snapshot.ui_state.detail.shown);
+    assert!(runtime.dispatch_json(&explorer_event("detail_close", serde_json::json!({}))));
+    assert_eq!(
+        runtime.snapshot.ui_state.detail,
+        crate::model::DetailSlot::default()
     );
     event(&mut runtime, 99);
     assert_eq!(
         last_error_kind(&runtime),
         Some("pr_open.unknown_pull_request")
     );
-    assert_eq!(cards(&mut runtime).len(), 1);
+    assert!(runtime.snapshot.ui_state.detail.items.is_empty());
 }
 
 /// A page's own new tab (a `target=_blank` link, an image a page wraps in

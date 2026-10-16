@@ -1,12 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { chord, commandLabel } from "./chords";
+import { chord, commandLabel, mod } from "./chords";
 import { chooseLane, enterWorkspace, screenshot } from "./wire";
-import { TOOLS } from "../src/laneTools";
 
-// A closed lane remembers the tool it last showed, and ⌥⌘1-4 press the rail's
-// icons. Each test starts one stack and asserts one contract.
+// A closed lane remembers the tool it last showed, and ⇧⌘L/R/G open its
+// project and checkout tools. Each test starts one stack and asserts one contract.
 
 const screen = (page: Page) => page.locator("[data-workspace-screen]");
 const closed = (page: Page) => expect(screen(page)).toHaveAttribute("data-lane-mode", "closed");
@@ -66,7 +65,7 @@ test("⌘E reopens the tool the lane last showed, however it was closed, and Fil
   }
 });
 
-test("⌥⌘1-4 open the lane on the rail's first to fourth tool and close it on the tool showing, and the last tool survives a restart", async ({ page }) => {
+test("⇧⌘L, ⇧⌘R and ⇧⌘G open Memory, PRs and Changes and close the tool showing, ⌥⌘1-4 do nothing, and the last tool survives a restart (B24)", async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1600, height: 900 });
   const herdr = await startHerdr({ agents: false });
@@ -74,19 +73,22 @@ test("⌥⌘1-4 open the lane on the rail's first to fourth tool and close it on
   try {
     daemon = await startHided(herdr, "lane-tool-chords");
     await open(page, daemon);
-    for (const [index, tool] of TOOLS.entries()) {
+    for (const [tool, key] of [["memory", "L"], ["prs", "R"], ["changes", "G"]] as const) {
       const id = `toggle_lane_${tool}` as const;
+      expect(commandLabel(id), tool).toMatch(new RegExp(`${key}$`));
       await page.keyboard.press(chord(id));
       await shows(page, tool);
       await expect(page.locator(`[data-lane-tool="${tool}"]`)).toHaveAttribute("aria-pressed", "true");
-      expect(commandLabel(id), `rail position ${index + 1}`).toMatch(String(index + 1));
     }
-    // The loop ended on the last tool, so its chord closes the lane.
-    await page.keyboard.press(chord(`toggle_lane_${TOOLS[TOOLS.length - 1]!}`));
+    // The loop ended on Changes, so its chord closes the lane.
+    await page.keyboard.press(chord("toggle_lane_changes"));
     await closed(page);
-    await page.keyboard.press(chord("toggle_lane_changes"));
+    // The old rail-position chords are unbound: had one opened a tool, ⌘E
+    // would close the lane rather than bring Changes back.
+    for (const digit of [1, 2, 3, 4]) await page.keyboard.press(mod(`Digit${digit}`, { alt: true }));
+    await page.keyboard.press(chord("toggle_lane"));
     await shows(page, "changes");
-    await page.keyboard.press(chord("toggle_lane_changes"));
+    await page.keyboard.press(chord("toggle_lane"));
     await closed(page);
 
     daemon = await daemon.restart();

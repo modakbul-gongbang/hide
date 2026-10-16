@@ -1,14 +1,14 @@
-// Sessions and the quiet header on one exact native candidate. Herdr, HOME,
+// The 태스크 list and the quiet header on one exact native candidate. Herdr, HOME,
 // daemon and profile belong to this fixture; input never reaches the operator.
 import { expect, type ElectronApplication } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { declareParent, labelAgent, setFixtureLifecycle, startHerdr } from "../../web/e2e/herdr-fixture";
-import { enterWorkspace, showTool } from "../../web/e2e/wire";
+import { enterWorkspace, showTasks } from "../../web/e2e/wire";
 import { fitWindow, isolate, launchShell, test } from "./fixture";
 import { captureNativeWindow } from "./native-window";
 
-test("Sessions and raised-child pane bands preserve native terminal geometry in both themes", async () => {
+test("the 태스크 list and raised-child pane bands preserve native terminal geometry in both themes", async () => {
   const herdr = await startHerdr();
   const run = isolate(herdr, "session-workflow");
   let app: ElectronApplication | undefined;
@@ -43,13 +43,14 @@ test("Sessions and raised-child pane bands preserve native terminal geometry in 
       await captureNativeWindow(app, `session-children-${theme}`, facts);
       await page.keyboard.press("Escape");
       await expect(treeButton).toBeFocused();
-      await showTool(page, "work");
-      // The raised child asks through its root's row (agent-hierarchy-screens B1, B2).
-      await expect(page.locator(`[data-session-group="needs_you"] [data-session-row="${parent}"]`)).toContainText("Approval");
-      await expect(page.locator(`[data-session-row="${child}"]`)).toHaveCount(0);
-      await captureNativeWindow(app, `sessions-${theme}`, facts);
-      await page.locator('[data-lane-tool="work"]').click();
-      await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-lane-mode", "closed");
+      // The raised child asks through its root's row, folded under it, with its question as the row's second line (agent-hierarchy-screens B1, B2; sidebar-task-lens B7, B8, B10).
+      const tasks = await showTasks(page);
+      await expect(tasks.locator(`[data-task-group="needs_you"] [data-task-row="${parent}"] [data-task-line="needs_you"]`)).toContainText("검증 명령 실행 권한이 필요합니다");
+      await expect(tasks.locator(`[data-task-row="${child}"], [data-task-child="${child}"]`)).toHaveCount(0);
+      await expect(tasks.locator(`[data-task-row="${parent}"] [data-task-children]`)).toHaveAttribute("data-task-children", "1");
+      await captureNativeWindow(app, `tasks-${theme}`, facts);
+      await page.locator('[data-sidebar-lens-option="projects"]').click();
+      await expect(page.locator('[data-sidebar-lens="projects"]')).toBeVisible();
     }
     await setFixtureLifecycle(herdr, child, "working");
     await expect(pane.locator('[data-pane-header-band="raised"]')).toHaveCount(0);
@@ -62,5 +63,5 @@ test("Sessions and raised-child pane bands preserve native terminal geometry in 
     try { run.cleanup(); } catch (error) { failures.push(error); }
     try { herdr.stop(); } catch (error) { failures.push(error); }
   }
-  if (failures.length) throw new AggregateError(failures, "native Sessions fixture or teardown failed");
+  if (failures.length) throw new AggregateError(failures, "native task list fixture or teardown failed");
 });

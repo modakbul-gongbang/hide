@@ -1,4 +1,4 @@
-// The PRs basis of the Work tool (PRD work-tab-pr-lens): which pull requests
+// The PRs tool's list (PRD work-tab-pr-lens, sidebar-task-lens D-17): which pull requests
 // a scope lists, in the groups and with the reasons the core decided
 // (`herdr-core/src/agent_state/work/board.rs`). This module only joins the
 // core's rows with the pull requests and agents they name, and counts what is
@@ -69,7 +69,7 @@ function projectStatuses(workspace: Workspace): GithubStatus[] {
 const EXTRA_QUERIES: readonly ExtraQuery[] = ["account", "review_requests", "merge_queue"];
 
 /**
- * The warning on the PRs lens while GitHub reading is not whole, or null when
+ * The warning in the PRs tool while GitHub reading is not whole, or null when
  * it is: a failed read says how old the list is, and either state names the
  * extra questions that were not answered, in plain words.
  */

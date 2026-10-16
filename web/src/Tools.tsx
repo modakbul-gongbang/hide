@@ -1,4 +1,4 @@
-import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, FolderIcon, GitBranchIcon, Maximize2Icon, Minimize2Icon, PinIcon, SquareKanbanIcon, XIcon, type LucideIcon } from "lucide-react";
+import { BrainIcon, EllipsisIcon, FileDiffIcon, FilesIcon, FolderIcon, GitBranchIcon, GitPullRequestIcon, Maximize2Icon, Minimize2Icon, PinIcon, XIcon, type LucideIcon } from "lucide-react";
 import { Fragment, useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -8,8 +8,8 @@ import { Hint } from "./components/ui/tooltip";
 import { ExplorerTree } from "./ExplorerTree";
 import { HistoryList } from "./HistoryList";
 import { MemoryTab, useMemoryProject } from "./MemoryTab";
-import { useWorkCounts } from "./workCount";
-import { WorkPanel } from "./WorkPanel";
+import { usePrsNeedsYou, PrsPanel } from "./PrsPanel";
+import { DetailIcon, DetailPanel, useDetailTitle } from "./DetailPanel";
 import { DividerGuide, LaneDivider } from "./LaneDivider";
 import { commandLabel } from "./shortcutLabels";
 import type { CommandId } from "./shortcuts";
@@ -18,22 +18,23 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { workspaceKey } from "./viewLayout";
-import { TOOLS, TOOL_SCOPES, type LaneFrame, type LaneSizes, type Tool, type WorkspaceView } from "./workspace";
+import { TOOLS, TOOL_SCOPES, type LaneFrame, type LaneSizes, type LaneTool, type Tool, type WorkspaceView } from "./workspace";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { MessageKey } from "./i18n/catalogs";
 
 // The right lane and its tool rail (PRD right-lane D-01, D-05, D-08, D-09):
-// one lane shows one tool at a time, Files (the View areas, with the file
-// tree as a column of its own), Changes (History), Work and Memory, and
-// the rail at the body's right edge opens, switches and closes it. The tool,
+// one lane shows one tool at a time, Memory, PRs, Files (the View areas,
+// with the file tree as a column of its own) and Changes (History), or the
+// window's 보기 slot (PRD sidebar-task-lens D-50), and the rail at the body's
+// right edge opens, switches and closes it. The tool,
 // the pin, the tree and the widths are the front Workspace's, kept by the
 // core; whether an unpinned lane is up and whether it is expanded are this
 // page's (`ui.ts`).
 
-const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", work: "work.title", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
-const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, work: SquareKanbanIcon, memory: BrainIcon };
-/** The command that opens and closes the lane on a tool, whose chord the rail icon's hint shows (D-12). */
-const LANE_TOOL_COMMAND = { work: "toggle_lane_work", files: "toggle_lane_files", changes: "toggle_lane_changes", memory: "toggle_lane_memory" } as const satisfies Record<Tool, CommandId>;
+const TOOL_NAMES = { files: "panes.lane.files", changes: "panes.lane.changes", prs: "prs.title", memory: "panes.lane.memory" } as const satisfies Record<Tool, MessageKey>;
+const TOOL_ICONS: Record<Tool, LucideIcon> = { files: FilesIcon, changes: FileDiffIcon, prs: GitPullRequestIcon, memory: BrainIcon };
+/** The command whose chord the rail icon's hint shows (D-12): Files names ⇧⌘E, which opens it with its tree. */
+const LANE_TOOL_COMMAND = { prs: "toggle_lane_prs", files: "toggle_file_tree", changes: "toggle_lane_changes", memory: "toggle_lane_memory" } as const satisfies Record<Tool, CommandId>;
 
 /** Whether a lane drawn this way is on screen. */
 export function laneUp(mode: LaneFrame["mode"]): boolean {
@@ -42,8 +43,8 @@ export function laneUp(mode: LaneFrame["mode"]): boolean {
 
 /**
  * What a tool's scope reads as (D-08, B14, D-37): the front checkout for the
- * checkout's tools (Files, Changes), the Project for the Project's (Work,
- * Memory), with Work naming all of it.
+ * checkout's tools (Files, Changes), the Project for the Project's (Memory,
+ * PRs), with PRs naming all of it.
  */
 function useScope(checkout: Checkout | null): (tool: Tool) => string {
   const { t } = useInterfaceTranslation();
@@ -52,7 +53,7 @@ function useScope(checkout: Checkout | null): (tool: Tool) => string {
   const projectName = project?.label ?? name;
   return (tool) => {
     const base = TOOL_SCOPES[tool] === "project" ? projectName : name;
-    return tool === "work" ? t("panes.lane.scopeProject", { project: base }) : base;
+    return tool === "prs" ? t("panes.lane.scopeProject", { project: base }) : base;
   };
 }
 
@@ -60,8 +61,10 @@ function useScope(checkout: Checkout | null): (tool: Tool) => string {
  * The tool rail (B1, B2, B23): one icon per tool, its name in its hint, pressed
  * while the lane shows that tool; pressing it opens the lane on that tool,
  * or closes the lane when it already shows it. The Files icon counts the
- * views open while the lane does not show them (B17), and Memory's dot says
- * its Project has something to ask.
+ * views open while the lane does not show them (B17), Memory's dot says
+ * its Project has something to ask, and PRs counts its Needs You rows
+ * (sidebar-task-lens B29). While the 보기 slot holds something, a fifth
+ * button above Memory brings it back (B46).
  */
 export function ToolRail({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
@@ -74,19 +77,19 @@ export function ToolRail({ actions }: { actions: Actions }) {
   });
   const scope = useScope(checkout);
   const uiState = useShellStore((s) => s.rest?.ui_state);
-  // The Work icon's number: the Needs You of Sessions and PRs added, once each (PRD work-tab-pr-lens B4).
-  const work = useWorkCounts(null).total;
+  const prsNeed = usePrsNeedsYou();
   const up = laneUp(drawn.mode);
   // The rail is always drawn, so Memory's dot reads its Project whichever tool shows.
   useMemoryProject(actions);
   return (
     <nav className="flex w-(--size-tool-rail) shrink-0 flex-col items-center gap-xxs border-l border-border bg-sidebar py-xs" aria-label={t("panes.lane.rail")} data-tool-rail="true">
+      <DetailSlotButton actions={actions} pressed={up && drawn.tool === "detail"} />
       {TOOLS.map((tool, index) => {
         const Icon = TOOL_ICONS[tool];
         const pressed = up && drawn.tool === tool;
         const name = t(TOOL_NAMES[tool]);
         const count = tool === "files" && !pressed ? views : 0;
-        const needs = tool === "work" ? work : 0;
+        const needs = tool === "prs" ? prsNeed : 0;
         // One short rule where the Project's tools end and the checkout's begin (D-37).
         const before = TOOLS[index - 1];
         const boundary = before !== undefined && TOOL_SCOPES[before] !== TOOL_SCOPES[tool];
@@ -111,7 +114,7 @@ export function ToolRail({ actions }: { actions: Actions }) {
                 </span>
               ) : null}
               {needs > 0 ? (
-                <span aria-hidden="true" className="absolute right-0 top-0 flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-warning px-xxs text-micro tabular-nums text-background" data-lane-work-count={needs}>
+                <span aria-hidden="true" className="absolute right-0 top-0 flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-warning px-xxs text-micro tabular-nums text-background" data-lane-prs-count={needs}>
                   {needs}
                 </span>
               ) : null}
@@ -123,6 +126,34 @@ export function ToolRail({ actions }: { actions: Actions }) {
       })}
       <LaneMenu actions={actions} />
     </nav>
+  );
+}
+
+/** The rail's 보기 slot (B46): its item's mark, pressed while the lane draws it; absent while the slot is empty. */
+function DetailSlotButton({ actions, pressed }: { actions: Actions; pressed: boolean }) {
+  const { t } = useInterfaceTranslation();
+  const item = useShellStore((s) => s.rest?.ui_state?.detail?.items.at(-1) ?? null);
+  const title = useDetailTitle();
+  if (!item) return null;
+  return (
+    <>
+    <Hint label={title || t("detail.slot")} side="left">
+      <button
+        type="button"
+        aria-pressed={pressed}
+        aria-label={title || t("detail.slot")}
+        className={`relative flex size-(--size-tool-rail-button) items-center justify-center rounded-md outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
+        data-lane-tool="detail"
+        data-detail-slot={item.kind}
+        onClick={() => actions.toggleDetail()}
+      >
+        {pressed ? <span aria-hidden="true" className="absolute -left-xxs inset-y-sm w-(--size-tab-indicator) rounded-full bg-primary" data-lane-tool-bar="true" /> : null}
+        <DetailIcon item={item} className="size-(--size-icon-lg)" />
+      </button>
+    </Hint>
+    {/* The slot is no tool: one short rule sets it apart from the tools below. */}
+    <span aria-hidden="true" className="my-xs h-(--size-hairline) w-(--size-icon-lg) shrink-0 bg-border" data-tool-rail-divider="detail" />
+    </>
   );
 }
 
@@ -172,7 +203,7 @@ function LaneMenu({ actions }: { actions: Actions }) {
  * scroll and previews are as they were when it comes back (B2); its tree
  * column is drawn only while the files tool shows.
  */
-export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: WorkspaceView; tool: Tool; frame: LaneFrame; sizes: LaneSizes; checkout: Checkout; actions: Actions }) {
+export function Lane({ view, tool: drawn, frame, sizes, checkout, actions }: { view: WorkspaceView; tool: LaneTool; frame: LaneFrame; sizes: LaneSizes; checkout: Checkout; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const expanded = frame.mode === "expanded";
   // The pane zoom's chord expands the lane while the keyboard is in it (`keyboard.ts`).
@@ -181,7 +212,19 @@ export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: Wo
   // Pinned in a window too narrow to dock, the tooltip reads as the approved
   // board draws it (PRD right-lane B19, D-17).
   const pinHint = !view.pinned ? t("panes.lane.pinHint") : frame.narrowPin ? t("panes.lane.pinNarrowHint") : t("panes.lane.unpinHint");
-  const filesShown = tool === "files";
+  const filesShown = drawn === "files";
+  // The 보기 slot draws its own head; the files tool stays mounted beneath it.
+  const tool: Tool = drawn === "detail" ? (view.tool ?? "files") : drawn;
+  if (drawn === "detail") {
+    return (
+      <div className="relative flex h-full min-h-0 min-w-0 flex-1 flex-col">
+        <DetailPanel actions={actions} />
+        <div className="absolute inset-0 flex min-h-0 min-w-0" inert data-lane-hidden="true">
+          <FilesTool view={view} frame={frame} sizes={sizes} shown={false} actions={actions} />
+        </div>
+      </div>
+    );
+  }
   return (
     <aside className="flex h-full min-h-0 min-w-0 flex-1 flex-col text-foreground" aria-label={t("panes.lane.aria")} data-lane={tool}>
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xxs border-b border-border pl-md pr-xs text-caption" data-lane-header="true">
@@ -211,13 +254,13 @@ export function Lane({ view, tool, frame, sizes, checkout, actions }: { view: Wo
         </Hint>
       </div>
       <div className="relative flex min-h-0 min-w-0 flex-1">
-        <div className={cn("flex min-h-0 min-w-0 flex-1", !filesShown && "invisible absolute inset-0")} inert={!filesShown} data-lane-hidden={filesShown ? undefined : "true"}>
+        <div className={cn("flex min-h-0 min-w-0 flex-1", !filesShown && "absolute inset-0")} inert={!filesShown} data-lane-hidden={filesShown ? undefined : "true"}>
           <FilesTool view={view} frame={frame} sizes={sizes} shown={filesShown} actions={actions} />
         </div>
         {filesShown ? null : (
           <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={t(TOOL_NAMES[tool])} data-tool={tool}>
             {/* History reads the front checkout's Git through its own host. */}
-            {tool === "work" ? <WorkPanel actions={actions} /> : tool === "memory" ? <MemoryTab actions={actions} /> : <HistoryList actions={actions} />}
+            {tool === "prs" ? <PrsPanel actions={actions} /> : tool === "memory" ? <MemoryTab actions={actions} /> : <HistoryList actions={actions} />}
           </section>
         )}
       </div>

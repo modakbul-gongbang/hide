@@ -285,12 +285,12 @@ pub struct ProjectLinkSummary {
     pub sessions: BTreeMap<String, Vec<SessionPrChip>>,
     /// Pull request number → the ids of the sessions that made it or worked
     /// on its branch; a session that only printed its address is not one.
-    /// Core only: the Work tab's agent of a pull request reads it (PRD
+    /// Core only: the PRs tool's agent of a pull request reads it (PRD
     /// work-tab-pr-lens D-09).
     #[serde(skip)]
     pub pr_workers: BTreeMap<u64, BTreeSet<String>>,
     /// Pull request number → the paths of the checkouts its working sessions
-    /// ran in (the same sessions as `pr_workers`). Core only: the Work tab's
+    /// ran in (the same sessions as `pr_workers`). Core only: the PRs tool's
     /// `<checkout> only` scope reads it (PRD work-tab-pr-lens D-19).
     #[serde(skip)]
     pub pr_checkouts: BTreeMap<u64, BTreeSet<String>>,
@@ -378,6 +378,9 @@ pub struct LinkPanelSnapshot {
 pub struct LinkSummariesSnapshot {
     pub projects: BTreeMap<String, ProjectLinkSummary>,
     pub filling: bool,
+    /// Each live pane session's tasks and children (PRD
+    /// task-split-checklist D-05, D-06); a session with no task is absent.
+    pub progress: Vec<ledger::WorkProgress>,
 }
 
 /// The most sessions a project's summary names chips for.

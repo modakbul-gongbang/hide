@@ -1704,56 +1704,6 @@ fn a_gui_file_read_opens_file_views_when_its_document_lands() {
 }
 
 #[test]
-fn a_gui_file_read_keeps_its_tab_when_another_tab_is_chosen() {
-    let f = Fixture::new();
-    let views_dir = f.runtime_dir("hide-gui-tab-read-");
-    {
-        let mut runtime = f.shared.lock().unwrap();
-        studio_connecting(&mut runtime);
-        helper_ready(&mut runtime, &f.device);
-        let checkout = &mut runtime.snapshot.navigator.workspaces[0].checkouts[0];
-        checkout.tabs = ["tab-a", "tab-b"]
-            .into_iter()
-            .map(|id| {
-                let mut held = tab(WORKSPACE, &f.checkout, None);
-                held.id = Some(id.to_owned());
-                held
-            })
-            .collect();
-        checkout.active_tab_id = Some("tab-a".to_owned());
-        runtime.workspace_views =
-            Some(WorkspaceViewStore::open(views_dir.join("views.json"), Default::default()).0);
-        runtime.sync_workspace_view();
-    }
-    f.device.hold_read("a.txt");
-    f.open("a.txt");
-    f.wait("the held node read", |_| f.device.waiting() > 0);
-    let before = {
-        let mut runtime = f.shared.lock().unwrap();
-        runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id =
-            Some("tab-b".to_owned());
-        runtime.choose_remote_view_presentation(DEVICE, "tab-b");
-        runtime.sync_workspace_view();
-        runtime.snapshot.workspace_view.clone()
-    };
-    f.device.release_read("a.txt");
-    f.wait_for_document("a.txt", "the GUI read", |_| true);
-    let mut runtime = f.shared.lock().unwrap();
-    runtime.sync_workspace_view();
-    assert_eq!(
-        runtime.snapshot.workspace_view, before,
-        "B keeps its empty, closed presentation"
-    );
-    runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id = Some("tab-a".to_owned());
-    runtime.choose_remote_view_presentation(DEVICE, "tab-a");
-    runtime.sync_workspace_view();
-    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
-    assert_eq!(view.layout.display_count, 1);
-    assert_eq!(runtime.visible_view_documents().len(), 1);
-}
-
-#[test]
 fn a_gui_file_read_cannot_recreate_its_closed_agent_tab() {
     let f = Fixture::new();
     let views_dir = f.runtime_dir("hide-gui-closed-read-");
@@ -1785,7 +1735,6 @@ fn a_gui_file_read_cannot_recreate_its_closed_agent_tab() {
             .tabs
             .retain(|tab| tab.id.as_deref() != Some("tab-a"));
         checkout.active_tab_id = Some("tab-b".to_owned());
-        runtime.choose_remote_view_presentation(DEVICE, "tab-b");
         runtime.sync_workspace_view();
         runtime.prune_view_bookmarks(
             &(DEVICE.to_owned(), f.root.to_string_lossy().into_owned()),
@@ -1837,7 +1786,6 @@ fn a_coalesced_gui_read_serves_each_live_requesting_tab() {
             let mut runtime = f.shared.lock().unwrap();
             runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id =
                 Some("tab-b".to_owned());
-            runtime.choose_remote_view_presentation(DEVICE, "tab-b");
             runtime.sync_workspace_view();
         }
         f.open("a.txt");
@@ -1864,27 +1812,7 @@ fn a_coalesced_gui_read_serves_each_live_requesting_tab() {
             "B's explicit GUI open must become visible (A closed: {close_a})"
         );
         assert_eq!(view.layout.display_count, 1);
-        let b_id = match &view.layout.root {
-            ViewNodeSnapshot::Area(area) => area.displays[0].id.clone(),
-            _ => panic!("one area"),
-        };
         assert_eq!(runtime.snapshot.editor.tabs.len(), 1, "one shared document");
-        if !close_a {
-            runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id =
-                Some("tab-a".to_owned());
-            runtime.choose_remote_view_presentation(DEVICE, "tab-a");
-            runtime.sync_workspace_view();
-            let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-            assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
-            assert_eq!(view.layout.display_count, 1);
-            let ViewNodeSnapshot::Area(area) = &view.layout.root else {
-                panic!("one area")
-            };
-            assert_ne!(
-                area.displays[0].id, b_id,
-                "each presentation owns its display"
-            );
-        }
     }
 }
 
@@ -1918,11 +1846,10 @@ fn a_gui_read_places_an_existing_dirty_buffer_in_its_requesting_tab() {
     f.wait("the held node read", |_| f.device.waiting() > 0);
     let (document, place) =
         files::open_document(FakeDevice::new().as_ref(), &root, &f.path("a.txt")).unwrap();
-    let before = {
+    {
         let mut runtime = f.shared.lock().unwrap();
         runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id =
             Some("tab-b".to_owned());
-        runtime.choose_remote_view_presentation(DEVICE, "tab-b");
         runtime.sync_workspace_view();
         let tab_id = runtime.new_file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
         runtime.insert_file_tab(
@@ -1936,8 +1863,7 @@ fn a_gui_read_places_an_existing_dirty_buffer_in_its_requesting_tab() {
             &f.path("a.txt"),
             false,
         );
-        runtime.snapshot.workspace_view.clone()
-    };
+    }
     let tab_id = Runtime::file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
     f.dispatch(
         "file_draft",
@@ -1949,10 +1875,6 @@ fn a_gui_read_places_an_existing_dirty_buffer_in_its_requesting_tab() {
     });
     let mut runtime = f.shared.lock().unwrap();
     runtime.sync_workspace_view();
-    assert_eq!(
-        runtime.snapshot.workspace_view, before,
-        "B does not inherit A's completion"
-    );
     assert_eq!(
         runtime.editor_documents[&tab_id].contents_utf8.as_deref(),
         Some("shared unsaved draft\n")
@@ -1968,7 +1890,6 @@ fn a_gui_read_places_an_existing_dirty_buffer_in_its_requesting_tab() {
             .dirty
     );
     runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id = Some("tab-a".to_owned());
-    runtime.choose_remote_view_presentation(DEVICE, "tab-a");
     runtime.sync_workspace_view();
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
@@ -2040,9 +1961,9 @@ fn a_coalesced_gui_read_cannot_replace_closed_new_tabs() {
 
 /// B15/D12: New tab churn cannot turn one held file read into an unbounded
 /// queue of GUI destinations, even though each replaces an existing slot:
-/// the tab's cap counts the destinations still waiting for the read.
+/// the checkout's cap counts the destinations still waiting for the read.
 #[test]
-fn a_coalesced_gui_read_refuses_a_destination_past_the_tabs_cap() {
+fn a_coalesced_gui_read_refuses_a_destination_past_the_views_cap() {
     let f = Fixture::new();
     let views_dir = f.runtime_dir("hide-gui-bounded-read-");
     {
@@ -2054,7 +1975,7 @@ fn a_coalesced_gui_read_refuses_a_destination_past_the_tabs_cap() {
         runtime.sync_workspace_view();
     }
     f.device.hold_read("a.txt");
-    for n in 1..=crate::view_layout::MAX_TAB_VIEWS + 1 {
+    for n in 1..=crate::view_layout::MAX_VIEW_DISPLAYS + 1 {
         f.dispatch(
             "browser_open",
             serde_json::json!({"url": "", "workspace_id": WORKSPACE, "checkout_id": f.checkout}),
@@ -2077,7 +1998,7 @@ fn a_coalesced_gui_read_refuses_a_destination_past_the_tabs_cap() {
         f.open("a.txt");
         {
             let runtime = f.shared.lock().unwrap();
-            if n <= crate::view_layout::MAX_TAB_VIEWS {
+            if n <= crate::view_layout::MAX_VIEW_DISPLAYS {
                 assert!(
                     runtime.snapshot.status.last_error.is_none(),
                     "destination {n} is admitted"
@@ -2134,7 +2055,6 @@ fn a_gui_read_survives_another_tabs_clean_buffer_retirement() {
         let mut runtime = f.shared.lock().unwrap();
         runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id =
             Some("tab-b".to_owned());
-        runtime.choose_remote_view_presentation(DEVICE, "tab-b");
         runtime.sync_workspace_view();
         let tab_id = runtime.new_file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
         runtime.insert_file_tab(
@@ -2172,19 +2092,7 @@ fn a_gui_read_survives_another_tabs_clean_buffer_retirement() {
     });
     let mut runtime = f.shared.lock().unwrap();
     runtime.sync_workspace_view();
-    assert_eq!(
-        runtime
-            .snapshot
-            .workspace_view
-            .as_ref()
-            .unwrap()
-            .layout
-            .display_count,
-        0,
-        "B's View list keeps no display"
-    );
     runtime.snapshot.navigator.workspaces[0].checkouts[0].active_tab_id = Some("tab-a".to_owned());
-    runtime.choose_remote_view_presentation(DEVICE, "tab-a");
     runtime.sync_workspace_view();
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(

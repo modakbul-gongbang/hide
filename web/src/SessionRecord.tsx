@@ -1,4 +1,4 @@
-import { ArrowLeftIcon, CheckIcon, ChevronRightIcon, CircleDotIcon, FlagIcon, HouseIcon, LoaderCircleIcon, MessageCircleIcon, UserIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronRightIcon, CircleDotIcon, FlagIcon, HouseIcon, LoaderCircleIcon, MessageCircleIcon, UserIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
@@ -6,18 +6,18 @@ import { agentProductName } from "./agentAdapters";
 import { deviceConnected, readsHere } from "./devices";
 import { Button } from "./components/ui/button";
 import { PrMark } from "./components/pr-mark";
+import { ChildProgressHead, TaskMark } from "./components/task-progress";
 import { Hint } from "./components/ui/tooltip";
 import { formatDateTime } from "./i18n/format";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
-import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, sessionPlace, workKey, type Checklist, type ChecklistTask, type TaskState } from "./sessionWork";
+import { checklist, orderedOutputs, outputPrState, recordTitle, recordTree, sessionPlace, workKey, type Checklist, type ChecklistTask } from "./sessionWork";
 import { boardProjects } from "./navigation";
 import { cardLine, cardOfPane, cardQuestion, everyAgent, itemToken } from "./overviewTasks";
 import { destinationOf } from "./overviewBacklog";
 import { ageWords } from "./overviewLens";
 import { machineName } from "./screenMachine";
-import { StageBar } from "./TasksTab";
 import { catalogWorkspaces } from "./snapshot";
 import type { AgentStatusCode, MissedWork, SessionRecord as RecordValue, WorkOutput, WorkRequest, WorkSession } from "./snapshot";
 import { statusText } from "./agentStatus";
@@ -29,19 +29,27 @@ import { PR_LOOK } from "./prMark";
 const ROW = "min-w-0 rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-ring";
 /** Under a task's line: the icon column's width and its gap, so what hangs from a task lines up with its name. */
 const LANE = "pl-[calc(var(--size-icon-sm)+var(--spacing-xs))]";
-/** A task's mark: its colour is its state, and the state's name is in its hint and accessible name. */
-const GLYPH: Record<TaskState, string> = { done: "text-success", working: "text-agent-working", review: "text-success", ci_failed: "text-success", unfinished: "text-warning", blocked: "text-warning", question: "text-warning" };
 const FIRST_OPEN_REQUESTS = 5;
 
+/** `작업 → PR → 검토 → 머지` filled up to the task's stage (PRD overview-device-tasks B9). */
+function StageBar({ stage, tone }: { stage: 1 | 2 | 3 | 4; tone: string }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <span role="img" aria-label={t("overviewTasks.stage", { stage })} className="flex w-(--size-control-lg) shrink-0 gap-px" data-stage-bar={stage}>
+      {[1, 2, 3, 4].map((step) => <span key={step} className={cn("h-(--size-hairline) flex-1 rounded-full", step <= stage ? tone : "bg-muted")} />)}
+    </span>
+  );
+}
+
 /**
- * Where a record is drawn (PRD overview-device-tasks D-07, B17-B21): the lane,
- * whose head goes back to Sessions, or the Overview's panel, whose head the
+ * Where a record is drawn (PRD overview-device-tasks D-07, B17-B21): the
+ * lane's 보기 slot, under the slot's head, or the Overview's panel, whose head the
  * panel gives (✕ and the ways to the work). Both draw the same record in the
  * same order and the same loading, failed and disconnected states.
  */
 export type RecordFrame = {
   kind: "lane" | "overview";
-  /** The Overview panel's head; the lane draws its own. */
+  /** The Overview panel's head; the 보기 slot draws its own. */
   head?: ReactNode;
   /** A line above the record (the dashed card's B14 note). */
   note?: string | null;
@@ -54,25 +62,23 @@ export type RecordFrame = {
   onLeave: () => void;
 };
 
-/** The lane's record: its trail lives with the lane's target, and leaving it closes the read. */
-export function LaneSessionRecord({ actions, target }: { actions: Actions; target: WorkSession }) {
-  const trail = useUiStore((state) => state.sessionWorkTrail);
+/**
+ * The 보기 slot's record (PRD sidebar-task-lens D-44, B16): the slot's head
+ * is the panel's, a child opens as the slot's next item so ← comes back to
+ * its parent, and the core reads what the slot shows.
+ */
+export function SlotSessionRecord({ actions, target }: { actions: Actions; target: WorkSession }) {
   const frame = useMemo<RecordFrame>(() => ({
     kind: "lane",
-    trail,
-    onTrail: (next) => useUiStore.getState().setSessionWorkTarget(target, next),
-    onRead: () => actions.openSessionRecord(target),
-    onLeave: () => actions.closeSessionRecord(),
-  }), [actions, target, trail]);
-  // The pane head's button reads what is drawn here, so a press decides on
-  // the record the operator sees, not on a lens the core has yet to echo.
-  useLayoutEffect(() => {
-    const ui = useUiStore.getState();
-    ui.setDrawnRecord(target);
-    return () => {
-      if (useUiStore.getState().drawnRecord === target) ui.setDrawnRecord(null);
-    };
-  }, [target]);
+    trail: [],
+    onTrail: (next) => {
+      const child = next.at(-1);
+      if (child) actions.openChildRecord(child);
+    },
+    onRead: () => actions.openChildRecord(target),
+    // The core starts and stops the slot's read with the slot itself.
+    onLeave: () => undefined,
+  }), [actions, target]);
   return <SessionRecord actions={actions} target={target} frame={frame} />;
 }
 
@@ -97,19 +103,24 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
   const parent = frame.trail.length > 0 ? (records.find((record) => record.children.some((child) => shown && workKey(child.session) === workKey(shown.session))) ?? null) : null;
   const descendants = useMemo(() => (shown ? recordTree(shown).slice(1) : []), [shown]);
   const wasConnected = useRef(connected);
+  const asked = useRef(false);
   const leave = useRef(frame.onLeave);
   leave.current = frame.onLeave;
   useEffect(() => () => leave.current(), []);
+  // Read again on a reconnect, and once when the slot draws a record with no
+  // read behind it: one restored after a relaunch was opened by no event. The
+  // Overview's panel starts its own read when it opens.
   useEffect(() => {
-    if (connected && !wasConnected.current) frame.onRead();
+    const unread = frame.kind === "lane" && !own && !asked.current;
+    if (connected && (!wasConnected.current || unread)) {
+      asked.current = true;
+      frame.onRead();
+    }
     wasConnected.current = connected;
-  }, [frame, connected]);
+  }, [frame, connected, own]);
   const up = () => frame.onTrail(frame.trail.slice(0, -1));
   return <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-session-record={frame.kind}>
-    {frame.kind === "lane" ? (
-      parent ? <Button size="sm" variant="ghost" className="min-w-0 self-start px-md" onClick={up} data-record-up="true"><ArrowLeftIcon /><span className="truncate">{t("record.backTo", { parent: recordTitle(parent, summaries) })}</span></Button>
-        : <Button size="sm" variant="ghost" className="self-start px-md" onClick={() => actions.closeSessionRecord()} data-record-back="true"><ArrowLeftIcon />{t("sessionWork.back")}</Button>
-    ) : <>
+    {frame.kind === "lane" ? null : <>
       {frame.head}
       {parent ? <Button size="sm" variant="ghost" className="min-w-0 self-start px-md" onClick={up} data-record-up="true"><ArrowLeftIcon /><span className="truncate">{t("record.backTo", { parent: recordTitle(parent, summaries) })}</span></Button> : null}
     </>}
@@ -121,7 +132,7 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
       {summaries
         ? <Work record={shown} descendants={descendants} words={words} actions={actions} head />
         : <Requests record={shown} />}
-      {shown.children.length ? <><SectionHead className="mt-md">{t("sessionWork.children")} <Count>{recordTree(shown).length - 1}</Count></SectionHead><Children record={shown} summaries={summaries} onOpen={(child) => frame.onTrail([...frame.trail, child.session])} /></> : null}
+      {shown.children.length ? <><SectionHead className="mt-md">{summaries && shown.child_progress ? <ChildProgressHead progress={shown.child_progress} /> : <>{t("sessionWork.children")} <Count>{recordTree(shown).length - 1}</Count></>}</SectionHead><Children record={shown} summaries={summaries} onOpen={(child) => frame.onTrail([...frame.trail, child.session])} /></> : null}
       <RecordWorktrees record={shown} />
     </div> : null}
   </div>;
@@ -274,14 +285,6 @@ function GoalLine({ goal, at }: { goal: string; at: number }) {
   return <h4 className="mt-sm mb-xs min-w-0 whitespace-normal text-micro font-medium text-subtle-foreground [overflow-wrap:anywhere]" title={goal}>{goal} · <time dateTime={new Date(at).toISOString()}>{time}</time></h4>;
 }
 
-function TaskMark({ state }: { state: TaskState }) {
-  const { t } = useInterfaceTranslation();
-  const name = t(`sessionWork.${state}`);
-  return <Hint label={name}><span role="img" aria-label={name} data-task-state={state} className={cn("flex size-(--size-icon-sm) shrink-0 items-center justify-center", GLYPH[state])}>
-    {state === "done" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : state === "blocked" ? <span aria-hidden="true">⛔</span> : state === "question" ? <span aria-hidden="true" className="font-semibold">?</span> : <span aria-hidden="true">◐</span>}
-  </span></Hint>;
-}
-
 function TaskRow({ item, session, cwd, words, actions }: { item: ChecklistTask; session: WorkSession; cwd: string | null; words: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const { task, state } = item;
@@ -400,7 +403,7 @@ function MissedLine({ missed, session, cwd, owner, actions }: { missed: MissedWo
   </div>;
 }
 
-/** The Sessions panel's group: an open missed item with its session's name and kind, where it was found. */
+/** The Overview backlog's missed group (D-52): an open missed item with its session's name and kind, where it was found. */
 export function MissedRow({ missed, record, actions }: { missed: MissedWork; record: Pick<RecordValue, "session" | "title" | "cwd">; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   return <li className="min-w-0 py-xs">

@@ -222,3 +222,33 @@ test("a focus move the core followed from Herdr still takes the keys once the cl
     herdr.stop();
   }
 });
+
+test("opening the pane that is already focused from the sidebar takes the keyboard", { tag: "@platform" }, async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    daemon = await startHided(herdr, "open-focused-from-sidebar");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    const pane = page.locator(`[data-pane-view="${herdr.panes[0]}"]`);
+    const keys = pane.locator(".xterm-helper-textarea");
+    const agents = page.locator('nav[data-sidebar="projects"]');
+    const sidebarHasKeys = () => agents.evaluate((node) => node.contains(document.activeElement));
+    await expect(pane).toHaveAttribute("data-transport", "controlling");
+    await expect.poll(() => herdrHasFocus(herdr, herdr.panes[0])).toBe(true);
+    await expect(keys).toBeFocused();
+    await page.keyboard.press(chord("sidebar_projects"));
+    await expect.poll(sidebarHasKeys).toBe(true);
+
+    // The row of the focused pane: the core moves nothing, and the keys still
+    // leave the row for the terminal, which shows its outline again.
+    await page.locator(`nav[data-sidebar] [data-agent-open="${herdr.panes[0]}"]`).first().click();
+    await expect(keys).toBeFocused();
+    await expect(pane).toHaveAttribute("data-focused", "true");
+    await settle(page);
+    await expect(keys).toBeFocused();
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});

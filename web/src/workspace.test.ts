@@ -33,7 +33,7 @@ describe("the right lane (PRD right-lane)", () => {
 
   it("draws an unpinned lane over Agent Views at its width, Agent Views keeping its own (B3)", () => {
     expect(frame({ tool: "files", shown: true, body: 1200 })).toMatchObject({ mode: "overlay", agents: 1200, width: 520, document: 520, tree: null });
-    expect(frame({ tool: "work", shown: true, laneWidth: 700, body: 1200 })).toMatchObject({ mode: "overlay", agents: 1200, width: 700 });
+    expect(frame({ tool: "prs", shown: true, laneWidth: 700, body: 1200 })).toMatchObject({ mode: "overlay", agents: 1200, width: 700 });
   });
 
   it("docks a pinned lane, Agent Views giving up its width and the divider's (B5, B7)", () => {

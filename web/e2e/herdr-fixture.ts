@@ -14,7 +14,7 @@
 //
 // The same binary is the daemon's Claude provider, because hided finds
 // `claude` on the same PATH: `claude auth status` answers logged in, and a
-// print-mode request (`--json-schema`) answers with the label written after
+// print-mode request (`--json-schema`, or a plain-JSON one carrying its schema in `--system-prompt`) answers with the label written after
 // the last `HIDE_E2E_LABEL ` in its prompt, after the delay a
 // `HIDE_E2E_DELAY_MS ` line before it asks for, and appends the answered
 // task to `HIDE_E2E_PROVIDER_LOG` when that is set. `labelAgent` writes that marker
@@ -289,7 +289,7 @@ export type FixtureLabel = {
    * `question`, else done. A turn start's answer carries none: the provider shim
    * leaves `end` out when the request's schema asks for none. */
   end?: "question" | "blocked" | "done" | "waiting" | "unfinished";
-  work?: { task: {kind:"new";name:string} | {kind:"continue";ids:string[]} | {kind:"none"}; missed:{kind:"leftover"|"problem"|"follow_up";text:string}[]; resolved:{id:string;issue_number:number|null}[]; output_task_id:string|null };
+  work?: { task: {kind:"new";names:string[]} | {kind:"continue";ids:string[]} | {kind:"none"}; missed:{kind:"leftover"|"problem"|"follow_up";text:string}[]; resolved:{id:string;issue_number:number|null}[]; output_task_id:string|null };
   at?: number;
   /** Native cwd witness, when repository provenance is part of the journey. */
   cwd?: string;

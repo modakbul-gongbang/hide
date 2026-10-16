@@ -135,7 +135,7 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTr
   const self = agentsByPane(agents).get(paneId);
   const raised = band.raised ?? null;
   const verb = raised?.verb ?? (band.kind === "answer" ? "answer" : "approval");
-  const what = askWhat(t, verb, raised ? raised.what : band.reason ?? (band.facts ? bandReason(band, t) : null));
+  const what = askWhat(t, verb, raised ? raised.what : band.reason);
   const minutes = band.since_unix_ms == null ? null : Math.max(0, Math.floor((Date.now() - band.since_unix_ms) / 60_000));
   // The path from the root already ends with the agent named; the wait is its verb's (B5).
   const who = raised ? [
@@ -148,7 +148,7 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTr
     agents={agents}
     raised
     onOpenChild={(id, label) => actions.followRelation(paneId, id, label)}
-    onTask={() => actions.openPaneTask(paneId)}
+    onTask={() => actions.revealTask(paneId)}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-band-more="${paneId}"]`)?.focus()}
     triggerLabel={t("agentSessions.moreAsks", { count: band.more })}
     trigger={<button type="button" data-pane-band-more={paneId} className="shrink-0 rounded-xs px-xs py-xxs text-micro text-muted-foreground underline-offset-2 outline-none hover:text-foreground hover:underline focus-visible:ring-1 focus-visible:ring-ring">{t("agentSessions.moreAsks", { count: band.more })}</button>}
@@ -244,7 +244,7 @@ export function PanePrChip({ paneId, actions }: { paneId: string; actions: Actio
 function PaneAgentPrMark({ agent, family, actions }: { agent: AgentRow; family?: SessionPull[]; actions: Actions }) {
   const staleness = useAgentStaleness(agent, family);
   // The pane names no project; the PR's URL finds the one that lists it.
-  return <AgentPrMark agent={agent} family={family} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} />;
+  return <AgentPrMark agent={agent} family={family} staleness={staleness} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: null, url: pull.url, number: pull.number })} onExternal={(pull) => actions.openLink(pull.url, true)} />;
 }
 
 /** The second row's child trigger: core state counts, with the total in its hint. */
@@ -258,7 +258,7 @@ function PaneTreeButton({ paneId, children, agents, actions, compact = false, co
     agents={agents}
     raised={children.raised > 0}
     onOpenChild={(id, name) => actions.followRelation(paneId, id, name)}
-    onTask={() => actions.openPaneTask(paneId)}
+    onTask={() => actions.revealTask(paneId)}
     returnFocus={() => document.querySelector<HTMLButtonElement>(`[data-pane-tree="${paneId}"]`)?.focus()}
     triggerLabel={label}
     trigger={<button type="button" aria-label={label} data-pane-tree={paneId} className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border bg-background px-xs outline-none hover:bg-popover focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:bg-secondary">
@@ -283,10 +283,15 @@ function ChildSummary({ child, connection }: { child: AgentRow; connection: stri
   </Hint>;
 }
 
-/** Localize the core's facts; no verb or attention decision lives here. */
+/**
+ * Localize the core's facts, saying only what the verb does not: a failed
+ * check and asked-for changes. Review and Merge already say the rest, and a
+ * fact Hide could not read stays off the band. No verb or attention decision
+ * lives here.
+ */
 function bandReason(band: NonNullable<PaneHeader["band"]>, t: TFunction<"translation">): string | null {
   const facts = band.facts;
   if (!facts) return band.reason;
-  if (facts.kind === "approval_command_unavailable") return t("agentSessions.approvalCommandUnavailable");
-  return [t(`agentSessions.checks.${facts.checks}`), t(reviewWord(facts.review)?.key ?? "agentSessions.review.unknown"), facts.checks === "failed" ? t("agentSessions.checkNamesUnavailable") : null].filter(Boolean).join(" · ");
+  const words = [facts.checks === "failed" ? t("agentSessions.pr.failed") : null, facts.review === "changes_requested" ? t(reviewWord(facts.review)!.key) : null];
+  return words.filter(Boolean).join(" · ") || null;
 }

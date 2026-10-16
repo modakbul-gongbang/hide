@@ -221,6 +221,18 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         CORE_STATE,
+        "/detail/items/*/workspace_id",
+        Mechanism::Owned,
+        Moves::Registration,
+    ),
+    (
+        CORE_STATE,
+        "/detail/items/*/session/device_id",
+        Mechanism::Rewritten,
+        Moves::Device,
+    ),
+    (
+        CORE_STATE,
         "/recent_pane_ids/*",
         Mechanism::Owned,
         Moves::Pane,
@@ -408,30 +420,18 @@ pub const KEYS: &[(&str, &str, Mechanism, Moves)] = &[
     ),
     (
         WORKSPACE_VIEWS,
-        "/workspaces/*/view_bookmarks/{key}",
+        "/workspaces/*/tab_views/{key}",
         Mechanism::Owned,
         Moves::Tab,
     ),
     (
         WORKSPACE_VIEWS,
-        "/workspaces/*/view_owner",
-        Mechanism::Owned,
-        Moves::Tab,
-    ),
-    (
-        WORKSPACE_VIEWS,
-        "/workspaces/*/view_presentations/{key}",
-        Mechanism::Owned,
-        Moves::Tab,
-    ),
-    (
-        WORKSPACE_VIEWS,
-        "/workspaces/*/layout",
+        "/workspaces/*/view_layout",
         Mechanism::Rewritten,
         Moves::Whole,
     ),
-    // A View's opener names its agent's machine at any depth of a layout
-    // tree, the current one's or a parked presentation's (`reown`, openers);
+    // A View's opener names its agent's machine at any depth of the layout
+    // tree (`reown`, openers);
     // the comments name their recipient's and their screenshot's machine
     // (PRD view-opener-feedback D-23).
     (
@@ -1084,6 +1084,19 @@ fn convert_core_state(value: &mut Value, node: &str, _projects: &BTreeMap<String
     for row in each(value, "recent_checkouts") {
         changed |= rewrite(row.get_mut("device_id"), node);
     }
+    if let Some(items) = value
+        .get_mut("detail")
+        .and_then(|detail| detail.get_mut("items"))
+        .and_then(Value::as_array_mut)
+    {
+        for item in items {
+            changed |= rewrite(
+                item.get_mut("session")
+                    .and_then(|session| session.get_mut("device_id")),
+                node,
+            );
+        }
+    }
     changed |= rename_key(value.get_mut("device_expanded_paths"), node);
     for fold in each(value, "session_open_folds") {
         for prefix in ["cleanup", "no_agents"] {
@@ -1137,7 +1150,7 @@ fn convert_workspace_views(value: &mut Value, node: &str, _: &BTreeMap<String, S
 }
 
 /// Calls `change` with every View opener's machine in one Workspace's
-/// layouts, the current one and each parked presentation, at any depth.
+/// layout, at any depth.
 pub(crate) fn each_opener(view: &mut Value, change: &mut dyn FnMut(&mut Value) -> bool) -> bool {
     fn walk(value: &mut Value, change: &mut dyn FnMut(&mut Value) -> bool) -> bool {
         match value {
@@ -1160,20 +1173,8 @@ pub(crate) fn each_opener(view: &mut Value, change: &mut dyn FnMut(&mut Value) -
             _ => false,
         }
     }
-    let mut changed = view
-        .get_mut("layout")
-        .is_some_and(|layout| walk(layout, change));
-    if let Some(presentations) = view
-        .get_mut("view_presentations")
-        .and_then(Value::as_object_mut)
-    {
-        for presentation in presentations.values_mut() {
-            if let Some(layout) = presentation.get_mut("layout") {
-                changed |= walk(layout, change);
-            }
-        }
-    }
-    changed
+    view.get_mut("view_layout")
+        .is_some_and(|layout| walk(layout, change))
 }
 
 fn convert_labels(value: &mut Value, node: &str, _: &BTreeMap<String, String>) -> bool {
@@ -1382,6 +1383,10 @@ mod tests {
                 "selected_pane_id": "w1:p1",
                 "expanded_agent_pane_ids": ["w1:p1"],
                 "sessions_expanded_agent_pane_ids": ["w1:p1"],
+                "detail": {"items": [
+                    {"kind": "pull_request", "workspace_id": "workspace:a", "number": 7},
+                    {"kind": "record", "session": {"device_id": "local", "agent": "claude", "session_id": "s"}},
+                ], "shown": true},
                 "recent_pane_ids": ["w1:p1", "remote:mini:pane:w2:p1"],
                 "pane_text_scales": {"w1:p1": 1.2},
                 "pane_read_records": {"w1:p1": {"seen_at_unix_ms": 1, "descendant_signals": [{"pane_id": "w1:p4"}]}},
@@ -1412,8 +1417,8 @@ mod tests {
         );
         write(
             WORKSPACE_VIEWS,
-            json!({"schema_version": 2, "workspaces": [
-                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "view_bookmarks": {"w1:t1": {"area-1": "display-1"}}, "view_owner": "w1:t1", "view_presentations": {"w1:t1": {"views": false, "layout": {"root": {"area": {"displays": [{"id": "d2", "opener": {"device_id": "local", "terminal_id": "t2"}}]}}}}}, "layout": {"root": {"area": {"displays": [{"id": "d1", "opener": {"device_id": "local", "terminal_id": "t1"}}]}}},
+            json!({"schema_version": 3, "workspaces": [
+                {"device_id": "local", "path": root, "agent_layout": {"tabs": ["w1:t1"]}, "tab_views": {"w1:t1": "d1"}, "view_layout": {"root": {"area": {"displays": [{"id": "d1", "opener": {"device_id": "local", "terminal_id": "t1"}}]}}},
                  "feedback": {"comments": [{"id": "c2", "recipient": {"device_id": "local"}, "shot": {"node": "local", "name": "shot.png"}}], "waiting": [{"to": {"device_id": "local"}}]}},
                 {"device_id": "mini", "path": "/srv/p"},
             ]}),

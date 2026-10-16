@@ -2,13 +2,11 @@ import type { Catalog, Catalogs } from "../schema";
 
 export const overviewEnglish = {
   "overview.title": "Overview",
-  "overview.allProjects": "All projects",
   "overview.close": "Close Overview",
   "overview.needsYou": "Needs You {{count}}",
   "overview.needsYouHint": "Overview · Needs You {{count}}",
   "overview.askingCount": "Needs You {{count}}",
   "overview.viewLabel": "Overview view",
-  "overview.tasks": "Tasks",
   "overview.agents": "Agents",
   "overview.projects": "Projects",
   "overview.issues": "Issues",
@@ -36,13 +34,11 @@ export const overviewEnglish = {
 
 const ko = {
   "overview.title": "개요",
-  "overview.allProjects": "모든 프로젝트",
   "overview.close": "개요 닫기",
   "overview.needsYou": "내 차례 {{count}}",
   "overview.needsYouHint": "개요 · 내 차례 {{count}}",
   "overview.askingCount": "내 차례 {{count}}",
   "overview.viewLabel": "개요 보기",
-  "overview.tasks": "태스크",
   "overview.agents": "에이전트",
   "overview.projects": "프로젝트",
   "overview.issues": "이슈",
@@ -70,13 +66,11 @@ const ko = {
 
 const zhCN = {
   "overview.title": "概览",
-  "overview.allProjects": "所有项目",
   "overview.close": "关闭概览",
   "overview.needsYou": "轮到你 {{count}}",
   "overview.needsYouHint": "概览 · 轮到你 {{count}}",
   "overview.askingCount": "轮到你 {{count}}",
   "overview.viewLabel": "概览视图",
-  "overview.tasks": "任务",
   "overview.agents": "智能体",
   "overview.projects": "项目",
   "overview.issues": "议题",
@@ -104,13 +98,11 @@ const zhCN = {
 
 const ja = {
   "overview.title": "概要",
-  "overview.allProjects": "すべてのプロジェクト",
   "overview.close": "概要を閉じる",
   "overview.needsYou": "自分の番 {{count}}",
   "overview.needsYouHint": "概要 · 自分の番 {{count}}",
   "overview.askingCount": "自分の番 {{count}}",
   "overview.viewLabel": "概要の表示",
-  "overview.tasks": "タスク",
   "overview.agents": "エージェント",
   "overview.projects": "プロジェクト",
   "overview.issues": "課題",

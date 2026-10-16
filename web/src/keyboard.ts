@@ -23,7 +23,7 @@ import { focusBrowserDisplay } from "./browserViews";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { browserBridge, CHECK_UPDATES_COMMAND, hostBridge, hostKind, keySystem, SETUP_COMMAND } from "./host";
 import { useSetupWalk } from "./FirstRunWizard";
-import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
+import { numberedTabs, sidebarNumbers } from "./numbering";
 import { availableEntries, currentEntry, expectPane, expectSurface, observeEntries, observePane, observeProject, paneItem, panelItem, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
 import { projectsOf, remoteContext, remoteView } from "./remote";
 import { hostChord, hostRegistry, isNumberedCommand, releaseModifier, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
@@ -116,7 +116,7 @@ export function numberedTarget(family: NumberedFamily, number: Digit, state: { r
     const layout = view?.device_id === deviceId && view.path === checkout?.path ? (view.agent_layout ?? null) : null;
     return checkout ? (numberedTabs(checkout, layout).get(number) ?? null) : null;
   }
-  return numberedAgents(agentListOrder(state, useUiStore.getState().raisedOpen)).get(number) ?? null;
+  return sidebarNumbers(state, useUiStore.getState()).get(number) ?? null;
 }
 
 /**
@@ -257,8 +257,10 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.toggleDeviceRail();
       case "toggle_lane":
         return actions.toggleLane();
-      case "toggle_lane_work":
-        return actions.toggleTool("work");
+      case "toggle_sidebar_lens":
+        return actions.toggleSidebarLens();
+      case "toggle_lane_prs":
+        return actions.toggleTool("prs");
       case "toggle_lane_files":
         return actions.toggleTool("files");
       case "toggle_lane_changes":
@@ -296,6 +298,8 @@ export function installKeyboard(actions: Actions): () => void {
         if ((owner.kind === "view" || owner.kind === "tool") && lane !== "closed" && lane !== "hidden") return ui().setLaneExpanded(!ui().laneExpanded);
         return actions.toggleZoom();
       }
+      case "toggle_task_list":
+        return actions.toggleTaskList();
       case "close_pane":
         return actions.closePane();
       case "text_larger":

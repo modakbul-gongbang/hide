@@ -8,11 +8,10 @@ const work = (id: string, cwd: string, items: MissedWork[]): SessionWorkSummary 
   cwd, ended_at_unix_ms: null, open_missed: items.filter((item) => item.status === "open").length, subtree_open_missed: 0, missed: items,
 });
 
-it("collects every open missed item in scope, of live and ended sessions alike, newest first", () => {
+it("collects every open missed item, of live and ended sessions alike, newest first", () => {
   const rows = [work("live", "/repo", [missed("a", 1), missed("handled", 9, "resolved")]), work("ended", "/repo/sub", [missed("b", 3)]), work("elsewhere", "/other", [missed("c", 5)])];
-  expect(openMissedWork(rows, null).map(({ item }) => item.id)).toEqual(["c", "b", "a"]);
-  expect(openMissedWork(rows, "/repo").map(({ item }) => item.id)).toEqual(["b", "a"]);
-  expect(openMissedWork([work("none", "/repo", [missed("done", 1, "dismissed")])], null)).toEqual([]);
+  expect(openMissedWork(rows).map(({ item }) => item.id)).toEqual(["c", "b", "a"]);
+  expect(openMissedWork([work("none", "/repo", [missed("done", 1, "dismissed")])])).toEqual([]);
 });
 
 it("titles a record by its manual name, else the model's goal or the native name", () => {
@@ -71,4 +70,32 @@ it("ties words to their tasks, keeps the rest as other words and shows the newes
 
 it("maps a recorded PR state to the PR mark's state", () => {
   expect(["ci_failed", "review", "merged", "closed"].map(outputPrState)).toEqual(["failed", "pending", "merged", "closed"]);
+});
+
+it("hangs a split request's words, missed work and pull requests once, from its first task, and gives its tasks one state", () => {
+  const own = (id: string, turn_offset: number): MissedWork => ({ ...missed(id, 1), turn_offset });
+  const pr = (number: number, task_id: string, state: string) => ({ kind: "pr" as const, repository: "acme/app", number, title: `#${number}`, url: `u${number}`, state, stale: false, last_read_at_unix_ms: null, created_at_unix_ms: 1, task_id, source: SESSION, source_name: "root" });
+  const list = checklist(record({
+    tasks: [task("task-3", "c", 10, false, "waiting"), task("task-3.2", "c", 10, false, "waiting"), task("task-3.3", "c", 10, false, "waiting"), task("task-9", "c", 90)],
+    requests: [request(3, 10, ["task-3", "task-3.2", "task-3.3"]), request(5, 50, ["task-3", "task-3.2", "task-3.3"]), request(9, 90, ["task-9"])],
+    missed: [own("found-in-split", 3), own("found-later", 5)],
+    outputs: [pr(7, "task-3", "open")],
+  }));
+  const items = list.groups[0]!.tasks;
+  expect(items.map((item) => item.task.id)).toEqual(["task-3", "task-3.2", "task-3.3", "task-9"]);
+  // The request and the later one that continued the group: once, under the first task (D-13).
+  expect(items.map((item) => item.words.map((words) => words.offset))).toEqual([[3, 5], [], [], [9]]);
+  expect(items.map((item) => item.missed.map((one) => one.id))).toEqual([["found-in-split", "found-later"], [], [], []]);
+  expect(items.map((item) => item.prs.map((one) => one.number))).toEqual([[7], [], [], []]);
+  // The open pull request on the group's first task is the whole group's.
+  expect(items.map((item) => item.state)).toEqual(["review", "review", "review", "unfinished"]);
+  expect(list.otherWords).toEqual([]);
+});
+
+it("keeps a record written before requests split exactly as before", () => {
+  const list = checklist(record({
+    tasks: [task("task-1", "c", 10), task("task-4", "c", 40)],
+    requests: [request(1, 10, ["task-1"]), request(4, 40, ["task-4"]), request(6, 60, ["task-1", "task-4"])],
+  }));
+  expect(list.groups[0]!.tasks.map((item) => item.words.map((words) => words.offset))).toEqual([[1, 6], [4, 6]]);
 });

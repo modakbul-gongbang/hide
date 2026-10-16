@@ -6,12 +6,30 @@ use crate::delivery::{
 };
 use crate::runtime::delivery::CoordinationContext;
 use crate::session_sync::ProjectedAgent;
-use hide_herdr_client::{ApiConnector, request_with_connector};
+use hide_herdr_client::{ApiConnector, ApiError, request_with_connector};
 use serde_json::{Value, json};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 const STORE_TIMEOUT: Duration = Duration::from_secs(5);
+/// Herdr runs `git worktree add` inside `worktree.create`, which on a large
+/// repository under load takes longer than the 5 s every other call gets.
+const WORKTREE_CREATE_TIMEOUT: Duration = Duration::from_secs(30);
+/// The refusal for a `worktree.create` whose answer never came: Herdr may
+/// still finish the worktree, and asking the same intent again continues it.
+pub(crate) const WORKTREE_UNCONFIRMED: &str = "worktree_unconfirmed";
+
+/// What a failed `worktree.create` is refused as. Herdr's own refusal keeps
+/// its words; a reply that never arrived leaves the worktree unknown, which
+/// the same intent resolves, so it gets its own code instead of the
+/// transport's sentence.
+fn worktree_create_refusal(error: ApiError) -> String {
+    if error.reply_unknown() {
+        WORKTREE_UNCONFIRMED.to_owned()
+    } else {
+        error.to_string()
+    }
+}
 // Creating something is single-flight: finite side effects serialize without
 // occupying the durable store or Runtime, and a concurrent spawn is refused
 // instead of accumulating blocked workers. The device checks before it only
@@ -807,9 +825,9 @@ fn spawn(
                     connector.as_ref(),
                     "worktree.create",
                     params,
-                    Duration::from_secs(5),
+                    WORKTREE_CREATE_TIMEOUT,
                 )
-                .map_err(|error| format!("{error}"))?;
+                .map_err(worktree_create_refusal)?;
                 let created = crate::wire::created_worktree(result)?;
                 let launch = crate::agent_start::shell_launch(node.as_deref(), &reserved.id);
                 let tab = crate::live::replace_tab(
@@ -1213,6 +1231,34 @@ mod tests {
     use super::*;
     use crate::fake_herdr::FakeHerdr;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A `worktree.create` whose answer never came may still finish in
+    /// Herdr, so it is one stable code the same intent resolves; a refusal
+    /// and a connection that never opened keep their own words.
+    #[test]
+    fn a_worktree_create_with_no_answer_is_refused_as_unconfirmed() {
+        for lost in [
+            "response could not be read: timed out",
+            "response was empty",
+        ] {
+            assert_eq!(
+                worktree_create_refusal(ApiError::Transport(lost.into())),
+                WORKTREE_UNCONFIRMED,
+                "{lost}"
+            );
+        }
+        assert_eq!(
+            worktree_create_refusal(ApiError::Transport("connect failed for /s: refused".into())),
+            "connect failed for /s: refused"
+        );
+        assert_eq!(
+            worktree_create_refusal(ApiError::Remote {
+                code: "branch_in_use".into(),
+                message: "taken".into()
+            }),
+            "branch_in_use: taken"
+        );
+    }
 
     #[test]
     fn a_registration_lands_on_the_callers_own_machine() {

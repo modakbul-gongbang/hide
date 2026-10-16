@@ -120,9 +120,9 @@ test("the rail draws one divider between the Project's tools and the checkout's,
   try {
     // One short rule where the Project's tools end and the checkout's begin.
     const rail = await page.locator("[data-tool-rail] > [data-lane-tool], [data-tool-rail] > [data-tool-rail-divider]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-lane-tool") ?? "divider"));
-    expect(rail).toEqual(["work", "memory", "divider", "files", "changes"]);
+    expect(rail).toEqual(["memory", "prs", "divider", "files", "changes"]);
     // The header reads `name · scope` as text, with the icon as decoration only.
-    for (const [tool, name, icon] of [["work", "Work", "folder"], ["memory", "Memory", "folder"], ["files", "Files", "git-branch"], ["changes", "Changes", "git-branch"]] as const) {
+    for (const [tool, name, icon] of [["memory", "Memory", "folder"], ["prs", "PRs", "folder"], ["files", "Files", "git-branch"], ["changes", "Changes", "git-branch"]] as const) {
       await showTool(page, tool);
       const header = page.locator("[data-lane-header]");
       await expect(header.locator(`svg.lucide-${icon}[aria-hidden="true"]`)).toHaveCount(1);
@@ -160,11 +160,11 @@ test("the pin docks the lane once, keeps it through a terminal click, a tool and
 
     await pane(page, lane.herdr.panes[0]!).click();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "docked");
-    await railTool(page, "work").click();
-    await expect(page.locator("[data-lane]")).toHaveAttribute("data-lane", "work");
+    await railTool(page, "prs").click();
+    await expect(page.locator("[data-lane]")).toHaveAttribute("data-lane", "prs");
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "docked");
 
-    // Another Agent tab keeps the lane and shows its own views.
+    // Another Agent tab keeps the lane and adds its view to the checkout's one list.
     await railTool(page, "files").click();
     const tab = (id: string) => page.locator(`[data-agent-tab-bar] [data-tab="${id}"]`);
     await tab(lane.second.tab).click();
@@ -173,7 +173,7 @@ test("the pin docks the lane once, keeps it through a terminal click, a tool and
     await tab(lane.herdr.tab).click();
     await expect(screen(page)).toHaveAttribute("data-lane-mode", "docked");
     await expect(front(page)).toHaveAttribute("aria-label", /\/a\.md/);
-    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);
+    await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(2);
 
     lane.daemon = await lane.daemon.restart();
     await page.goto("about:blank");

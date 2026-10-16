@@ -1,4 +1,4 @@
-// The pull requests a fake `gh` answers for the Work tool specs (PRD
+// The pull requests a fake `gh` answers for the PRs tool specs (PRD
 // work-tab-pr-lens): the web spec (`work-prs.spec.ts`) and the desktop host's
 // native captures share them, so nothing reaches GitHub in either.
 import { execFileSync } from "node:child_process";
@@ -7,7 +7,7 @@ import path from "node:path";
 import { fixtureProgram } from "./platform-fixture";
 
 export function git(cwd: string, args: string[]): string {
-  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
+  return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" });
 }
 
 const HOUR = 3_600_000;

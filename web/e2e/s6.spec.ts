@@ -13,7 +13,7 @@ import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chooseLane, countSent, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
-import { openOverview, projectRow } from "./overview-entry";
+import { projectRow } from "./overview-entry";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { quietFor, unchangedForFrames } from "./wait";
 
@@ -43,11 +43,9 @@ async function savedFront(daemon: Daemon, pattern: RegExp): Promise<void> {
       Object.values(node).forEach(walk);
     };
     const saved = JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "workspace-views.json"), "utf8")) as {
-      workspaces: { layout: unknown }[];
+      workspaces: { view_layout: unknown }[];
     };
-    // Hidden tab presentations retain their own fronts. The restart must
-    // persist the operator's projected layout, not flatten every owner.
-    saved.workspaces.forEach((workspace) => walk(workspace.layout));
+    saved.workspaces.forEach((workspace) => walk(workspace.view_layout));
     return fronts;
   };
   await expect.poll(savedFronts).toEqual([expect.stringMatching(pattern)]);
@@ -77,20 +75,17 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     await expect(await projectRow(page, "fixture")).toBeVisible();
     await screenshot(page, "s6-main");
 
-    // Tasks folds the two resting agents under `Resting 2` (B7) until one
-    // is opened; a card opens its record beside the tabs, whose head enters
-    // the Workspace at the root's pane (B16, B17).
-    await openOverview(page, "tasks");
-    await page.locator('[data-task-fold][aria-expanded="false"]').click({ timeout: 20_000 });
-    await expect(page.locator("[data-task-card]")).toHaveCount(2, { timeout: 20_000 });
-    await page.locator(`[data-task-card-open="${parent}"]`).click();
-    await expect(page.locator("[data-overview-panel]")).toBeVisible();
-    // The head's Open link is set in the head's caption, not the heading's inherited size.
-    expect(await page.locator("[data-task-section] h2").first().evaluate((h2) => new Set([h2.querySelector("span + span"), h2.querySelector("[data-section-open]")].map((node) => node && getComputedStyle(node).fontSize)).size)).toBe(1);
+    // A project's row opens its panel beside the tabs, with what its tasks
+    // are doing as words alone, and its Open enters the project's latest
+    // checkout (PRD overview-device-tasks B57; PRD sidebar-task-lens B41).
+    await (await projectRow(page, "fixture")).getByRole("button", { name: "fixture", exact: true }).click();
+    const panel = page.locator("[data-overview-panel=project]");
+    await expect(panel).toBeVisible();
+    await expect(panel.locator('[data-project-panel-now="2"]')).toBeVisible({ timeout: 20_000 });
     await screenshot(page, "s6-overview");
-    await page.locator("[data-record-open-workspace]").click();
+    await panel.locator("[data-project-panel-open]").click();
     await expect(workspace).toBeVisible();
-    await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
+    await expect(page.locator(`[data-pane-view="${parent}"]`)).toBeVisible();
     // A new Workspace shows Agent Views alone with its lane closed (PRD
     // right-lane B1). The top row ends with Overview and Open server (its
     // server count, once known) as icons only; the tools are on the rail.
@@ -109,31 +104,31 @@ test("Main, Overview and a Workspace with its lane, tools and delegated child", 
     // B1, B20: each rail icon names itself and its scope in its hint, and
     // reads pressed only while the lane shows its tool.
     const filesIcon = page.locator('[data-lane-tool="files"]');
-    const sessionsIcon = page.locator('[data-lane-tool="work"]');
+    const prsIcon = page.locator('[data-lane-tool="prs"]');
     await expect(filesIcon).toHaveAttribute("aria-pressed", "false");
-    await sessionsIcon.hover();
-    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Work");
+    await prsIcon.hover();
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("PRs");
     await filesIcon.hover();
     await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Files");
     await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
 
-    // The Work icon opens the lane on Work over the agents, the path's menu
-    // closes it, ⌘E brings the closed lane back on Work, the tool it last
+    // The PRs icon opens the lane on PRs over the agents, the path's menu
+    // closes it, ⌘E brings the closed lane back on PRs, the tool it last
     // showed, and the rail swaps the one tool it holds (B2, B20, D-01).
     const lane = page.locator("[data-lane-frame]");
     const agentArea = page.locator("[data-agent-area]");
-    await sessionsIcon.click();
-    await expect(workspace).toHaveAttribute("data-lane-shows", "work");
+    await prsIcon.click();
+    await expect(workspace).toHaveAttribute("data-lane-shows", "prs");
     await expect(workspace).toHaveAttribute("data-lane-mode", "overlay");
-    await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "work" });
-    await expect(sessionsIcon).toHaveAttribute("aria-pressed", "true");
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "prs" });
+    await expect(prsIcon).toHaveAttribute("aria-pressed", "true");
     const laneIdeal = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-lane-ideal")));
     expect((await lane.boundingBox())!.width).toBeCloseTo(laneIdeal, 0);
     await chooseLane(page);
     await expect(workspace).toHaveAttribute("data-lane-mode", "closed");
     await expect.poll(() => last.get("workspace_view")).toEqual({ tool: null });
     await page.keyboard.press(chord("toggle_lane"));
-    await expect(workspace).toHaveAttribute("data-lane-shows", "work");
+    await expect(workspace).toHaveAttribute("data-lane-shows", "prs");
     await page.locator('[data-lane-tool="changes"]').click();
     await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "changes" });
     await expect(page.locator('[data-lane="changes"]')).toBeVisible();

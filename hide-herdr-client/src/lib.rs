@@ -190,6 +190,14 @@ impl ApiError {
             Self::NotRunning(_) | Self::Transport(_) | Self::Malformed(_) => None,
         }
     }
+
+    /// Whether the request was written and its answer never came: a read
+    /// that timed out or a connection that closed unanswered. Herdr may have
+    /// done what was asked, so a caller that made a mutation reconciles
+    /// before it asks again; a refused connect or write did nothing.
+    pub fn reply_unknown(&self) -> bool {
+        matches!(self, Self::Transport(message) if message.starts_with("response "))
+    }
 }
 
 impl fmt::Display for ApiError {
@@ -587,6 +595,44 @@ mod tests {
             .read_line(&mut request)
             .expect("read request");
         request
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)] // the sleep is the subject of the test: a fake peer or backend that is slow on purpose
+    fn a_request_its_peer_never_answers_has_an_unknown_reply() {
+        let root = tempfile::tempdir().unwrap();
+        let socket = root.path().join("peer.sock");
+        let listener = LocalListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let mut stream = listener.accept().unwrap();
+            read_request(&mut stream);
+            std::thread::sleep(Duration::from_millis(400));
+        });
+        let answer = request_with_connector(
+            &LocalSocketConnector::new(&socket),
+            "worktree.create",
+            json!({}),
+            Duration::from_millis(100),
+        )
+        .expect_err("the peer never answers");
+        assert!(answer.reply_unknown(), "{answer}");
+        server.join().unwrap();
+        // A socket nothing listens on did nothing, so it is not unknown.
+        let absent = request_with_connector(
+            &LocalSocketConnector::new(root.path().join("absent.sock")),
+            "worktree.create",
+            json!({}),
+            Duration::from_millis(100),
+        )
+        .expect_err("no server is running");
+        assert!(!absent.reply_unknown(), "{absent}");
+        assert!(
+            !ApiError::Remote {
+                code: "x".into(),
+                message: "y".into()
+            }
+            .reply_unknown()
+        );
     }
 
     #[test]

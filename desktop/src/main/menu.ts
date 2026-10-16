@@ -68,6 +68,7 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "recent_project", "previous_recent_project",
     null,
     "toggle_left_sidebar",
+    "toggle_sidebar_lens",
     "overview",
     "add_backlog",
     ...(FACTORY_OPEN ? (["factory_open"] as const) : []),
@@ -81,7 +82,7 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "text_smaller",
     "text_reset",
   ],
-  Pane: ["split_right", "split_down", "toggle_zoom", null, "keep_open", null, ...AREA_COMMANDS],
+  Pane: ["split_right", "split_down", "toggle_zoom", "toggle_task_list", null, "keep_open", null, ...AREA_COMMANDS],
   Help: ["shortcuts"],
 };
 

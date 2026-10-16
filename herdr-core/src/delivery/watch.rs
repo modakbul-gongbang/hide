@@ -190,6 +190,9 @@ pub struct Reading {
     /// The target's own row says it stopped on a question, neither working
     /// nor held by a Herdr-blocked prompt.
     pub asking: bool,
+    /// The target's own row says Herdr holds it at a blocked prompt, such as
+    /// a permission menu.
+    pub blocked: bool,
 }
 
 #[derive(Default)]
@@ -296,9 +299,11 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         } else {
             watch.last_activity_at_unix_ms
         };
-        let asking = watch.warning_count == 0 && unheard_question(ledger, watch, reading);
+        let early = (watch.warning_count == 0)
+            .then(|| early_warning(ledger, watch, reading))
+            .flatten();
         let due = match (watch.warning_count, watch.first_warning_at_unix_ms) {
-            (0, _) if asking => now.saturating_sub(activity) >= QUESTION_WINDOW_MS,
+            (0, _) if early.is_some() => now.saturating_sub(activity) >= QUESTION_WINDOW_MS,
             (0, _) => {
                 now.saturating_sub(activity)
                     >= reading
@@ -332,17 +337,25 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
         let failure = reading.failure.as_deref().unwrap_or("none");
         // The first line is the letter's summary, which the doorbell types
         // after the watched agent's name (`bell`).
-        let summary = if asking {
-            format!("Stopped with a question (watch {}).", watch.id)
-        } else {
-            format!(
-                "No activity for {} minutes (watch {}).",
-                now.saturating_sub(activity) / 60_000,
-                watch.id
-            )
+        let summary = match early {
+            Some(Early::Blocked) => format!("Blocked at a prompt (watch {}).", watch.id),
+            Some(Early::Question) => format!("Stopped with a question (watch {}).", watch.id),
+            None => {
+                format!(
+                    "No activity for {} minutes (watch {}).",
+                    now.saturating_sub(activity) / 60_000,
+                    watch.id
+                )
+            }
+        };
+        let advice = match early {
+            Some(Early::Blocked) => {
+                "Its runtime may time the prompt out on its own; read the prompt, then answer it, tell the operator or send the target a safer instruction."
+            }
+            _ => "Inspect the target before deciding whether it is blocked.",
         };
         let body = format!(
-            "{summary}\nTarget {}. Last activity unix_ms={activity}; Herdr status={}; open requests={open_requests}; activity basis={basis}; read failure={failure}.\nInspect the target before deciding whether it is blocked.",
+            "{summary}\nTarget {}. Last activity unix_ms={activity}; Herdr status={}; open requests={open_requests}; activity basis={basis}; read failure={failure}.\n{advice}",
             watch.target.name,
             if reading.status_available {
                 reading.status.as_str()
@@ -422,19 +435,34 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
     Ok(result)
 }
 
-/// A pane observer hears after [`QUESTION_WINDOW_MS`], not the full window,
-/// that its target stopped on a question asked only in its own pane. A
-/// question the target sent the observer by letter, still awaiting its
-/// answer, already rang the observer's doorbell; a Factory is never told
-/// early, because its engine stops the worker on the first warning.
-fn unheard_question(ledger: &Ledger, watch: &Watch, reading: &Reading) -> bool {
-    reading.asking
-        && !watch.parent.code_owned()
-        && !ledger.letters.iter().any(|letter| {
-            letter.waiting_answer
-                && letter.sender.same_identity(&watch.target)
-                && letter.recipient.same_identity(&watch.parent)
-        })
+/// Why a pane observer hears after [`QUESTION_WINDOW_MS`] instead of the full
+/// window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Early {
+    /// Herdr holds the target at a blocked prompt, which the target cannot
+    /// leave on its own and which its native runtime may time out.
+    Blocked,
+    /// The target stopped on a question asked only in its own pane.
+    Question,
+}
+
+/// A Factory is never told early, because its engine stops the worker on the
+/// first warning. A question the target sent the observer by letter, still
+/// awaiting its answer, already rang the observer's doorbell; a blocked prompt
+/// rang nothing, so it is told whatever letters wait.
+fn early_warning(ledger: &Ledger, watch: &Watch, reading: &Reading) -> Option<Early> {
+    if watch.parent.code_owned() {
+        return None;
+    }
+    if reading.blocked {
+        return Some(Early::Blocked);
+    }
+    let asked_by_letter = ledger.letters.iter().any(|letter| {
+        letter.waiting_answer
+            && letter.sender.same_identity(&watch.target)
+            && letter.recipient.same_identity(&watch.parent)
+    });
+    (reading.asking && !asked_by_letter).then_some(Early::Question)
 }
 
 fn encoded_len(value: &impl Serialize) -> Result<usize, String> {
@@ -474,6 +502,7 @@ mod tests {
             gone: false,
             inactivity_ms: None,
             asking: false,
+            blocked: false,
         }
     }
 
@@ -669,6 +698,61 @@ mod tests {
         let active = second + 1;
         tick(&mut ledger, &[asking(active)], active + QUESTION_WINDOW_MS).unwrap();
         assert_eq!(summaries(&ledger).len(), 3);
+    }
+
+    /// docs/delivery.md, Watch activity and completion: a child Herdr holds
+    /// at a blocked prompt is told to its parent one tick later, whatever
+    /// letters wait, because the prompt rang no doorbell and its runtime may
+    /// time it out; the Factory keeps its own window.
+    #[test]
+    fn a_target_held_at_a_blocked_prompt_warns_its_parent_after_one_tick() {
+        let mut ledger = Ledger::default();
+        let (parent, child) = (actor("parent"), actor("child"));
+        let watch = start(&mut ledger, &parent, &child, 10).unwrap();
+        super::super::mailbox::send(
+            &mut ledger,
+            &child,
+            &parent,
+            "which-branch",
+            "Which branch?",
+            "request",
+            None,
+            10,
+        )
+        .unwrap();
+        let blocked = Reading {
+            blocked: true,
+            ..reading(&watch.id, 10)
+        };
+        tick(
+            &mut ledger,
+            std::slice::from_ref(&blocked),
+            10 + QUESTION_WINDOW_MS - 1,
+        )
+        .unwrap();
+        assert!(summaries(&ledger).is_empty());
+        tick(
+            &mut ledger,
+            std::slice::from_ref(&blocked),
+            10 + QUESTION_WINDOW_MS,
+        )
+        .unwrap();
+        assert_eq!(
+            summaries(&ledger),
+            [format!("Blocked at a prompt (watch {}).", watch.id).as_str()]
+        );
+        tick(&mut ledger, &[blocked], 10 + INACTIVITY_MS).unwrap();
+        assert_eq!(summaries(&ledger).len(), 1, "one early warning per episode");
+
+        let mut ledger = Ledger::default();
+        let factory = Actor::factory("f-1", crate::node::TEST_NODE);
+        let watch = start(&mut ledger, &factory, &actor("worker"), 10).unwrap();
+        let blocked = Reading {
+            blocked: true,
+            ..reading(&watch.id, 10)
+        };
+        tick(&mut ledger, &[blocked], 10 + INACTIVITY_MS).unwrap();
+        assert!(ledger.letters.is_empty());
     }
 
     #[test]
@@ -880,6 +964,7 @@ mod tests {
             gone: false,
             inactivity_ms: None,
             asking: false,
+            blocked: false,
         };
         reading.gone = true;
         tick(&mut ledger, &[reading], 2 + INACTIVITY_MS).unwrap();

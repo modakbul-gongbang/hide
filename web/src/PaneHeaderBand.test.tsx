@@ -282,8 +282,8 @@ it("opens the card of the displayed repository even when another project has the
       {id: "other", device_id: "local", pull_requests: [{number: 7, url}], checkouts: []},
     ] as unknown as Workspace[]}} as SnapshotRest}));
     await act(async () => actions.openSessionPullRequest({workspace_id: "here", number: 7, url}));
-    // One event opens the card; the core chooses the Workspace (PRD work-tab-pr-lens D-28).
-    expect(events.filter((event) => event.kind === "pr_open")).toEqual([{schema_version: 2, kind: "pr_open", payload: {workspace_id: "other", pr_number: 7}}]);
+    // One event opens the card; the fixture has no Workspace in front, so the core opens the PR's (PRD sidebar-task-lens B17).
+    expect(events.filter((event) => event.kind === "pr_open")).toEqual([{schema_version: 2, kind: "pr_open", payload: {workspace_id: "other", pr_number: 7, open_workspace: true}}]);
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     actions.openSessionPullRequest({workspace_id: "here", number: 7, url: "https://github.com/acme/absent/pull/7"});
     expect(open).toHaveBeenCalledWith("https://github.com/acme/absent/pull/7", "_blank", "noopener,noreferrer");
@@ -391,4 +391,24 @@ it("names the pane's title and agent product on its record button", async () => 
     expect(name).toContain("Claude Code");
     expect(container.querySelector("[data-plain]")).toBeNull();
   } finally { await act(async () => root.unmount()); }
+});
+
+// docs/UI_BEHAVIOR.md: a pull request band names only what its verb does not,
+// and nothing Hide could not read reaches it; an approval names no command.
+it("words a pull request band by what its verb leaves out and nothing Hide could not read", async () => {
+  const action = { kind: "pr", workspace_id: "w", url: "https://github.com/acme/app/pull/7", number: 7, checks: "failed", tone: "error" } as const;
+  const band = (kind: string, checks: "failed" | "passing" | "unknown", review: "approved" | "changes_requested" | null): PaneHeader => ({ working: false, band: { kind, tone: "error", reason: "a generated progress line", since_unix_ms: null, action, more: 0, exit_code: null, facts: { kind: "pull_request", checks, review } } });
+  const cases: [PaneHeader, string][] = [
+    [band("fix", "failed", null), "FixCI failedOpen PR"],
+    [band("fix", "failed", "changes_requested"), "FixCI failed · Changes requestedOpen PR"],
+    [band("review", "unknown", null), "ReviewOpen PR"],
+    [band("merge", "passing", "approved"), "MergeOpen PR"],
+    [{ working: false, band: { kind: "approval", tone: "warning", reason: null, since_unix_ms: null, action: null, more: 0, exit_code: null } }, "ApprovalStopped at a permission request"],
+  ];
+  for (const [value, text] of cases) {
+    const { container, unmount } = await mount(value, [], { paneId: "solo" });
+    try {
+      expect(container.querySelector("[data-pane-header-band]")?.textContent).toBe(text);
+    } finally { await unmount(); }
+  }
 });

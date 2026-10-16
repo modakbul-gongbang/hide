@@ -73,6 +73,7 @@ fn word(kind: &str) -> &'static str {
         "request" => "요청",
         "block" => "막힘",
         "report" => "보고",
+        "progress" => "진행",
         "reply" => "답장",
         "watch" => "감시",
         _ => "편지",
@@ -214,6 +215,7 @@ mod tests {
         assert!(valid_line(&typed));
         // A body with no visible first line still names who rang.
         assert_eq!(ring("a", "report", "\u{200B}\n\u{3164}", 0), "🔔 a 보고");
+        assert_eq!(ring("a", "progress", "plan", 0), "🔔 a 진행: plan");
         assert!(!valid_line("🔔 a\n보고"));
         assert!(!valid_line(""));
         assert!(!valid_line(&"x".repeat(LINE_LIMIT + 1)));

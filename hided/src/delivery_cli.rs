@@ -4,7 +4,7 @@ use herdr_core::delivery::{BODY_LIMIT, Command, HOOK_LETTERS};
 
 use crate::env::{self, Env};
 
-pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox [--hook [--prompt-digest <sha256>] [--session <id>]]\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>] [--approval <text>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
+pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report|progress]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox [--hook [--prompt-digest <sha256>] [--session <id>]]\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>] [--approval <text>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
 
 pub fn parse<'a>(
     topic: &str,
@@ -118,7 +118,10 @@ pub fn parse<'a>(
                     "--kind"
                         if kind.is_none()
                             && verb == Some("send")
-                            && matches!(value.as_str(), "request" | "block" | "report") =>
+                            && matches!(
+                                value.as_str(),
+                                "request" | "block" | "report" | "progress"
+                            ) =>
                     {
                         kind = Some(value)
                     }
@@ -271,7 +274,7 @@ mod tests {
 
     #[test]
     fn reports_blocks_and_reassignment_have_typed_bounded_flags() {
-        for kind in ["report", "block"] {
+        for kind in ["report", "block", "progress"] {
             assert!(
                 matches!(parse_line(&["request","send","parent","--intent","done","--body","body","--kind",kind]).unwrap(), Command::Send {kind: parsed,..} if parsed == kind)
             );

@@ -1269,6 +1269,9 @@ pub(crate) fn delivery_next_action(code: &str) -> &'static str {
         "intent_conflict" => {
             "Use a new intent, or repeat the request this intent was first used for"
         }
+        "worktree_unconfirmed" => {
+            "Herdr had not confirmed the new worktree in time and may still finish it; run the same command again with the same intent"
+        }
         "agent_not_started" => {
             "The agent's start ended in its pane without the agent and was not typed again; check that pane for why, then spawn with a new intent"
         }
@@ -4437,6 +4440,7 @@ mod tests {
             "agent_not_installed",
             "intent_conflict",
             "agent_not_started",
+            "worktree_unconfirmed",
             "shell_starting",
         ] {
             let (reason, next) = refusal_answer(code.to_owned(), delivery_next_action(code));

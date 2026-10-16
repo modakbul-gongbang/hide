@@ -49,6 +49,12 @@ use crate::links::worker::LinkClient;
 /// The minimum interval between native-file current-metadata reads, also
 /// used for the single follow-up when a starting turn has no prompt yet.
 const FOLLOW_UP_READ: Duration = Duration::from_secs(3);
+/// How long a turn must have been working before its start is asked. About
+/// a quarter of turns end within 15 s (2,384 turns measured 2026-10-16: 23%
+/// within 15 s, 38% within 30 s), and the end call names the goal too, so a
+/// start asked for them would be replaced before anyone read it. A pane
+/// that has no goal yet is not held, so its first name is not late.
+pub(crate) const START_DELAY: Duration = Duration::from_secs(15);
 /// A cold context is read by the links worker; retry without spending a call.
 const CONTEXT_READ_RETRY: Duration = Duration::from_millis(250);
 /// How long a read the machine could not answer (a device whose helper is
@@ -172,6 +178,8 @@ pub(crate) struct WorkerConfig {
     /// The language labels are asked in when the worker starts; see
     /// [`LabelWorker::follow_core`].
     pub(crate) language: hide_ai::OutputLanguage,
+    /// How long a turn works before its start is asked; see [`START_DELAY`].
+    pub(crate) start_delay: Duration,
 }
 
 pub(crate) type Wake = Arc<dyn Fn() + Send + Sync>;
@@ -244,6 +252,8 @@ struct PaneState {
     events_loaded: bool,
     needs_read: bool,
     next_analysis_at: Option<Instant>,
+    /// The turn whose start is held back and when it falls due.
+    start_held: Option<(u64, Instant)>,
     follow_up_at: Option<Instant>,
     follow_up_armed: bool,
     /// Retries spent in this transient read episode, counted against
@@ -311,6 +321,8 @@ pub(crate) struct LabelWorker {
     /// (PRD ai-output-language B1, B2, B10): a device's labels too, whatever
     /// that machine's own language is.
     language: hide_ai::OutputLanguage,
+    /// How long a turn works before its start is asked.
+    start_delay: Duration,
 }
 
 impl LabelWorker {
@@ -348,6 +360,7 @@ impl LabelWorker {
             summaries: true,
             summaries_on_since: 0,
             language: config.language,
+            start_delay: config.start_delay,
         })
     }
 
@@ -472,6 +485,7 @@ impl LabelWorker {
                             events_loaded: false,
                             needs_read: reference_token.is_some() && !resumable,
                             next_analysis_at: None,
+                            start_held: None,
                             // Native-file titles and waits can change without
                             // a Herdr lifecycle transition, including at EOF.
                             follow_up_at: (resumable && agent.requires_native_file_proof())
@@ -1371,8 +1385,33 @@ impl LabelWorker {
             pane.next_analysis_at = None;
             return false;
         };
+        // The turn ended while its start was held: the end is due now.
+        if phase == AnalysisPhase::TurnEnd
+            && let Some((_, due)) = pane.start_held.take()
+            && pane.next_analysis_at == Some(due)
+        {
+            pane.next_analysis_at = None;
+        }
         if pane.next_analysis_at.is_some_and(|at| now < at) {
             return false;
+        }
+        // A turn's start waits for the turn to have worked a while: most
+        // short turns end first, and their end call names the goal. A pane
+        // with no goal yet is named at once: nothing shows its work until
+        // the first answer lands.
+        if phase == AnalysisPhase::TurnStart && !initial_context && !self.start_delay.is_zero() {
+            let due = match pane.start_held {
+                Some((held, due)) if held == turn => due,
+                _ => {
+                    let due = now + self.start_delay;
+                    pane.start_held = Some((turn, due));
+                    due
+                }
+            };
+            if now < due {
+                pane.next_analysis_at = Some(due);
+                return false;
+            }
         }
         if self.analysis_in_flight.as_deref() == Some(pane_id) {
             return false;
@@ -1445,18 +1484,7 @@ impl LabelWorker {
             .and_then(|event| hide_session::label_transcript::work_turn(events, event.offset))
             .map(|turn| turn.witness());
         if phase == AnalysisPhase::TurnEnd {
-            let tasks = ledger
-                .open_tasks
-                .iter()
-                .map(|task| json!({"id":task.id,"name":task.name}))
-                .collect::<Vec<_>>();
-            let missed = ledger
-                .open_missed
-                .iter()
-                .map(|missed| json!({"id":missed.id,"kind":missed.kind,"text":missed.text}))
-                .collect::<Vec<_>>();
-            context.push_str(&format!("\n<work-author>{work_author}</work-author>\n<open-tasks>{}</open-tasks>\n<open-missed>{}</open-missed>",
-                super::analysis::redact(&json!(tasks).to_string()),super::analysis::redact(&json!(missed).to_string())));
+            context.push_str(&super::analysis::work_context(work_author, &ledger));
         }
         let generation = pane.generation;
         let retry = if phase == AnalysisPhase::TurnEnd && pane.end_retried == Some(turn) {
