@@ -56,8 +56,8 @@ test("@platform session work records, missed lines, ended work and search render
     await setFixtureLifecycle(herdr, herdr.panes[0], "working");
     await expect(root).toContainText(NEXT_GOAL, { timeout: 45_000 });
     await setFixtureLifecycle(herdr, herdr.panes[0], "idle");
-    // The parent's two tasks; the child's is in its own record, behind its row (B20).
-    await expect(record.locator('[data-record-task]')).toHaveCount(2, { timeout: 45_000 });
+    // The parent's three tasks, the second request's two deliverables one each; the child's is in its own record, behind its row (B20).
+    await expect(record.locator('[data-record-task]')).toHaveCount(3, { timeout: 45_000 });
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
     // The child is a row of the parent's record (B20); the capture keeps the parent in front.
     await expect(record.locator(`[data-record-child="${child}"]`)).toBeVisible();
