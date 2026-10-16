@@ -266,7 +266,7 @@ const ko = {
   "panes.children.raised": "내 판단이 필요한 하위 요청 {{count}}건",
   "panes.children.working": "작업 중 {{count}}개",
   "panes.children.result": "결과 도착 {{count}}개",
-  "panes.children.waiting": "자식 요청 대기 {{count}}개",
+  "panes.children.waiting": "자식 요청 {{count}}개",
   "panes.children.unknown": "상태 모름 {{count}}개",
   "panes.children.idle": "쉬는 중 {{count}}개",
   "panes.relation.opening": "{{name}} 여는 중…",

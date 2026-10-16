@@ -105,7 +105,7 @@ const NUMBER = <span className="font-mono" />;
 const NOW_TONE: Record<NowPart["key"], string> = { needs: "bg-warning", working: "bg-agent-working", waiting: "bg-muted-foreground", done: "bg-success" };
 
 /**
- * The non-zero of `Needs You N · 일하는 중 N · 기다림 N · 끝남 N`, `쉬는 중 N`
+ * The non-zero of `내 차례 N · 일하는 중 N · 대기 N · 읽을 것 N`, `쉬는 중 N`
  * when nothing moves, `일감 없음` with no task (B48): with its colour bar in a
  * row, and as words alone in the panel, Needs You in the warning colour
  * (PRD sidebar-task-lens B41).
