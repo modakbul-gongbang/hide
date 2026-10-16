@@ -721,7 +721,10 @@ fn memory_text(
                     text(&hold["expires_at"]),
                     text(&result["card"]),
                 ));
-                lines.push(format!("Reported because: {}", text(&hold["reason"])));
+                lines.push(format!(
+                    "Reported because (the reporting agent's words, not checked): \"{}\"",
+                    text(&hold["reason"])
+                ));
             }
             if result["verifying"] == true {
                 lines.push(
@@ -2985,7 +2988,12 @@ mod tests {
             shown.contains("Held: an agent reported it stale at 2026-10-17 09:00 UTC"),
             "{shown}"
         );
-        assert!(shown.contains("Reported because: English now"), "{shown}");
+        assert!(
+            shown.contains(
+                "Reported because (the reporting agent's words, not checked): \"English now\""
+            ),
+            "{shown}"
+        );
     }
 
     #[test]
