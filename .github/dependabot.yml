@@ -3,10 +3,14 @@
 # that is yanked or patched within its first week never reaches a pull request
 # here; Dependabot has no cooldown for the toolchain (see its entry).
 # The bundled Herdr runtime is not a package; herdr-update.yml owns that pin.
+# Each proposal's title carries the type prefix CONTRIBUTING.md asks of every
+# commit subject and pull request title.
 version: 2
 updates:
   - package-ecosystem: cargo
     directory: /
+    commit-message:
+      prefix: build
     schedule:
       interval: weekly
       day: monday
@@ -17,6 +21,8 @@ updates:
         update-types: [minor, patch]
   - package-ecosystem: github-actions
     directory: /
+    commit-message:
+      prefix: ci
     schedule:
       interval: weekly
       day: monday
@@ -29,6 +35,8 @@ updates:
   # ships, and a point release that follows within weeks is proposed again.
   - package-ecosystem: rust-toolchain
     directory: /
+    commit-message:
+      prefix: build
     schedule:
       interval: weekly
       day: monday

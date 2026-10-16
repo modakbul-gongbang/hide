@@ -60,6 +60,17 @@ export function reasonText(t: ReturnType<typeof useInterfaceTranslation>["t"], r
       return t("work.reason.merged", { time: when });
     case "checking":
       return t("work.reason.checking");
+    case "unjudged":
+      switch (reason.text) {
+        case "account":
+          return t("work.reason.unjudged.account");
+        case "review_requests":
+          return t("work.reason.unjudged.review_requests");
+        case "merge_queue":
+          return t("work.reason.unjudged.merge_queue");
+        default:
+          throw new Error(`Core PR reason unjudged names no known question: ${reason.text}`);
+      }
   }
 }
 
@@ -77,7 +88,7 @@ export function ReasonLine({ reason, group, noAgent = false, className, ...rest 
   const { t } = useInterfaceTranslation();
   const time = useElapsed(reason.since_unix_ms);
   const [lead, tail] = split(reasonText(t, reason, time));
-  const tone = reason.kind === "checking" ? "text-muted-foreground" : GROUP_TONE[group];
+  const tone = reason.kind === "checking" || reason.kind === "unjudged" ? "text-muted-foreground" : GROUP_TONE[group];
   return (
     <span className={cn("min-w-0 truncate text-micro", className)} data-pr-reason={reason.kind} {...rest}>
       {lead ? <span className="font-medium text-foreground">{lead}</span> : null}

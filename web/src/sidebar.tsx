@@ -2,7 +2,7 @@ import { deviceScope } from "./agentScope";
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
 import { useInterfaceTranslation } from "./i18n/client";
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, EllipsisIcon, FolderGit2Icon, FolderIcon, Loader2Icon, MoonIcon, PanelsTopLeftIcon, PinIcon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, EllipsisIcon, FolderGit2Icon, FolderIcon, Loader2Icon, PanelsTopLeftIcon, PinIcon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
@@ -15,6 +15,7 @@ import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu, EntryDropdown } from "./components/entry-menu";
 import { SidebarHeader, type DeviceMenu, type FactoryProjectRow } from "./components/sidebar-header";
+import { GithubIcon } from "./components/github-icon";
 import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { PrMark } from "./components/pr-mark";
@@ -38,8 +39,6 @@ import { Usage } from "./components/usage";
 import { agentGroupTitle, agentPlaces, allAgents, type ListedAgent } from "./navigation";
 import {
   activeCheckouts,
-  activityAge,
-  ageText,
   checkoutCard,
   checkoutHasSecondLine,
   checkoutNameParts,
@@ -50,7 +49,6 @@ import {
   projectCheckout,
   folderCheckout,
   inactiveCheckouts,
-  projectMarks,
   projectRows,
   shownPullRequest,
   type CheckoutPresentation,
@@ -61,7 +59,7 @@ import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
 import { contextAgents, contextAllWorkspaces, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
-import { projectIssueSource, settingsTarget } from "./projectSettings";
+import { projectIssueSource, projectRepository, settingsTarget } from "./projectSettings";
 import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./screenMachine";
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useStartPanel } from "./startDraft";
@@ -164,15 +162,18 @@ export function Sidebar({ actions }: { actions: Actions }) {
           ) : null}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-sidebar-content="true">
             {list}
-            <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center justify-end gap-xs border-t border-border px-sm py-xs">
+            <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center gap-xs border-t border-border px-sm py-xs">
               <Usage actions={actions} />
-              <ViewMenu actions={actions} />
-              <HelpMenu actions={actions} />
-              <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
-                <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
-                  <SettingsIcon />
-                </Button>
-              </Hint>
+              {/* Usage holds the left edge; the menus keep the right one, also on a wrapped line. */}
+              <div className="ml-auto flex items-center gap-xs">
+                <ViewMenu actions={actions} />
+                <HelpMenu actions={actions} />
+                <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
+                  <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
+                    <SettingsIcon />
+                  </Button>
+                </Hint>
+              </div>
             </div>
           </div>
         </div>
@@ -450,6 +451,11 @@ function DisconnectedDevice({ actions }: { actions: Actions }) {
 }
 
 const NO_SLEEPERS: SleepingSession[] = [];
+
+/** How many named tabs of the checkout hold no agent row, each still drawn as its tab line when the list opens. */
+function useEmptyNamedTabs(checkout: Checkout, deviceId: string, agentRows: BoardRow[], agents: readonly AgentRow[]): number {
+  return useMemo(() => sidebarTabGroups(checkout, deviceId, agentRows, agents).filter((group) => group.rows.length === 0).length, [checkout, deviceId, agentRows, agents]);
+}
 
 function useSleepingCheckout(path: string, deviceId: string) {
   const all = useShellStore((s) => s.rest?.navigator?.sleeping_sessions ?? NO_SLEEPERS);
@@ -943,52 +949,19 @@ function ProjectName({ workspace, hidden = false, grow = true }: { workspace: Wo
 }
 
 /**
- * The badge cell of a project or folder row: its agents' status badge, or,
- * while every agent sleeps and the row is folded, one moon cell with how long
- * ago the latest fell asleep (D-03, B4).
+ * A project or folder row's `+` and `⋯` (PRD sidebar-titlebar-refresh D-04,
+ * B6-B8): `+` opens the start panel aimed at the project's main checkout, `⋯`
+ * the row's own menu under the button. They wait for the pointer or the
+ * keyboard, as the row's other revealed controls do, and stay while their
+ * menu is open; the cell keeps its width so showing them never moves the name.
  */
-function ProjectBadge({ workspace, expanded, marks }: { workspace: Workspace; expanded: boolean; marks: ReturnType<typeof projectMarks> | undefined }) {
-  const { t } = useInterfaceTranslation();
-  const asleep = workspace.agent_presence?.asleep;
-  if (asleep && !expanded) {
-    const age = activityAge(asleep.since_unix_ms, Date.now());
-    return (
-      <span className="flex shrink-0 items-center gap-xxs font-mono text-caption text-muted-foreground" data-project-asleep={workspace.id}>
-        <MoonIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-        {age ? ageText(age, t) : null}
-      </span>
-    );
-  }
-  return <StatusBadge counts={marks} data-project-status={workspace.id} />;
-}
-
-/** The sleeping project's words for a screen reader, which the moon cell says to the eye; null when the badge speaks. */
-function asleepLabel(workspace: Workspace, expanded: boolean, t: TFunction<"translation">): string | null {
-  const asleep = workspace.agent_presence?.asleep;
-  if (!asleep || expanded) return null;
-  const age = activityAge(asleep.since_unix_ms, Date.now());
-  return age ? t("sidebar.asleepFor", { age: ageText(age, t) }) : null;
-}
-
-/** Shown over the badge cell while the pointer or the keyboard is on the row, or the row's menu is open; the badge gives way to them. */
-const ROW_COVERED = "group-hover:opacity-0 group-focus-within:opacity-0 group-data-[state=open]:opacity-0 hoverless:opacity-0";
-
-/**
- * A project or folder row's `+` and `⋯` over its badge cell (PRD
- * sidebar-titlebar-refresh D-04, B6-B8): `+` opens the start panel aimed at
- * the project's main checkout, `⋯` the row's own menu under the button. The
- * cell is as wide as the wider of the badge and the pair, so showing the pair
- * never moves the name. They wait for the pointer or the keyboard, as the
- * row's other revealed controls do, and stay while their menu is open.
- */
-function RowActions({ workspace, badge, items, onSelect }: { workspace: Workspace; badge: ReactNode; items: () => MenuItem[]; onSelect: (id: MenuItem["id"]) => void }) {
+function RowActions({ workspace, items, onSelect }: { workspace: Workspace; items: () => MenuItem[]; onSelect: (id: MenuItem["id"]) => void }) {
   const { t } = useInterfaceTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const more = useRef<HTMLButtonElement>(null);
   const control = "flex size-(--size-icon-button-toolbar) items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
   return (
     <span className="grid shrink-0 items-center justify-items-end">
-      <span className={cn("col-start-1 row-start-1 flex items-center", menuOpen ? "opacity-0" : ROW_COVERED)}>{badge}</span>
       <span className={cn("pointer-events-auto relative col-start-1 row-start-1 flex items-center gap-xxs", menuOpen ? "opacity-100" : ROW_REVEALED)} data-row-actions={workspace.id}>
         <Hint label={t("sidebar.startAgentIn", { name: workspace.label })}>
           <button
@@ -1025,6 +998,33 @@ function RowActions({ workspace, badge, items, onSelect }: { workspace: Workspac
   );
 }
 
+/**
+ * A GitHub project's mark at its row's end: the repository's name in a tooltip,
+ * and a press opens it on GitHub (⌘ asks for the default browser, as on a
+ * pull request's mark) without selecting the project. It sits outside the
+ * hover-swapped `+` and `⋯` so it stays pressable while they show. A folder,
+ * or a project no GitHub repository is known for, draws nothing.
+ */
+function RepositoryMark({ workspace, actions }: { workspace: Workspace; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const repository = useShellStore((s) => projectRepository(s.rest, workspace));
+  if (!repository) return null;
+  const label = t("sidebar.openRepository", { repository });
+  return (
+    <Hint label={repository}>
+      <button
+        type="button"
+        aria-label={label}
+        data-project-github={workspace.id}
+        className="flex size-(--size-icon-button-toolbar) shrink-0 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={(event) => actions.openRepository(repository, workspace.device_id, pullRequestOpenExternal(event))}
+      >
+        <GithubIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+      </button>
+    </Hint>
+  );
+}
+
 function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; level: "root" | "child"; context: ListContext }) {
   const { t } = useInterfaceTranslation();
   const { agents, actions, disclosure } = context;
@@ -1052,7 +1052,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   if (workspace.checkouts.length > 0 && workspace.checkouts.every((checkout) => workspace.session_folds?.cleanup.includes(checkout.id))) return null;
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
   const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
-  const marks = projectMarks(workspace);
   const hiding = focusFold(workspace, context.workspaceScreen ? context.focusedCheckoutId : null, expanded);
   // A checkout Hide AI made is drawn only while it is in front or an operator's agent works in it (PRD hide-ai-work-home D-17, B3).
   const drawn = (checkout: Checkout) => drawnInTree(hideAiListed, workspace, checkout, checkout.id === context.focusedCheckoutId, (rowsByCheckout.get(checkout.id) ?? NO_BOARD_ROWS).length > 0);
@@ -1086,20 +1085,19 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             type="button"
             data-project-row={workspace.id}
             aria-current={hiding === "project" ? "true" : undefined}
-            aria-label={[workspace.label, asleepLabel(workspace, expanded, t) ?? badgeWords(marks, t)].filter(Boolean).join(", ")}
+            aria-label={workspace.label}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, target, context.workspaceScreen ? context.focusedCheckoutId : null, disclosure))}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
             <ProjectName workspace={workspace} />
           </button>
-          {/* The project's badge stays while its checkouts are open: it is the project's own summary. */}
           <RowActions
             workspace={workspace}
-            badge={<ProjectBadge workspace={workspace} expanded={expanded} marks={marks} />}
             items={() => projectMenu(workspace, menuHost(), t, issueSource)}
             onSelect={(item) => runProjectItem(actions, workspace, item)}
           />
+          <RepositoryMark workspace={workspace} actions={actions} />
           {disclosure ? (
             <FoldToggle
               open={expanded}
@@ -1189,8 +1187,9 @@ function CleanupRows({ workspaces, context, deviceId }: { workspaces: Workspace[
  * is one (PRD sidebar-typography D-04); opening the agents never grows or
  * shrinks the row.
  */
-function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">, sleepingCount: number, hideAi: HideAiCheckout | null) {
-  const hasRows = agentRows.length + sleepingCount > 0;
+/** `otherLines` counts what the opened list draws besides agent rows: sleeping conversations and named tabs with no agent. */
+function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">, otherLines: number, hideAi: HideAiCheckout | null) {
+  const hasRows = agentRows.length + otherLines > 0;
   const foldable = context.disclosure && hasRows;
   const open = hasRows && !context.openCheckouts.includes(checkout.id);
   // A checkout Hide AI made names its task where the purpose stands, ahead of the purpose (D-03).
@@ -1239,7 +1238,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const name = checkout.branch ?? checkout.label;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length, hideAi);
+  const emptyTabs = useEmptyNamedTabs(checkout, workspace.device_id, agentRows, context.agents);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length + emptyTabs, hideAi);
   const visibleRows = open ? agentRows : agentRows.filter((row) => row.depth === 0 && row.agent.state.needs_you);
   const marks = checkout.agent_summary?.marks;
   return (
@@ -1305,15 +1305,14 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} glyphColumn={CHECKOUT_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length + emptyTabs > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={CHECKOUT_NAME_COLUMN} glyphColumn={CHECKOUT_COLUMN} context={context} /> : null}
     </li>
   );
 });
 
 /**
  * A plain folder (`folderCheckout`): the project and its only checkout are
- * one row. Line one is the project's name and its status badge, which stays
- * while the agent rows are open because it is the project's own summary; line
+ * one row. Line one is the project's name, with no agent counts; line
  * two is the purpose. The row opens the checkout and is marked while that
  * checkout is the Workspace in front, and its
  * menu is the project's followed by the checkout's. It ends as a checkout row
@@ -1339,11 +1338,11 @@ const FolderRowView = memo(function FolderRowView({
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote, t));
   const issueSource = useShellStore((s) => projectIssueSource(s.rest, workspace));
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
-  const marks = checkout.agent_summary?.marks;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
+  const emptyTabs = useEmptyNamedTabs(checkout, workspace.device_id, agentRows, context.agents);
   // A folder whose every agent sleeps follows its own fold, which starts folded (D-03, D-19).
   const asleep = context.disclosure && workspace.agent_presence?.asleep !== undefined;
-  const disclosure = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length, null);
+  const disclosure = checkoutDisclosure(checkout, agentRows, view, context, t, sleeping.length + emptyTabs, null);
   const { foldable, purpose, raisedFrom } = disclosure;
   const open = asleep ? projectExpanded(workspace) : disclosure.open;
   const secondLine = asleep ? !open && checkoutHasSecondLine(view, purpose, raisedFrom) : disclosure.secondLine;
@@ -1370,7 +1369,7 @@ const FolderRowView = memo(function FolderRowView({
             checkout={checkout}
             view={view}
             focused={focused}
-            label={[workspace.label, asleepLabel(workspace, open, t) ?? badgeWords(marks, t), purpose].filter(Boolean).join(", ")}
+            label={[workspace.label, purpose].filter(Boolean).join(", ")}
             actions={actions}
             expanded={asleep ? undefined : checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
             projectExpanded={asleep ? checkoutRowExpansion(true, context.workspaceScreen && focused, open) : undefined}
@@ -1383,7 +1382,6 @@ const FolderRowView = memo(function FolderRowView({
             <RowEnd>
               <RowActions
                 workspace={workspace}
-                badge={<ProjectBadge workspace={workspace} expanded={open} marks={marks} />}
                 items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, issueSource)}
                 onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
               />
@@ -1402,7 +1400,7 @@ const FolderRowView = memo(function FolderRowView({
           {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {visibleRows.length > 0 || (open && sleeping.length > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} glyphColumn={PROJECT_COLUMN} context={context} /> : null}
+      {visibleRows.length > 0 || (open && sleeping.length + emptyTabs > 0) ? <OpenAgentRows checkout={checkout} groupTabs={open} deviceId={workspace.device_id} agentRows={visibleRows} sleeping={open ? sleeping : NO_SLEEPERS} inset={PROJECT_NAME_COLUMN} glyphColumn={PROJECT_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -1600,7 +1598,7 @@ const TAB_LINE = "calc(var(--size-sidebar-line) + var(--spacing-xxs))";
  * A tab is a segment of its checkout's agent list, not a level (docs/UI_BEHAVIOR.md, Sidebar hierarchy): a tab holding two or more agents,
  * or one the operator named, draws a hairline guide centered under the checkout's kind glyph spanning the segment's rows, and opens with one quiet line inside the
  * guide, the tab glyph on the status-mark column and its name (the manual one, else `Tab N`) on the title column, so it reads as part of
- * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count. An unnamed single-agent
+ * the checkout rather than beside it. The line opens the real tab, and the hint says its name and agent count, or only its name with no agent. An unnamed single-agent
  * tab draws nothing: its row alone is the segment, and the gap between segments is the tab boundary.
  */
 function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context }: { group: SidebarTabGroup; checkout: Checkout; deviceId: string; inset: string; glyphColumn: string; context: TreeContext }) {
@@ -1609,7 +1607,8 @@ function TabSegmentHead({ group, checkout, deviceId, inset, glyphColumn, context
   const tab = group.tab;
   const naming = tab?.sidebar;
   const name = naming ? naming.manual_name ?? t("sidebar.tabNumber", { number: naming.number }) : "";
-  const label = t("sidebar.tabAgents", { name, count: group.count });
+  // A tab the operator kept with no agent left says its name alone, never a count of none.
+  const label = group.count === 0 ? name : t("sidebar.tabAgents", { name, count: group.count });
   const center = `calc(${glyphColumn} + var(--size-checkout-icon) / 2)`;
   const open = () => context.actions.openSurface(tabSurface(checkout, tab!.id!, deviceId));
   if (!group.glyph) return null;

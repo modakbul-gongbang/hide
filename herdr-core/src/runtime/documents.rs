@@ -58,7 +58,16 @@ enum Unsaved {
 
 struct PendingSave {
     contents: String,
-    close_after: bool,
+    close_after: CloseAfter,
+}
+
+/// What closes once a save lands with nothing left unsaved: nothing, or the
+/// document, and with it the lane of the Workspace whose view the operator
+/// closed when that leaves the lane nothing to show (`close_emptied_lane`).
+#[derive(Clone)]
+pub(super) enum CloseAfter {
+    Nothing,
+    Document { lane: Option<WorkspaceKey> },
 }
 
 #[derive(Clone, PartialEq)]
@@ -70,7 +79,7 @@ pub(super) struct UnsettledSave {
 pub(super) struct SaveRequest {
     contents: String,
     expected: String,
-    close_after: bool,
+    close_after: CloseAfter,
     place: DocumentPlace,
 }
 
@@ -749,7 +758,7 @@ impl Runtime {
     pub(super) fn request_file_save(
         &mut self,
         payload: FileSavePayload,
-        close_after: bool,
+        close_after: CloseAfter,
     ) -> bool {
         let Some(tab_id) = self
             .snapshot
@@ -821,7 +830,7 @@ impl Runtime {
         true
     }
 
-    fn start_document_save(&mut self, tab_id: &str, contents: String, close_after: bool) {
+    fn start_document_save(&mut self, tab_id: &str, contents: String, close_after: CloseAfter) {
         if let Some(slot) = self.document_saves.get_mut(tab_id) {
             slot.refused = None;
         }
@@ -955,7 +964,7 @@ impl Runtime {
             return true;
         };
         let mut next = None;
-        let mut close = false;
+        let mut close = CloseAfter::Nothing;
         // A save that did not land leaves one diagnostic line naming its
         // device, tab and outcome (S5.5 B48); the reason is the host's words,
         // which never carry the draft.
@@ -984,8 +993,9 @@ impl Runtime {
                 self.push_diagnostic("file.save_ready", format!("Saved {path}"));
                 match queued {
                     Some(waiting) if waiting.contents != request.contents => next = Some(waiting),
-                    Some(waiting) => close = waiting.close_after && !dirty,
-                    None => close = request.close_after && !dirty,
+                    _ if dirty => {}
+                    Some(waiting) => close = waiting.close_after,
+                    None => close = request.close_after,
                 }
             }
             SaveOutcome::Conflict {
@@ -1027,8 +1037,12 @@ impl Runtime {
         self.sync_save_snapshot(tab_id);
         if let Some(next) = next {
             self.start_document_save(tab_id, next.contents, next.close_after);
-        } else if close {
-            return self.close_file_tab_now(tab_id);
+        } else if let CloseAfter::Document { lane } = close {
+            let changed = self.close_file_tab_now(tab_id);
+            if let Some(key) = lane {
+                self.close_emptied_lane(&key);
+            }
+            return changed;
         }
         true
     }

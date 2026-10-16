@@ -638,7 +638,7 @@ fn replacement_retry_with_missing_shell_at_capacity_sends_no_effect() {
     let operation = runtime.close_operations.get_mut("retained-close").unwrap();
     operation.phase = "refused".into();
     operation.stage = "close_request".into();
-    operation.replacement_tab_id = Some("w-order:removed-shell".into());
+    operation.replacement_id = Some("w-order:removed-shell".into());
     assert!(runtime.retry_agent_close("retained-close"));
     assert_eq!(
         runtime.snapshot.status.last_error.as_ref().unwrap().kind,

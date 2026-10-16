@@ -5,7 +5,7 @@ import type { Checkout, Tab } from "./snapshot";
 import { sidebarTabGroups } from "./sidebarTabs";
 
 const agent = (id: string, device_id = "local") => legacyAgentRow({ id, pane_id: id, device_id, identity_label: id, agent_kind: "codex", group: "working" });
-const tab = (id: string, panes: string[]): Tab => ({ id, label: "Automatic task label", sidebar: { manual_name: null, number: Number(id.slice(1)) }, panes: panes.map((id) => ({ id })) } as Tab);
+const tab = (id: string, panes: string[]): Tab => ({ id, label: "Automatic task label", sidebar: { manual_name: null, number: Number(id.slice(1)), named_by_operator: false }, panes: panes.map((id) => ({ id })) } as Tab);
 const checkout = (tabs: Tab[]) => ({ id: "c", tabs } as Checkout);
 const row = (id: string, depth = 0): BoardRow => ({ agent: agent(id), depth });
 
@@ -29,10 +29,17 @@ describe("Projects sidebar tab groups", () => {
     const unnamed = tab("t1", ["a", "b"]);
     expect(at(unnamed, ["a", "b"])).toMatchObject({ glyph: true });
     expect(at(unnamed, ["a"])).toMatchObject({ count: 1, glyph: false });
-    const named = { ...unnamed, sidebar: { manual_name: "긴 한국어 탭 이름", number: 1 } };
+    const named = { ...unnamed, sidebar: { manual_name: "긴 한국어 탭 이름", number: 1, named_by_operator: true } };
     expect(at(named, ["a", "b"])).toMatchObject({ glyph: true });
     expect(at(named, ["a"])).toMatchObject({ count: 1, glyph: true, tab: { sidebar: { manual_name: "긴 한국어 탭 이름" } } });
     expect(at(named, ["a", "b"])).toMatchObject({ count: 2, glyph: true });
+  });
+
+  it("keeps the segment of a tab the operator named when its last agent is gone, and drops an unnamed, spawn-named or delegated one", () => {
+    const named = (id: string, { delegated = false, byOperator = true } = {}): Tab => ({ ...tab(id, [`${id}-shell`]), sidebar: { manual_name: `name ${id}`, number: 1, named_by_operator: byOperator }, delegated });
+    const tabs = [tab("t1", ["a"]), named("t2"), tab("t3", ["t3-shell"]), named("t4", { delegated: true }), named("t5", { byOperator: false })];
+    const groups = sidebarTabGroups(checkout(tabs), "local", [row("a")], [agent("a")]);
+    expect(groups.map((group) => [group.tab?.id, group.rows.length, group.count, group.glyph])).toEqual([["t1", 1, 1, false], ["t2", 0, 0, true]]);
   });
 
   it("leaves partial legacy snapshots readable without fabricating a tab name", () => {

@@ -52,7 +52,7 @@ export const Usage = memo(function Usage({ actions }: { actions: Actions }) {
   const visible = AGENT_ADAPTERS.filter((adapter) => hasLimits(adapter) && !prefs.hidden.includes(adapter.herdr_kind));
   if (!chips.length && !node?.history) return null;
   return <Popover open={open} onOpenChange={(next) => { setNow(Date.now()); setOpen(next); }}>
-    <PopoverAnchor asChild><div className="flex min-w-0 flex-wrap justify-end gap-xs" data-usage-chips="true">
+    <PopoverAnchor asChild><div className="flex min-w-0 flex-wrap gap-xs" data-usage-chips="true">
       {!chips.length ? <PopoverTrigger aria-label={t("usage.title")} data-usage-trigger="true" className="rounded-sm p-xs text-muted-foreground hover:bg-accent"><ChartNoAxesCombinedIcon className="size-(--size-icon)" /></PopoverTrigger> : null}
       {chips.map((chip) => {
         const label = agentProductName(chip.agent);
@@ -66,7 +66,7 @@ export const Usage = memo(function Usage({ actions }: { actions: Actions }) {
         </PopoverTrigger>;
       })}
     </div></PopoverAnchor>
-    <PopoverContent side="top" align="end" className="flex max-h-(--radix-popover-content-available-height) w-(--size-usage-popover) flex-col gap-sm overflow-y-auto p-lg" data-usage-popover="true"
+    <PopoverContent side="top" align="start" className="flex max-h-(--radix-popover-content-available-height) w-(--size-usage-popover) flex-col gap-sm overflow-y-auto p-lg" data-usage-popover="true"
       onCloseAutoFocus={(event) => {
         const action = afterClose.current;
         afterClose.current = null;

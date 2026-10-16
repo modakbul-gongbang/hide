@@ -981,7 +981,7 @@ impl Runtime {
                     // own Retry, which reuses it, rather than making another.
                     && !(operation.request.context.replacement_shell
                         && (operation.replacement_effect_started
-                            || operation.replacement_tab_id.is_some()))
+                            || operation.replacement_id.is_some()))
                     && nodes
                         .iter()
                         .any(|node| node.device.is_none() && node.id == operation.target_id)

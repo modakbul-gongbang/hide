@@ -1,8 +1,8 @@
 import { projectRows, checkoutPresentation, checkoutCard } from "../test/legacyAgentScope";
-import { emptyScope, legacyProject } from "../test/legacyAgentScope";
+import { emptyScope } from "../test/legacyAgentScope";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { activeCheckouts, cardSingleValue, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, projectMarks as drawProjectMarks, relativeActivity, shownPullRequest } from "./projects";
+import { activeCheckouts, cardSingleValue, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, relativeActivity, shownPullRequest } from "./projects";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
@@ -339,20 +339,6 @@ describe("checkoutCard", () => {
   });
 });
 
-describe("projectMarks", () => {
-  it("adds every checkout's marks, and a checkout the core has not summarised yet adds none", () => {
-    const summary = (marks: Partial<typeof NO_MARKS>) => ({ representative_pane_id: null, needs_you: 0, done: 0, working: 0, seen: 0, unknown: 0, marks: { ...NO_MARKS, ...marks } });
-    const project = workspace("repo", {
-      checkouts: [
-        { agent_summary: summary({ question: 1, idle: 2 }) },
-        { agent_summary: summary({ question: 1, working: 3 }) },
-        {},
-      ] as Checkout[],
-    });
-    expect(projectMarks(project)).toEqual({ ...NO_MARKS, question: 2, working: 3, idle: 2 });
-  });
-});
-
 describe("sidebar row activation", () => {
   it("opens folded rows and preserves an expanded row when returning from another scope", () => {
     expect(checkoutRowExpansion(true, false, false)).toBe(true);
@@ -429,4 +415,3 @@ describe("checkout row lines (PRD sidebar-typography D-04, D-06)", () => {
   });
 });
 
-const projectMarks: typeof drawProjectMarks = (workspace) => drawProjectMarks(legacyProject(workspace, []));

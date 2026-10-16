@@ -28,8 +28,59 @@ pub struct ClosedContext {
     pub tab_index: usize,
     /// Hide-owned area and insertion position, independent of Herdr order.
     pub agent_area: Option<(String, usize)>,
-    /// The primary workspace needs a shell before its last tab can close.
+    /// A shell is made before the close: a new tab when the primary
+    /// workspace's last tab closes, or a pane in the closing tab when
+    /// `replacement_in_tab` says so.
     pub replacement_shell: bool,
+    /// The shell goes into the closing tab beside its last agent, so the tab
+    /// and the name the operator gave it stay (docs/UI_BEHAVIOR.md, Agent
+    /// areas). Set only together with `replacement_shell`.
+    #[serde(default)]
+    pub replacement_in_tab: bool,
+    /// The name the operator gave the tab, the only label a reopen or a
+    /// wake sends Herdr: Herdr keeps any label it is sent as the tab's name,
+    /// so sending `tab_label`, the label Hide displays, would name a tab the
+    /// operator never named.
+    #[serde(default)]
+    pub tab_name: ClosedTabName,
+}
+
+/// What a closed tab was called (`ClosedContext::tab_name`).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClosedTabName {
+    /// A record written before the name was kept, which sends `tab_label`
+    /// as it always did, and is not the operator's.
+    #[default]
+    Unrecorded,
+    Unnamed,
+    /// The name the operator gave it through Rename; the tab it comes back
+    /// as is named again.
+    Named(String),
+    /// A name someone else gave it, such as `hide agent spawn`: it comes
+    /// back under that name but stays unnamed.
+    Labeled(String),
+}
+
+impl ClosedContext {
+    /// The label a reopen or a wake sends Herdr; none for a tab nobody
+    /// named, so Herdr keeps or picks the tab's own.
+    pub(crate) fn herdr_tab_label(&self) -> Option<&str> {
+        match &self.tab_name {
+            ClosedTabName::Named(name) | ClosedTabName::Labeled(name) => Some(name),
+            ClosedTabName::Unnamed => None,
+            ClosedTabName::Unrecorded => Some(&self.tab_label),
+        }
+    }
+
+    /// The name the operator gave the tab, which the tab a reopen or a wake
+    /// opens is named by again.
+    pub(crate) fn operator_tab_name(&self) -> Option<&str> {
+        match &self.tab_name {
+            ClosedTabName::Named(name) => Some(name),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -339,6 +390,35 @@ mod tests {
             checkout_path: "/tmp".into(),
             path: format!("/tmp/{key}"),
             label: key.into(),
+        }
+    }
+
+    /// Herdr keeps a label it is sent as the tab's name, so a reopen or a
+    /// wake sends only the operator's, and the choice survives being saved;
+    /// a record from before the name was kept sends what it always did.
+    #[test]
+    fn a_reopen_names_the_tab_only_with_the_operators_name() {
+        let saved_before = serde_json::json!({
+            "workspace_id": "w1", "workspace_label": "repo",
+            "workspace_ids_before_close": ["w1"], "tab_ids_before_close": ["w1:t1"],
+            "pane_ids_before_close": ["w1:p1"], "checkout_id": "c1", "checkout_path": "/repo",
+            "tab_id": "w1:t1", "tab_label": "Planning", "tab_index": 0,
+            "agent_area": null, "replacement_shell": false
+        });
+        let old: ClosedContext = serde_json::from_value(saved_before).unwrap();
+        assert_eq!(old.herdr_tab_label(), Some("Planning"));
+        for (tab_name, sent) in [
+            (ClosedTabName::Unnamed, None),
+            (ClosedTabName::Named("Planning".into()), Some("Planning")),
+        ] {
+            let context = ClosedContext {
+                tab_label: "Agent one".into(),
+                tab_name,
+                ..old.clone()
+            };
+            let saved: ClosedContext =
+                serde_json::from_value(serde_json::to_value(&context).unwrap()).unwrap();
+            assert_eq!(saved.herdr_tab_label(), sent);
         }
     }
 

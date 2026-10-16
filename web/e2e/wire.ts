@@ -40,7 +40,11 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
           // The usage hints ride their own UI-state update, which the page
           // sends on its own schedule, not for an action; it is counted apart.
           const hint = event.kind === "ui_state_update" && ["usage_window_visible", "usage_popover_open"].some((field) => field in (event.payload ?? {}));
-          for (const key of hint ? ["ui_state_update.usage_hint"] : action ? [event.kind, action] : [event.kind]) {
+          // A look at the project in front (`web/src/githubLook.ts`) rides the
+          // GitHub request event on every focus, not for a screen's ask; it is
+          // counted apart so "nothing asked GitHub" still means no screen did.
+          const look = event.kind === "github_request" && event.payload?.look === true;
+          for (const key of hint ? ["ui_state_update.usage_hint"] : look ? ["github_request.look"] : action ? [event.kind, action] : [event.kind]) {
             counts.set(key, (counts.get(key) ?? 0) + 1);
             last.set(key, event.payload ?? {});
           }
@@ -174,12 +178,13 @@ export async function showProjectRow(page: Page, row: Locator): Promise<Locator>
   return row;
 }
 
-/** Opens the one sidebar project whose agents all sleep, which folds behind its moon until opened (PRD sidebar-titlebar-refresh B4). */
+/** Opens the one sidebar project whose agents all sleep, which folds until opened (PRD sidebar-titlebar-refresh B4). */
 export async function openSleepingProject(page: Page): Promise<void> {
-  const project = page.locator("nav[data-sidebar] [data-project]").filter({ has: page.locator("[data-project-asleep]") });
-  await expect(project).toHaveCount(1, { timeout: 30_000 });
-  await project.locator("[data-project-toggle], [data-checkout-toggle]").first().click();
-  await expect(project.locator("[data-project-asleep]")).toHaveCount(0);
+  // A project is folded by its own toggle; a plain folder, which has no project row, by its checkout's.
+  const toggle = page.locator('nav[data-sidebar] [data-project-toggle][aria-expanded="false"], nav[data-sidebar] [data-project]:not(:has([data-project-row])) [data-checkout-toggle][aria-expanded="false"]');
+  await expect(toggle).toHaveCount(1, { timeout: 30_000 });
+  await toggle.click();
+  await expect(toggle).toHaveCount(0);
 }
 
 /** Puts the pointer on the canvas and drops keyboard focus, so no row is hovered or focused. */

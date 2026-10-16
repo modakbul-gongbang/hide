@@ -407,6 +407,18 @@ impl BrowserControl {
         ask_gateway(&host, scope)
     }
 
+    /// The capability for the operator's Comment mode on `scope`'s display,
+    /// which the gateway grants for a local `file:` page too, and for the
+    /// comment session's own commands only. It stays in hided: no result
+    /// built for a pane (`connect`, `relay`) carries it, and the scope a
+    /// pane's request makes (`scope_of`) never names a purpose.
+    pub fn comment_capability(&self, scope: &Value) -> Result<(String, String), Failure> {
+        let host = self.own_host()?.ok_or_else(unavailable)?;
+        let mut scope = scope.clone();
+        scope["purpose"] = json!("comment");
+        ask_gateway(&host, &scope)
+    }
+
     /// Asks every window registered here to drop each capability it handed
     /// out, the link they were handed out over having ended: all at once,
     /// each asked again a few times before its failure is logged. The
@@ -919,6 +931,85 @@ mod tests {
         assert!(registry.acquire().is_ok());
         drop(relays);
         assert!(registry.acquire_relay().is_ok());
+    }
+
+    /// A scripted gateway that answers `/connect` with a capability for
+    /// itself and keeps each request body it was asked with.
+    fn scripted_gateway() -> (String, Arc<Mutex<Vec<Value>>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint = format!("http://{}", listener.local_addr().unwrap());
+        let bodies = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&bodies);
+        let base = endpoint.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { return };
+                let mut raw = Vec::new();
+                let mut chunk = [0_u8; 1024];
+                let body = loop {
+                    let read = stream.read(&mut chunk).unwrap_or(0);
+                    raw.extend_from_slice(&chunk[..read]);
+                    let text = String::from_utf8_lossy(&raw).into_owned();
+                    if let Some((head, body)) = text.split_once("\r\n\r\n") {
+                        let length = head
+                            .lines()
+                            .find_map(|line| {
+                                line.to_ascii_lowercase()
+                                    .strip_prefix("content-length:")
+                                    .map(|n| n.trim().parse::<usize>().unwrap_or(0))
+                            })
+                            .unwrap_or(0);
+                        if body.len() >= length || read == 0 {
+                            break body.to_owned();
+                        }
+                    }
+                };
+                seen.lock()
+                    .unwrap()
+                    .push(serde_json::from_str(&body).unwrap());
+                let path = "a".repeat(40);
+                let answer = json!({
+                    "cdp_http_url": format!("{base}/cdp/{path}"),
+                    "browser_ws_url": format!("{}/cdp/{path}/devtools/browser", base.replace("http:", "ws:")),
+                })
+                .to_string();
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{answer}",
+                    answer.len()
+                );
+            }
+        });
+        (endpoint, bodies)
+    }
+
+    #[test]
+    fn only_the_comment_capability_names_a_purpose() {
+        let (endpoint, bodies) = scripted_gateway();
+        let registry = BrowserControl::default();
+        registry
+            .register(Registration {
+                owner_pid: std::process::id() as i32,
+                endpoint,
+                token: "t".repeat(40),
+            })
+            .unwrap();
+        let source = source();
+        // A pane's discovery and its page command's relay.
+        registry.connect(&source, Some("browser-a"), None).unwrap();
+        registry.relay(&source, "browser-a", None).unwrap();
+        // The operator's Comment mode, on a display a pane could never drive.
+        let scope = scope_of(&source, Some("browser-a")).unwrap().2;
+        registry.comment_capability(&scope).unwrap();
+
+        let bodies = bodies.lock().unwrap();
+        assert_eq!(bodies.len(), 3);
+        for pane in &bodies[..2] {
+            assert!(pane.get("purpose").is_none(), "{pane}");
+        }
+        assert_eq!(bodies[2]["purpose"], "comment");
+        assert_eq!(bodies[2]["display_id"], "browser-a");
     }
 
     #[test]

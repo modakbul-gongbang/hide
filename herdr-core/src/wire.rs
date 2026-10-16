@@ -1118,6 +1118,24 @@ pub(crate) fn replacement_tab_params(
         env: env.into_iter().collect(),
     })
 }
+/// The shell a named tab keeps, split beside its closing last pane: no focus,
+/// since the close moves the keyboard itself, and the intent marker in `env`.
+pub(crate) fn replacement_pane_params(
+    pane: &str,
+    cwd: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
+    params(req::PaneSplitParams {
+        target_pane_id: Some(pane.into()),
+        direction: req::SplitDirection::Right,
+        cwd: Some(herdr_param(cwd)),
+        focus: false,
+        env: env.into_iter().collect(),
+        ratio: None,
+        right_click: req::PaneRightClickTarget::Herdr,
+        workspace_id: None,
+    })
+}
 pub(crate) fn worktree_create_params(
     cwd: &str,
     branch: &str,
@@ -1213,14 +1231,14 @@ pub(crate) fn layout_export_params(tab_id: &str) -> Result<Value, String> {
 pub(crate) fn layout_apply_params(
     workspace_id: &str,
     tab_id: Option<&str>,
-    tab_label: &str,
+    tab_label: Option<&str>,
     root: &ClosedLayoutNode,
 ) -> Result<Value, String> {
     params(req::LayoutApplyParams {
         focus: true,
         root: request_layout_node(root),
         tab_id: tab_id.map(str::to_owned),
-        tab_label: Some(tab_label.into()),
+        tab_label: tab_label.map(str::to_owned),
         // Herdr accepts either a concrete tab to replace or a workspace in
         // which to create a tab. Sending both makes the pinned server reject
         // an otherwise valid restore of workspace.create's seed tab.

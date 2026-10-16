@@ -346,7 +346,7 @@ async fn run(
         "display_id": request.display_id,
     });
     let control = Arc::clone(&context.control);
-    let (_, ws) = tokio::task::spawn_blocking(move || control.gateway_capability(&scope))
+    let (_, ws) = tokio::task::spawn_blocking(move || control.comment_capability(&scope))
         .await
         .map_err(|_| Failure::new("browser_control_unavailable", None))?
         .map_err(|(reason, _)| Failure::new(reason, None))?;
