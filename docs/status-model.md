@@ -59,7 +59,7 @@ Use a command's own exit/result or an explicit coordination receipt when a workf
 This is a known screen-inference limitation: a prompt-like quiet screen can cease to look working while background work is still outstanding.
 It is one observed case, not a guarantee that every background wait produces `done` or that Hide detects outstanding commands independently.
 The corresponding behavior for Monitor and for Codex's background terminal has not been verified by that observation.
-The existing [waiting-on-descendants rule](#a-quiet-root-waiting-on-its-children) uses proven lineage and child axes; it is not a general background-command detector.
+The existing [waiting-on-descendants rule](#a-quiet-row-that-waits) uses proven lineage and child axes; it is not a general background-command detector.
 
 ## Hide owns the read axis, at pane level
 
@@ -136,7 +136,7 @@ Regression owners: `a_descendants_demand_or_completion_turns_every_ancestor_unre
 
 ## A quiet row that waits
 
-A row with no demand of its own, not blocked and stopped (idle or done) waits when something that will wake it is still running.
+A row with no demand of its own, not blocked and stopped (idle or done) waits when something in progress will wake it: work that is still running, or an answer someone is still making for it.
 It has not finished, so it sits in Working, draws the hollow ring `○` in the working colour, has `status_code: waiting` (the word `Waiting`), and is not emphasized.
 Why it waits is one additive wire value, `wait`, beside `group: working`; absent means the row waits for nothing.
 No new group value reaches the wire, so a decoder that does not know the field draws an ordinary Working row.
@@ -144,13 +144,20 @@ No new group value reaches the wire, so a decoder that does not know the field d
 
 | `wait` | The row waits for | Proven by |
 | --- | --- | --- |
-| `children` | A live descendant that is working or holds a question, approval or error. Only a lineage root waits this way. | The lineage and the descendants' own axes |
+| `children` | A live descendant that is working, or stopped on a background task its session proves. Only a lineage root waits this way. | The lineage and the descendants' own axes |
 | `background` | A background command, monitor or task its own agent started and that is still running in the process that started it | The session's own records, read for the Herdr state the label worker asked under (below) |
-| `reply` | A Hide `request` or `block` letter the row's session sent and whose answer is still awaited | The delivery ledger (`Ledger::reply_awaited_since`) |
+| `reply` | A Hide `request` or `block` letter the row's session sent whose answer is still awaited and still being made: the recipient has not taken the letter in yet, or it is working, or it or a descendant of it is on a proven background task, or a descendant of it works | The delivery ledger (`Ledger::awaited_answers`) for the letter and whether it was taken in, and the recipient's row for the rest |
 
 A merely ready or finished descendant is quiet, and one whose activity Herdr reports as unknown does not make its root wait, because a waiting state the projection cannot vouch for is not drawn.
-A descendant's question keeps the root waiting in Working and turns it unread through the descendant signals above; it moves the root to Needs You only once one of the six escalation causes raises it (Delegated escalation).
-A delegated row that waits on its own (`background` or `reply`) is Working, like a delegated row that is running, and its root counts it as working, so the root waits on its children while it does; an ordinary delegated row that waits for nothing keeps Seen.
+A descendant holding a question, approval or error waits on its parent, not the other way round, so it does not make the root wait: it turns the root unread through the descendant signals above, and moves the root to Needs You only once one of the six escalation causes raises it (Delegated escalation).
+A delegated row that waits on its own (`background` or `reply`) is Working, like a delegated row that is running, and its ancestors' counts take it as working; its root waits on it only while it waits on a background task, because a reply is made by the agent that answers, not by the row that asked; an ordinary delegated row that waits for nothing keeps Seen.
+
+A reply wait ends when nothing is making the answer, even while the letter is still open in the ledger.
+Once the recipient took the letter in and stopped, having answered with a report letter or finished without answering, the sender shows its own state: an unread `✓`, a gray `○` once read, or `◐` when its label read its turn as waiting with nothing proven.
+The recipient's own reply wait is not counted as making the answer, so two agents that wait on each other's answer never both draw a wait: a child that asked its parent by letter waits while the parent has not taken the letter in or works, and the parent never waits on that child.
+The 24-hour answer deadline stays the outer bound, and a turn the sender's session began after the letter went out still ends that letter's wait.
+A recipient the projection cannot vouch for holds no wait, taken in or not: a code-owned recipient (`factory:<id>`), which has no row whose progress Hide can see, an agent on a device that is not connected, whose last state may no longer hold, an agent asleep, which a letter does not wake, and a pane that now runs another session than the one the letter went to.
+The runtime lays each awaited letter on its sender's row (`lay_awaited_replies`, leaving those recipients out), and the lineage pass decides from the recipients' rows, so a recipient's step reaches the sender on the same projection; publishing the ledger rebuilds the lineage when a letter's sender, recipient or intake changes and not for its other delivery steps.
 
 Mark precedence on a root is its own demand, then its own work, then waiting, then idle or done.
 A row waits only with no demand of its own while it is not working, so the precedence is the order of the checks in `agent_group_for`, not a second rule.
@@ -191,7 +198,7 @@ The hold ends on every path of the read and has no timer of its own: the read la
 A session no read has proved yet carries no facts, so its first turn end is not held.
 The wait before the label's own verdict (`stopped_unfinished`) is not this gap: that verdict comes from an AI request that takes seconds, and holding the row for it would delay every Done.
 
-Regression owners: `a_turn_end_is_not_a_stop_until_its_session_read_lands`, `a_read_that_finds_no_task_releases_the_turn_end_and_publishes_it`, `a_read_that_fails_releases_the_turn_end_and_says_so`, `a_stop_that_is_not_a_turn_just_ended_is_not_held` and `a_turn_ending_with_a_background_task_is_never_announced_done`, then `a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply`, `a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet`, `a_proven_background_task_keeps_a_stopped_claude_row_waiting`, `a_reply_is_awaited_until_answered_overdue_or_from_another_session`, the adapter contract `adapters::wake_devices` in `hide-session/tests/it` (the stop pairing, the discarded record that may carry a device, the one that cannot and the call too large to keep), the two `wake_devices.*` diagnostics in `herdr-core/src/labels/tests.rs`, and the web `agentRow.test.ts`.
+Regression owners: `a_turn_end_is_not_a_stop_until_its_session_read_lands`, `a_read_that_finds_no_task_releases_the_turn_end_and_publishes_it`, `a_read_that_fails_releases_the_turn_end_and_says_so`, `a_stop_that_is_not_a_turn_just_ended_is_not_held` and `a_turn_ending_with_a_background_task_is_never_announced_done`, then `a_quiet_row_waits_on_children_then_a_proven_device_then_a_reply`, `a_quiet_root_waits_in_working_while_a_descendant_works_and_not_on_one_that_asks`, `a_root_with_finished_children_draws_its_own_state_past_a_request_a_stopped_child_took_in`, `a_child_asking_its_stopped_parent_by_letter_leaves_neither_row_waiting`, `a_letter_to_a_factory_or_to_a_disconnected_device_holds_no_reply_wait`, `a_proven_background_task_keeps_a_stopped_claude_row_waiting`, `a_reply_is_awaited_until_answered_overdue_or_from_another_session`, the adapter contract `adapters::wake_devices` in `hide-session/tests/it` (the stop pairing, the discarded record that may carry a device, the one that cannot and the call too large to keep), the two `wake_devices.*` diagnostics in `herdr-core/src/labels/tests.rs`, and the web `agentRow.test.ts`.
 
 ## Where each axis comes from
 
@@ -236,7 +243,7 @@ Whether the operator has read a demand is Hide's own record, never Herdr's tab-s
 | --- | --- |
 | Needs You | An unread demand - question, approval or block - or a pane Herdr reports as blocked, or whose native question or plan waits for the operator, right now |
 | Done | No demand, stopped, completion reported, and unread |
-| Working | Running, or a quiet root waiting on a busy descendant |
+| Working | Running, or a quiet row waiting on a working descendant, a proven background task or a reply still being made |
 | Seen | Everything else: ready idle, read demands, read completions, unknown |
 
 A blocked pane, or one whose native question or plan waits for the operator, stays in Needs You whether or not it has been read.
@@ -371,7 +378,7 @@ Every surface draws the mark in one box of one size: `●` and `○` as a filled
 | No demand, stopped, completion reported, unread | `✓` | Green | Done; completion awaiting the operator's review |
 | No demand, stopped, no completion | `○` | Gray | Idle; a newly opened agent is ready for its first instruction |
 | No demand, working | `●` | Blue | Working |
-| No demand, stopped, and waiting on children, a proven background task or a reply (`wait`) | `○` | Blue ring | Waiting; Working group until nothing it waits for is left |
+| No demand, stopped, and waiting on a working descendant, a proven background task or a reply still being made (`wait`) | `○` | Blue ring | Waiting; Working group until nothing it waits for is in progress |
 | No demand, stopped, read | `○` | Gray (`--status-seen`, the same in both color themes) | Idle; a read completion is not another unread Done |
 | No demand, unknown activity | `~` | Gray | Unknown; never silently labeled Idle |
 | Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
@@ -979,7 +986,7 @@ Sentences keep their original language in every mode.
 | Plain-text question at the end of a turn, with no native wait | If the analysis identifies a question: `?`, Question, Needs You while unread, with `expected_reply`. Reading moves it to Seen unless it is still running; the request sentence remains until resolved. | Text alone creates no question, no `?` and no Needs You. A stopped, unread Herdr `done` is Done with `✓` and no sentence. A Herdr `idle` is Seen, not Done. |
 | Approval / Herdr blocked pane / native plan wait | `!`, Approval, Needs You until answered, including after reading. The second line follows `expected_reply`, native question, then `progress`; a plan document's heading is never extracted as a sentence. | The same `!`, Approval and Needs You; without a native question sentence the word Approval stands in, including for a plan document. |
 | AI-identified error or block with a named cause, without a native wait | `▲`, Blocked, Needs You while unread; the second line is the cause in `progress`. Reading leaves the dimmed mark and cause in Seen unless it is running. | No cause is inferred from plain text and no Blocked mark is invented. Herdr's own lifecycle decides the group: an unread `done` is Done with no sentence, an `idle` is Seen. A native blocked pane still uses Approval above. |
-| Working second line | `progress`; with an unresolved demand, `expected_reply`, native question, then `progress`. A quiet working row's display can hide its sentence until hover or selection. | No generated progress; Working stands in when there is no sentence. A working row with a native question still carries that question. Proven background tasks, children and awaited replies still supply Waiting independently of AI. |
+| Working second line | `progress`; with an unresolved demand, `expected_reply`, native question, then `progress`. A quiet working row's display can hide its sentence until hover or selection. | No generated progress; Working stands in when there is no sentence. A working row with a native question still carries that question. Proven background tasks, working children and replies still being made still supply Waiting independently of AI. |
 | Done (unread) second line | `expected_reply`, otherwise `progress`. An unfinished verdict draws Stopped `◐` instead of a check while keeping the lifecycle's group. | No generated sentence; Done stands in for an unread completion. No inferred unfinished verdict; proven waits still prevent a premature Done. |
 | Seen second line | A read unresolved demand keeps its sentence; a read completion, idle or unknown row has none. | A native unresolved question keeps its question; ordinary read completion, idle and unknown rows have no sentence. |
 | Whether a root enters Needs You | Native question/approval/block, an unread AI question or named block, or one of the explicit delegated escalations. Working and Done alone do not enter it. | Native question/approval/block and the same explicit escalations; a plain-text end question alone does not enter it. |

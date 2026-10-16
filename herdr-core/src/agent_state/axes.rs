@@ -205,33 +205,57 @@ pub fn apply_lineage(
     let close_descendants = close_order(&children, &parents);
     // Walk each row to its root, remembering the way, so the breadcrumb is
     // the same walk the depth already costs rather than a second traversal.
-    // The same walk tells every ancestor what this row is doing, and it runs
-    // before the rows are written so an ancestor that comes earlier in the
-    // list has heard from every descendant by then. A closed pane is no
-    // longer a row, so it drops out of every count on the next projection
-    // (PRD D-12).
+    // The same ancestors hear what this row is doing below, before the rows
+    // are written, so an ancestor that comes earlier in the list has heard
+    // from every descendant by then. A closed pane is no longer a row, so it
+    // drops out of every count on the next projection (PRD D-12).
     let mut ancestry = Vec::with_capacity(agents.len());
-    let mut descendant_counts =
-        vec![crate::model::DescendantCountsSnapshot::default(); agents.len()];
-    let mut direct_child_counts = descendant_counts.clone();
-    let mut descendant_signals = vec![BTreeSet::new(); agents.len()];
-    for (index, agent) in agents.iter().enumerate() {
+    for index in 0..agents.len() {
         let mut ancestors = Vec::new();
         let mut root = index;
         while let Some(parent) = parents[root] {
             ancestors.push(parent);
             root = parent;
         }
-        let state = descendant_state(agent);
+        ancestry.push((ancestors, root));
+    }
+    // What moves on below each row: a descendant working, or stopped on a
+    // background task its session proves. A reply wait is decided from this
+    // and is not part of it, so two rows that wait on each other's answer
+    // never hold each other up.
+    let mut progress_below = vec![false; agents.len()];
+    for (index, agent) in agents.iter().enumerate() {
+        if progressing(agent) {
+            for ancestor in &ancestry[index].0 {
+                progress_below[*ancestor] = true;
+            }
+        }
+    }
+    let own_waits = agents
+        .iter()
+        .map(|agent| {
+            let answering = agent.awaited_replies.iter().any(|reply| {
+                by_pane
+                    .get(&reply.recipient_pane_id)
+                    .is_some_and(|&to| answer_in_progress(reply, &agents[to], progress_below[to]))
+            });
+            own_wait(agent, answering)
+        })
+        .collect::<Vec<_>>();
+    let mut descendant_counts =
+        vec![crate::model::DescendantCountsSnapshot::default(); agents.len()];
+    let mut direct_child_counts = descendant_counts.clone();
+    let mut descendant_signals = vec![BTreeSet::new(); agents.len()];
+    for (index, agent) in agents.iter().enumerate() {
+        let state = descendant_state(agent, own_waits[index]);
         if let Some(parent) = parents[index] {
             state.count_into(&mut direct_child_counts[parent]);
         }
         let signals = descendant_signals_of(agent);
-        for ancestor in &ancestors {
+        for ancestor in &ancestry[index].0 {
             state.count_into(&mut descendant_counts[*ancestor]);
             descendant_signals[*ancestor].extend(signals.iter().cloned());
         }
-        ancestry.push((ancestors, root));
     }
     for index in 0..agents.len() {
         let (mut ancestors, root) = std::mem::take(&mut ancestry[index]);
@@ -310,10 +334,9 @@ pub fn apply_lineage(
         agent.lineage_collapsed = !expanded.contains(&agent.pane_id);
         agent.descendant_counts = descendant_counts[index];
         agent.direct_child_counts = direct_child_counts[index];
-        agent.wait =
-            (depth == 0 && quiet_itself(agent) && descendants_busy(&descendant_counts[index]))
-                .then_some(AgentWait::Children)
-                .or_else(|| own_wait(agent));
+        agent.wait = (depth == 0 && quiet_itself(agent) && progress_below[index])
+            .then_some(AgentWait::Children)
+            .or(own_waits[index]);
         agent.descendant_signals = std::mem::take(&mut descendant_signals[index]);
     }
     // Ownership was unknown when the rows were first derived, because it is
@@ -358,20 +381,51 @@ fn quiet_itself(agent: &SidebarAgentSnapshot) -> bool {
     demand == AgentDemand::None && activity == AgentActivity::Stopped && !agent.blocked
 }
 
+/// A quiet row whose session proves a background task it started is still
+/// running in the process that started it.
+fn background_wait(agent: &SidebarAgentSnapshot) -> bool {
+    quiet_itself(agent)
+        && agent
+            .row_facts
+            .as_ref()
+            .is_some_and(|facts| facts.wake_devices > 0)
+}
+
+/// Whether the row moves its own work on: running with nothing asked of
+/// anyone, or stopped on a background task its session proves. A demand
+/// waits on someone else, and one whose activity Herdr cannot classify is
+/// not vouched for, so neither is progress.
+fn progressing(agent: &SidebarAgentSnapshot) -> bool {
+    let (demand, activity, _) = axes_of(agent);
+    (demand == AgentDemand::None && activity == AgentActivity::Working) || background_wait(agent)
+}
+
+/// Whether the answer to one letter is still being made: the recipient, the
+/// same agent the letter went to and awake, has not taken it in yet, or is
+/// working, or something under it moves on (`progress_below`). Its own wait
+/// for a reply does not count, so two agents asking each other never both
+/// wait.
+fn answer_in_progress(
+    reply: &crate::model::AwaitedReply,
+    recipient: &SidebarAgentSnapshot,
+    progress_below: bool,
+) -> bool {
+    recipient.sleep.is_none()
+        && crate::wire::session_holds(
+            reply.recipient_session.as_deref(),
+            recipient.lineage_session.as_deref(),
+        )
+        && (!reply.taken_in || progressing(recipient) || progress_below)
+}
+
 /// What a quiet row waits for on its own account, whatever its depth: a
-/// background task its session proves will wake it, else a reply it asked
-/// for. Waiting on its children outranks both and is decided by the lineage.
-pub(crate) fn own_wait(agent: &SidebarAgentSnapshot) -> Option<AgentWait> {
-    if !quiet_itself(agent) {
-        return None;
-    }
-    if agent
-        .row_facts
-        .as_ref()
-        .is_some_and(|facts| facts.wake_devices > 0)
-    {
+/// background task its session proves will wake it, else a reply someone is
+/// still making for it. Waiting on its children outranks both and is decided
+/// by the lineage.
+fn own_wait(agent: &SidebarAgentSnapshot, answering: bool) -> Option<AgentWait> {
+    if background_wait(agent) {
         Some(AgentWait::Background)
-    } else if agent.reply_wait {
+    } else if answering && quiet_itself(agent) {
         Some(AgentWait::Reply)
     } else {
         None
@@ -404,14 +458,6 @@ pub(crate) fn wake_vanished(agent: &SidebarAgentSnapshot) -> bool {
             .is_some_and(|facts| facts.wake_vanished)
 }
 
-/// Whether any live descendant is still busy: working, or holding a
-/// question, approval or error. A ready or finished child is quiet, and one
-/// whose activity Herdr cannot classify is not counted as busy, because a
-/// waiting state the projection cannot vouch for is not drawn (D-01).
-fn descendants_busy(counts: &crate::model::DescendantCountsSnapshot) -> bool {
-    counts.error + counts.approval + counts.question + counts.working > 0
-}
-
 /// What one descendant contributes to its ancestors' badges.
 #[derive(Clone, Copy)]
 enum DescendantState {
@@ -440,9 +486,9 @@ impl DescendantState {
 }
 
 /// The one state a descendant counts under: its demand first, then whether
-/// it is running, then whether it reported a completion. The order is the
-/// badge's own, worst first (PRD D-08).
-fn descendant_state(agent: &SidebarAgentSnapshot) -> DescendantState {
+/// it is running or waits on its own (`own_wait`), then whether it reported a
+/// completion. The order is the badge's own, worst first (PRD D-08).
+fn descendant_state(agent: &SidebarAgentSnapshot, own_wait: Option<AgentWait>) -> DescendantState {
     let (demand, activity, _) = axes_of(agent);
     match demand {
         AgentDemand::Error => DescendantState::Error,
@@ -450,7 +496,7 @@ fn descendant_state(agent: &SidebarAgentSnapshot) -> DescendantState {
         AgentDemand::Question => DescendantState::Question,
         AgentDemand::None => match activity {
             AgentActivity::Working => DescendantState::Working,
-            AgentActivity::Stopped if own_wait(agent).is_some() => DescendantState::Working,
+            AgentActivity::Stopped if own_wait.is_some() => DescendantState::Working,
             AgentActivity::Stopped if agent.completed => DescendantState::Done,
             AgentActivity::Stopped => DescendantState::Ready,
             AgentActivity::Unknown => DescendantState::Unknown,

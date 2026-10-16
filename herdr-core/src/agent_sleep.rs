@@ -699,7 +699,7 @@ mod tests {
             lineage_collapsed: false,
             sleep: None,
             row_facts: None,
-            reply_wait: false,
+            awaited_replies: Vec::new(),
             hide_ai: None,
             request: None,
         }

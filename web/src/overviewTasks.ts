@@ -177,6 +177,20 @@ export function cardItems(card: Pick<TaskCardScope, "checkouts">, project: Works
 }
 
 /** The card a task key is on, for the ways in that name an issue (D-31). */
+/** The fold a project's resting cards stand in until the operator opens it (B7). */
+export const restFold = (projectId: string) => `rest:${projectId}`;
+/** The fold a project's merged cards with a worktree still on disk stand in (B7). */
+export const cleanupFold = (projectId: string) => `cleanup:${projectId}`;
+
+/**
+ * The open folds with the one `card` stands in, so a card the Overview opens
+ * on (B59, a started item's card) is drawn selected rather than folded away.
+ */
+export function foldsShowing(open: readonly string[], card: Pick<TaskCardScope, "state">, projectId: string): readonly string[] {
+  const fold = card.state === "resting" ? restFold(projectId) : card.state === "cleanup" ? cleanupFold(projectId) : null;
+  return fold === null || open.includes(fold) ? open : [...open, fold];
+}
+
 export function cardOfItem(projects: readonly BoardProject[], key: string): { project: Workspace; card: TaskCardScope } | null {
   for (const { workspace } of projects) {
     for (const card of workspace.agent_scope.tasks?.cards ?? []) {

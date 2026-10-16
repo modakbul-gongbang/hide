@@ -442,7 +442,7 @@ When the compact form has no raised count, or no state counts are available, a t
 If the parent or a known descendant's device is not connected, the button shows a dim disconnected mark, keeping the last topology total and connection reason in its tooltip and accessible name, and suppresses state totals and the representative activity line until the connection returns.
 When there is no core band, the core-ranked lead child's existing line, or its title when no line exists, fills the remaining space.
 With no live children there is no tree button or child row, and no empty separator.
-The tree popover's `Overview에서 일감 보기` opens the Overview on the agent's device with the card of the task it belongs to selected and the agent's own record in the panel (PRD overview-device-tasks B59).
+The tree popover's `Overview에서 일감 보기` opens the Overview on the agent's device with the card of the task it belongs to selected and the agent's own record in the panel (PRD overview-device-tasks B59); a resting or cleanup card's fold opens with it, so the selected card is drawn.
 The zoom control names the panes it hides and unzooms the tab; the existing pane keyboard outline and focused-header wash remain.
 
 The core publishes at most one band: connection, terminal restoration failure or sleep first, own demand next, the lead raised descendant next, then task state.
@@ -501,9 +501,9 @@ The sidebar is one list of operator-owned roots under projects and checkouts, wi
 A root whose descendant is raised enters Needs You itself, at any depth, and the raised descendant never appears there on its own row; its second line is the verb and what to do, with no name, count, PR or path.
 What to do is the core's `detail`: the label's reply, else the first line of a native question waiting now in the agent's own words (up to 40 characters, `…` when cut), else the label's line, else the verb's own words (`답을 기다림`); a native question therefore reads as itself with Hide AI off and while the label still describes the turn's work ([status-model.md](status-model.md#the-second-line)).
 An idle or done parent still owns its children, and a closed pane or ended parent agent makes them orphan roots.
-A parent waiting on a working or asking descendant stays Working.
+A parent waiting on a working descendant stays Working; a descendant that asks waits on its parent, so the parent keeps its own state, unread because the ask is news to it ([status-model.md](status-model.md#a-quiet-row-that-waits)).
 A root with direct children has a chevron at its left and starts folded; the opened roots persist across launches and device reconnects.
-Folded, it wears its descendant mark, `! N` for raised descendants, and nothing when its descendants are working, idle or done: a parent waiting on its children already shows its blue ring and the working child's line, and the operator did not read a `● N` (PRD session-record-redesign D-04).
+Folded, it wears its descendant mark, `! N` for raised descendants, and nothing when its descendants are working, asking it, idle or done: a parent waiting on a working child already shows its blue ring and that child's line, a child's ask that is not raised already turns the parent unread, and the operator did not read a `● N` (PRD session-record-redesign D-04).
 The core still computes the working mark; no surface draws it.
 Opened, its children follow most urgent first, joined to it by rails, and a child with children has its own chevron; grandchildren are one step further in, and a grandchild with children opens the tree popover from its chevron.
 Past five siblings the rest wait behind `N개 더`, which opens them in place.
@@ -779,7 +779,7 @@ A fork is a root of its own and so a task of its own.
 Tasks has one section per project of the device, the projects with something that needs the operator first (B6).
 A section's head is the project's name, `일감 N` with `일하는 중 N` and, in the warning colour, `Needs You N`, then `백로그 N ›` while the project has open backlog items, which opens 백로그 on that project, and `열기 ↗`.
 `열기 ↗` closes the Overview, opens the project's most recent checkout and puts the lane on Work's Sessions list (B12).
-A section's cards stand in the order Needs You, blocked, working, waiting and done but not yet seen; resting tasks fold into `쉬는 일감 N ›`, and tasks whose pull requests all merged with a worktree still on disk into `정리할 것 N ›`, each opening in place and closing with `접기` (B7).
+A section's cards stand in the order Needs You, blocked, working, waiting and done but not yet seen; resting tasks fold into `쉬는 일감 N ›`, and tasks whose pull requests all merged with a worktree still on disk into `정리할 것 N ›`, each opening in place and closing with `접기` (B7); the Overview opened on a card in either (from a pane's tree or a started item) opens that fold too.
 A section with no task reads `진행 중인 일감 없음 · New agent`, and New agent opens the start panel.
 
 A card's first line is the root's status mark (and Hide AI's mark on a task Hide AI started), the task's title (the root session's label) and its age; while it asks, the question follows in at most two lines in the warning colour (B8).

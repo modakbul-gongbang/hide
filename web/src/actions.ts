@@ -34,7 +34,7 @@ import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { frontDeviceId, localDeviceId, railShown } from "./devices";
 import { registeredName } from "./screenMachine";
 import { allAgents, boardProjects, type OpenTarget } from "./navigation";
-import { cardOfItem, cardOfPane } from "./overviewTasks";
+import { cardOfItem, cardOfPane, foldsShowing } from "./overviewTasks";
 import { backlogIntent } from "./overviewBacklog";
 import { workKey } from "./sessionWork";
 import { expectSurface, type Surface } from "./recent";
@@ -1528,7 +1528,7 @@ export function createActions(send: DispatchFn) {
      */
     openBacklogItem(deviceId: string, projectId: string, taskKey: string) {
       const found = cardOfItem(boardProjects(rest(), useShellStore.getState().agents, deviceId), taskKey);
-      if (found) return this.openOverview(deviceId, { view: "tasks", panel: { kind: "task", root: found.card.root } });
+      if (found) return this.openOverview(deviceId, { view: "tasks", panel: { kind: "task", root: found.card.root }, open: foldsShowing(ui().overview.open, found.card, found.project.id) });
       this.openOverview(deviceId, { view: "backlog", projectId, panel: { kind: "item", workspaceId: projectId, taskKey } });
     },
 
@@ -1540,7 +1540,7 @@ export function createActions(send: DispatchFn) {
       const deviceId = remoteTargetOfPane(rest(), paneId) ?? localDeviceId(rest());
       const found = cardOfPane(boardProjects(rest(), useShellStore.getState().agents, deviceId), paneId);
       const panel: OverviewPanel | null = found ? { kind: "task", root: found.card.root, ...(found.card.root !== paneId ? { focus: paneId } : {}) } : null;
-      this.openOverview(deviceId, { view: "tasks", panel });
+      this.openOverview(deviceId, { view: "tasks", panel, ...(found ? { open: foldsShowing(ui().overview.open, found.card, found.project.id) } : {}) });
     },
 
     /**

@@ -2925,27 +2925,44 @@ impl Runtime {
         }
     }
 
-    /// Marks the rows whose session asked for a reply it still waits for. The
-    /// ledger is the only source of that fact, so it is laid here, before the
-    /// lineage counts a delegated child that waits as working.
-    fn lay_reply_waits(&self, agents: &mut [SidebarAgentSnapshot]) {
+    /// Lays on each row the answers its session still waits for and who
+    /// will give each. The ledger is the only source of that fact, so it is
+    /// laid here, before the lineage decides from the recipients whether an
+    /// answer is still being made (docs/status-model.md, A quiet row that
+    /// waits). A recipient the projection cannot vouch for is left out: a
+    /// code-owned one has no row, and one on a server that is not answering
+    /// (`unreachable`) shows a state that may no longer hold.
+    fn lay_awaited_replies(
+        &self,
+        agents: &mut [SidebarAgentSnapshot],
+        unreachable: &HashSet<String>,
+    ) {
         let ledger = self.delivery_ledger.as_ref().ok();
         let now = unix_milliseconds();
         for agent in agents {
-            // A turn the session began after the letter went out took the
-            // request up without the reply, so the wait is over.
-            let waits = ledger
-                .and_then(|ledger| {
-                    ledger.reply_awaited_since(
-                        &agent.pane_id,
-                        agent.lineage_session.as_deref(),
-                        now,
-                    )
+            let awaited = ledger
+                .map(|ledger| {
+                    ledger
+                        .awaited_answers(&agent.pane_id, agent.lineage_session.as_deref(), now)
+                        // A turn the session began after the letter went out
+                        // took the request up without the reply, so that
+                        // wait is over.
+                        .filter(|letter| {
+                            !crate::agent_state::escalation::took_up_request_after(
+                                agent,
+                                letter.created_at_unix_ms,
+                            ) && !letter.recipient.code_owned()
+                                && !unreachable.contains(&letter.recipient.pane_id)
+                        })
+                        .map(|letter| crate::model::AwaitedReply {
+                            recipient_pane_id: letter.recipient.pane_id.clone(),
+                            recipient_session: letter.recipient.session.clone(),
+                            taken_in: !letter.awaiting_intake(),
+                        })
+                        .collect()
                 })
-                .is_some_and(|at| {
-                    !crate::agent_state::escalation::took_up_request_after(agent, at)
-                });
-            agent.reply_wait = waits;
+                .unwrap_or_default();
+            agent.awaited_replies = awaited;
         }
     }
 
@@ -3083,16 +3100,10 @@ impl Runtime {
             }));
         }
         self.unresolved_machine_lineage = unresolved;
-        self.lay_reply_waits(&mut agents);
-        self.lay_hide_ai(&mut agents);
-        crate::agent_state::apply_lineage(
-            &mut agents,
-            &workspaces,
-            &self.snapshot.ui_state.expanded_agent_pane_ids,
-        );
         // A device that is not connected keeps its last session for the
-        // lineage above, but its rows are neither shown nor closable, so no
-        // close ever names them (PRD close-agent-subtree D-16).
+        // lineage below, but its rows are neither shown nor closable, so no
+        // close ever names them (PRD close-agent-subtree D-16), and nothing
+        // there is known to be making an answer.
         let unreachable = self
             .snapshot
             .status
@@ -3102,6 +3113,13 @@ impl Runtime {
             .filter_map(|remote| remote.session.as_ref())
             .flat_map(|session| session.agents.iter().map(|agent| agent.pane_id.clone()))
             .collect::<HashSet<_>>();
+        self.lay_awaited_replies(&mut agents, &unreachable);
+        self.lay_hide_ai(&mut agents);
+        crate::agent_state::apply_lineage(
+            &mut agents,
+            &workspaces,
+            &self.snapshot.ui_state.expanded_agent_pane_ids,
+        );
         if !unreachable.is_empty() {
             for agent in &mut agents {
                 agent

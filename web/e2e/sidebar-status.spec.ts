@@ -26,7 +26,8 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    const parentRow = page.locator(`nav[data-sidebar] [data-pane="${parent}"]`).first();
+    // The parent's row in its project's tree: once it is an unread finished root it also stands raised under Done.
+    const parentRow = page.locator(`nav[data-sidebar] [data-checkout-agents-open] [data-pane="${parent}"]`);
     const childRow = page.locator(`nav[data-sidebar] [data-pane="${child}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "children", { timeout: 20_000 });
     await expect(page.locator("[data-sidebar-mode]")).toHaveCount(0);
@@ -35,9 +36,10 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     await expect(parentRow.locator('[data-descendant-mark]')).toHaveCount(0);
     continueFixtureTranscript(herdr, childSession, { task: LONG_TITLE, reply: QUESTION, question: true });
     await setFixtureLifecycle(herdr, child, "idle");
-    // An ordinary question keeps the root waiting, never raised, and a quiet child adds no mark.
-    await expect(parentRow.locator("[data-descendant-mark]")).toHaveCount(0, { timeout: 20_000 });
-    await expect(parentRow).toHaveAttribute("data-waiting", "children");
+    // An ordinary question waits on the root, so the root stops waiting and keeps its own state, never raised, and a quiet child adds no mark.
+    await expect(parentRow).toHaveAttribute("data-waiting", "false", { timeout: 20_000 });
+    await expect(page.locator(`[data-raised-group="done"] [data-pane="${parent}"]`)).toBeVisible();
+    await expect(parentRow.locator("[data-descendant-mark]")).toHaveCount(0);
     await expect(page.locator('[data-raised-group="needs_you"]')).toHaveCount(0);
 
     // Right opens the root in place and Left folds it (B15).
@@ -79,7 +81,7 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     await expect(treeButton).toBeFocused();
     await treeButton.click();
     await screenshot(page, "sessions-pane-child-popover");
-    // B59: the Overview opens on the parent's task card, its record beside it; Escape closes the panel, then the Overview.
+    // B59: the Overview opens on the parent's task card, its record beside it, opening the resting fold the read parent's card stands in; Escape closes the panel, then the Overview.
     await tree.locator("[data-agent-tree-task]").click();
     const overview = page.getByRole("dialog", { name: "Overview", exact: true });
     await expect(overview).toBeVisible();
