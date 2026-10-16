@@ -46,11 +46,11 @@ test("one confirmed choice follows every window, persists, and resets to each sy
     await expect(left.locator("[data-interface-language]")).toHaveAttribute("data-interface-language", "system");
     // The answers are product copy, independent of the translation catalog.
     const keycaps = await left.locator(".sidebar-command-keycap").allTextContents();
-    for (const [language, heading, general, overview, tasks, close, change, clear, projectCommand, backlogCommand] of [
-      ["en", "Settings", "General", "Overview", "Tasks", "Close Overview", "Change the shortcut for Overview, now {chord}", "Clear the shortcut for Overview", "Focus sidebar", "Add to backlog"],
-      ["ko", "설정", "일반", "개요", "태스크", "개요 닫기", "개요 단축키 변경, 현재 {chord}", "개요 단축키 해제", "사이드바로 이동", "백로그에 추가"],
-      ["zh-CN", "设置", "常规", "概览", "任务", "关闭概览", "更改概览的快捷键，当前为 {chord}", "清除概览的快捷键", "聚焦侧边栏", "添加到待办"],
-      ["ja", "設定", "一般", "概要", "タスク", "概要を閉じる", "概要のショートカットを変更、現在 {chord}", "概要のショートカットを解除", "サイドバーへ移動", "バックログに追加"],
+    for (const [language, heading, general, overview, backlog, close, change, clear, projectCommand, backlogCommand] of [
+      ["en", "Settings", "General", "Overview", "Backlog", "Close Overview", "Change the shortcut for Overview, now {chord}", "Clear the shortcut for Overview", "Focus sidebar", "Add to backlog"],
+      ["ko", "설정", "일반", "개요", "백로그", "개요 닫기", "개요 단축키 변경, 현재 {chord}", "개요 단축키 해제", "사이드바로 이동", "백로그에 추가"],
+      ["zh-CN", "设置", "常规", "概览", "待办", "关闭概览", "更改概览的快捷键，当前为 {chord}", "清除概览的快捷键", "聚焦侧边栏", "添加到待办"],
+      ["ja", "設定", "一般", "概要", "バックログ", "概要を閉じる", "概要のショートカットを変更、現在 {chord}", "概要のショートカットを解除", "サイドバーへ移動", "バックログに追加"],
     ]) {
       await choose(left, language!);
       for (const page of [left, right]) {
@@ -77,8 +77,9 @@ test("one confirmed choice follows every window, persists, and resets to each sy
       // One device has no switch: the Overview is that device's.
       await expect(modal.getByRole("heading", { level: 1, name: overview!, exact: true })).toBeVisible();
       await expect(modal.locator("[data-overview-devices]")).toHaveCount(0);
-      await expect(modal.locator('[data-main-tab="tasks"]')).toHaveAttribute("aria-selected", "true");
-      await expect(modal.locator('[data-main-tab="tasks"]')).toContainText(tasks!);
+      // The Overview opens on its backlog (PRD sidebar-task-lens B38).
+      await expect(modal.locator('[data-main-tab="backlog"]')).toHaveAttribute("aria-selected", "true");
+      await expect(modal.locator('[data-main-tab="backlog"]')).toContainText(backlog!);
       await expect(modal.getByRole("button", { name: close!, exact: true })).toHaveText("Esc");
       await screenshot(left, `interface-${language}`);
       await left.keyboard.press("Escape");

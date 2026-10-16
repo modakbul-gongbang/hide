@@ -704,7 +704,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     open(&mut runtime, &checkout, &directory, "b.md");
     view_event(
         &mut runtime,
-        serde_json::json!({"tool": "work", "pinned": true, "lane_width": 444}),
+        serde_json::json!({"tool": "prs", "pinned": true, "lane_width": 444}),
     );
     let b = presentation(&runtime);
     focus_tab(&mut runtime, &checkout, &directory, TABS[0]);
@@ -717,7 +717,7 @@ fn each_tab_keeps_its_own_list_and_the_lane_stays_the_workspaces() {
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
         (view.tool, view.pinned, view.lane_width),
-        (Some(crate::workspace_views::Tool::Work), true, Some(444)),
+        (Some(crate::workspace_views::Tool::Prs), true, Some(444)),
         "the lane is the Workspace's, so another tab keeps it"
     );
     assert!(
@@ -877,6 +877,39 @@ fn first_background_view_leaves_the_closed_lane_closed() {
     assert_eq!(
         runtime.snapshot.workspace_view.as_ref().unwrap().tool,
         Some(crate::workspace_views::Tool::Files)
+    );
+}
+
+/// PRD right-lane B12: only the operator's close of the last view closes the
+/// lane. An agent's `hide view close` of it, from the front tab, leaves the
+/// lane on the files tool with the tree as it was, as an operator's close of
+/// the same view with the tree off would not.
+#[test]
+fn an_agent_closing_the_last_view_leaves_the_lane_open() {
+    let (mut runtime, checkout, directory) = setup("agent-close-lane");
+    let lane = |runtime: &Runtime| {
+        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+        (view.tool, view.tree, view.layout.display_count)
+    };
+    open(&mut runtime, &checkout, &directory, "a.md");
+    let a = display_id(&runtime, &directory, "a.md");
+    assert_eq!(
+        lane(&runtime),
+        (Some(crate::workspace_views::Tool::Files), false, 1)
+    );
+    control(
+        &mut runtime,
+        "w-order:t1:p",
+        Action::Close {
+            view_id: a,
+            expected_browser_area: None,
+        },
+        "agent-close",
+    );
+    runtime.sync_workspace_view();
+    assert_eq!(
+        lane(&runtime),
+        (Some(crate::workspace_views::Tool::Files), false, 0)
     );
 }
 

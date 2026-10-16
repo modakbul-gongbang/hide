@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { continueFixtureTranscript, setFixtureLifecycle, startHerdr } from "../../web/e2e/herdr-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "../../web/e2e/session-work-fixture";
 import { chord } from "../../web/e2e/chords";
-import { enterWorkspace, showTool } from "../../web/e2e/wire";
+import { enterWorkspace, openTaskFolds, showTool, taskRow } from "../../web/e2e/wire";
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
 import { captureElectronWindow } from "./electron-window";
 
@@ -24,19 +24,29 @@ test("@platform session work records, missed lines, ended work and search render
     await fitWindow(app, { width: 1440, height: 1000 });
     await workRepositoryReady(run.env.HIDE_STATE_DIR!);
     await enterWorkspace(page, "fixture");
-    // Sessions pinned, so the lane stays docked through the sheets below (PRD right-lane B5).
-    await showTool(page, "work");
+    // The lane pinned, so the 보기 slot stays docked through the sheets below (PRD right-lane B5).
+    await showTool(page, "files");
     await page.locator('[data-lane-pin="off"]').click();
     const first = Date.now();
     github.clock(first, first);
     const { session, child } = seedFirstWork(herdr, first);
-    const root = page.locator(`[data-session-row="${herdr.panes[0]}"]`);
-    await expect(root).toContainText(FIRST_GOAL, { timeout: 45_000 });
+    const root = await taskRow(page, herdr.panes[0], FIRST_GOAL);
+    const tasks = page.locator("[data-task-lens]");
     await root.hover();
-    await page.locator(`[data-session-record-button="${herdr.panes[0]}"]`).click();
-    const record = page.locator('[data-session-record]');
+    await page.locator(`[data-task-record="${herdr.panes[0]}"]`).click();
+    // The record opens in the lane's 보기 slot (PRD sidebar-task-lens B15).
+    const record = page.locator('aside[data-lane="detail"][data-detail="record"] [data-session-record="lane"]');
     await expect(record.locator('[data-record-work]').first().locator('[data-record-task]')).toHaveCount(1, { timeout: 45_000 });
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(2, { timeout: 45_000 });
+    // The rail keeps a fifth button for the slot: pressed while the lane draws it, kept when a tool is called, and pressing it comes back (B46).
+    const slotButton = page.locator('[data-lane-tool="detail"][data-detail-slot="record"]');
+    await expect(slotButton).toHaveAttribute("aria-pressed", "true");
+    await page.locator('[data-lane-tool="files"]').click();
+    await expect(record).toHaveCount(0);
+    await expect(slotButton).toHaveAttribute("aria-pressed", "false");
+    await slotButton.click();
+    await expect(record).toBeVisible();
+    await expect(slotButton).toHaveAttribute("aria-pressed", "true");
     await page.locator(`[data-pane-view="${herdr.panes[0]}"] .xterm-helper-textarea`).focus();
     await page.keyboard.type(NEXT_GOAL);
     await page.keyboard.press("Enter");
@@ -97,13 +107,13 @@ test("@platform session work records, missed lines, ended work and search render
       await page.locator('[data-ai-agent-summary="false"]').click();
       await page.keyboard.press("Escape");
     }
-    await record.getByRole("button", { name: "Sessions로 돌아가기" }).click();
+    // Resolve from the row's ⋯ menu puts the task under 쉬는 중 once it is saved (B18).
     await root.hover();
-    await root.locator('[data-session-resolve]').click();
-    // Open missed work of live and ended sessions alike gathers in the group at the top.
-    const ended = page.locator('[data-open-missed]');
-    await expect(ended).toBeVisible({ timeout: 30_000 });
-    await ended.locator('summary').click();
+    await page.locator(`[data-task-more="${herdr.panes[0]}"]`).click();
+    await page.locator('[data-task-menu-item="resolve"]').click();
+    await expect(tasks.locator('[data-task-fold="rest"]')).toBeVisible({ timeout: 30_000 });
+    await openTaskFolds(page);
+    await expect(root).toHaveAttribute("data-task-state", "resting");
     for (const theme of ["light", "dark"] as const) {
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="general"]').click();

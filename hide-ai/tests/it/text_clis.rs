@@ -128,6 +128,7 @@ fn request() -> AiRequest {
         schema_version: "fixture.v1".into(),
         pick: None,
         output_language: Some(OutputLanguage::Korean),
+        answer: hide_ai::AnswerMode::default(),
     }
 }
 

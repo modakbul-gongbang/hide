@@ -33,6 +33,10 @@ pub struct AiLogEvent {
     pub input_chars: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub output_tokens: Option<u64>,
+    /// Thinking tokens inside `output_tokens`, present only when the provider
+    /// reported some.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thinking_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<u8>,
     #[serde(
@@ -67,6 +71,7 @@ impl AiLogEvent {
             duration_ms: None,
             input_chars: None,
             output_tokens: None,
+            thinking_tokens: None,
             attempt: None,
             schema_version: None,
             app_server_pid: None,

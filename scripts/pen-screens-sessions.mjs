@@ -1,18 +1,13 @@
-// The Sessions panel and pane header (PRD agent-hierarchy-screens D-14 to
-// D-24, D-37 to D-43; the approved Pen round 2, D-44). Controls are refs of the
-// existing System masters supplied by pen-screens, and the verb, descendant
+// The pane header (PRD agent-hierarchy-screens D-14 to D-24, D-37 to D-43;
+// the approved Pen round 2, D-44). The Sessions panel it once sat beside is
+// retired: a device's tasks are the sidebar's 태스크 list (PRD
+// sidebar-task-lens D-16), drawn in the Task lens sheets. Controls are refs
+// of the existing System masters supplied by pen-screens, and the verb, descendant
 // mark, tree button and PR mark are refs of Component / Agent tree parts.
 import {AGENT_TREE_MASTERS, PR_STATES} from './pen-agent-tree.mjs';
-import {num} from './pen-system.mjs';
-export function sessionScreens(tokens, {frame, text, icon, themedXref, screenButton, screenBadge, screenIconButton}) {
-  // A row leads with its status mark alone (PRD agent-mark-quiet D-01): its second line starts under the title, one gap after the mark.
-  const detailIndent = num(tokens, '--size-agent-mark') + 6;
+export function sessionScreens(tokens, {frame, text, icon, themedXref, screenButton}) {
   const caption = (id, value, fill = '$--muted-foreground', extra = {}) => text(id, value, {size:'$--text-caption', fill, ...extra});
   const verb = (id, word) => themedXref(id, 'ath-verb', word, {}, {'ath-verb-t': {content: word}});
-  const descendantMark = (id, kind, count) => themedXref(id, 'ath-mark', 'Descendant mark', {}, {
-    'ath-mark-bang': {enabled: kind === 'raised'}, 'ath-mark-dot': {enabled: kind === 'working'},
-    'ath-mark-n': {content: String(count), fill: kind === 'raised' ? '$--warning' : '$--agent-working'},
-  });
   const provider = (id, kind = 'claude') => frame(id, 'Provider', {width:14,height:14,fill:{type:'image',enabled:true,url:`../web/src/assets/agent-${kind}.png`,mode:'contain'}}, []);
   // The PR mark (web/src/components/pr-mark.tsx), a ref of Component / Agent tree parts: the state's icon and colour and `#number` for one PR, and for several, an agent's own or a root's family, each state's icon and count in its colour, worst first.
   const prPart = (id, state, content, tinted) => {
@@ -22,105 +17,6 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
   const prChip = (id, {number, state, counts}) => counts
     ? frame(id, `PR ${counts.reduce((sum, [, count]) => sum + count, 0)}`, {layout:'horizontal', gap:'$--spacing-xs', alignItems:'center', width:'fit_content'}, counts.map(([key, count]) => prPart(`${id}-${key}`, key, String(count), true)))
     : prPart(id, state, `#${number}`, false);
-  const chevron = (id, open) => frame(id, 'Chevron lane', {width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, open === null ? [] : [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})]);
-
-  // A Sessions row (B30, B31): mark, provider, title, the folded raised mark
-  // (`! N`; working descendants draw nothing), PR mark and the age; a parent
-  // counts the distinct PRs in its tree. Open missed work is not on the row.
-  // The second line is the ask for Needs You and
-  // otherwise the label line, absent when there is none. A child row steps one
-  // indent per level down to the third (`rails` says which ancestor levels run
-  // on past it); a deeper one (`chain`) keeps the third level's column and
-  // hangs from its parent's chevron lane. A child in another checkout than its
-  // parent has a separate branch metadata line, below its progress or ask.
-  const RAIL = '$--lineage-rail';
-  const rail = (id, x, y, width, height) => frame(id, 'Rail', {x, y, width, height, fill: RAIL}, []);
-  const rowHeight = spec => 28 + (spec.ask || spec.line ? 18 : 0) + (spec.branch ? 18 : 0);
-  const columns = (id, spec) => {
-    if (!spec.depth) return [];
-    const height = rowHeight(spec);
-    const ancestors = (spec.rails ?? []).map((on, index) => frame(`${id}-a${index}`, 'Ancestor rail', {layout:'none',width:18,height}, on ? [rail(`${id}-a${index}-r`, 8, 0, 1, height)] : []));
-    const last = spec.chain
-      ? frame(`${id}-pass`, 'Pass rail', {layout:'none',width:18,height}, spec.chain.pass ? [rail(`${id}-pass-r`, 8, 0, 1, height)] : [])
-      : frame(`${id}-elbow`, 'Elbow', {layout:'none',width:18,height}, [rail(`${id}-ev`, 8, 0, 1, spec.last ? 13 : height), rail(`${id}-eh`, 8, 13, 10, 1)]);
-    return [...ancestors, last];
-  };
-  const lane = (id, spec) => {
-    const height = rowHeight(spec);
-    const open = spec.open ?? null;
-    return frame(`${id}-chev`, 'Chevron lane', {layout:'none',width:16,height}, [
-      ...(spec.chain ? [rail(`${id}-in`, 8, 0, 1, open === null ? 13 : 4)] : []),
-      ...(spec.chain && open === null ? [rail(`${id}-hang`, 8, 13, 6, 1)] : spec.depth && open === null ? [rail(`${id}-hang`, 0, 13, 14, 1)] : []),
-      ...(open === null ? [] : [frame(`${id}-btn`, 'Chevron', {x:0,y:4,width:16,height:20,layout:'horizontal',justifyContent:'center',alignItems:'center'}, [icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size:12,fill:'$--muted-foreground'})])]),
-      ...(open || spec.chain?.on ? [rail(`${id}-out`, 8, open === null ? 13 : 22, 1, height - (open === null ? 13 : 22))] : []),
-    ]);
-  };
-  const row = (id, spec, width) => frame(id, spec.title, {width, layout:'horizontal', alignItems:'start', padding:[0,8,0,spec.depth ? 0 : 4], cornerRadius:'$--radius-xs', ...(spec.selected ? {fill:'$--color-selected'} : {})}, [
-    ...columns(id, spec),
-    lane(id, spec),
-    frame(`${id}-body`, 'Lines', {width:'fill_container', layout:'vertical', gap:2, padding:[4,0,4,4]}, [
-      frame(`${id}-head`, 'Line one', {width:'fill_container',height:20,layout:'horizontal',gap:6,alignItems:'center'}, [
-        caption(`${id}-mark`, spec.mark ?? '●', spec.tone ?? '$--agent-working', {mono:true,weight:'600'}),
-        caption(`${id}-title`, spec.title, spec.depth && !spec.selected && !spec.ask ? '$--subtle-foreground' : '$--foreground', {width:'fill_container',weight: spec.depth ? '400' : '500'}),
-        ...(spec.desc ? [descendantMark(`${id}-desc`, spec.desc[0], spec.desc[1])] : []),
-        ...(spec.pr ? [prChip(`${id}-pr`, spec.pr)] : []),
-        caption(`${id}-age`, spec.age ?? '3m', '$--muted-foreground', {mono:true}),
-      ]),
-      ...(spec.ask ? [frame(`${id}-ask`, 'Ask', {width:'fill_container',height:16,layout:'horizontal',gap:4,padding:[0,0,0,detailIndent],alignItems:'center'}, [verb(`${id}-verb`, spec.ask[0]), text(`${id}-what`, spec.ask[1], {size:'$--text-micro', fill:'$--warning', width:'fill_container'})])]
-        : spec.line ? [frame(`${id}-two`, 'Progress', {width:'fill_container',height:16,layout:'horizontal',padding:[0,0,0,detailIndent],alignItems:'center'}, [text(`${id}-line`, spec.line, {size:'$--text-micro', fill:'$--subtle-foreground', width:'fill_container'})])] : []),
-      ...(spec.branch ? [frame(`${id}-metadata`, 'Branch metadata', {width:'fill_container',height:16,layout:'horizontal',gap:4,padding:[0,0,0,detailIndent],alignItems:'center'}, [
-        icon(`${id}-branch-g`, 'git-branch', {size:12,fill:'$--muted-foreground'}),
-        text(`${id}-branch`, spec.branch, {size:'$--text-micro', fill:'$--muted-foreground', mono:true, width:'fill_container'}),
-      ])] : []),
-    ]),
-  ]);
-  function panel(suffix, width=420, id=`sfu-panel-${suffix}`) {
-    const group=(key,title,rows,{folded=false,count}={})=>frame(`${id}-${key}`,title,{width:'fill_container',layout:'vertical',gap:0},[
-      frame(`${id}-${key}-heading`,'Group heading',{width:'fill_container',height:32,layout:'horizontal',gap:6,alignItems:'center',padding:[0,12]},[
-        ...(folded?[icon(`${id}-${key}-fold`,'chevron-right',{size:12,fill:'$--muted-foreground'})]:[]),
-        caption(`${id}-${key}-label`,title,key==='needs'?'$--warning':'$--subtle-foreground',{weight:'500'}),
-        caption(`${id}-${key}-group-count`,String(count ?? rows.length)),
-      ]),
-      ...(folded?[]:rows.map((spec,index)=>row(`${id}-${key}-${index}`,spec,width))),
-    ]);
-    return frame(id,'Sessions panel',{width,height:760,layout:'vertical',gap:8,fill:'$--card',stroke:'$--border',strokeWidth:1,strokeAlignment:'inner',clip:true},[
-      frame(`${id}-tabs`,'Tools tabs',{width:'fill_container',height:32,layout:'horizontal',gap:12,padding:[0,12],alignItems:'center'},[
-        caption(`${id}-tab-sessions`,'세션','$--foreground',{weight:'600'}),caption(`${id}-tab-explorer`,'Explorer'),caption(`${id}-tab-history`,'History'),
-      ]),
-      frame(`${id}-scope`,'Project and checkout scope',{width:'fill_container',layout:'horizontal',gap:8,padding:[8,12],alignItems:'center'},[
-        caption(`${id}-project`,'hide','$--foreground',{weight:'600',width:'fill_container'}),
-        screenBadge(`${id}-all`,'모든 체크아웃'),screenBadge(`${id}-front`,'main만',{variant:'outline'}),
-      ]),
-      // Open missed work of every session in scope, live or ended, folded above the groups.
-      frame(`${id}-missed`,'Missed work',{width:'fill_container',height:32,layout:'horizontal',gap:6,alignItems:'center',padding:[0,12],stroke:'$--border',strokeWidth:{bottom:1},strokeAlignment:'inner'},[
-        icon(`${id}-missed-g`,'flag',{size:12,fill:'$--warning'}),caption(`${id}-missed-t`,'놓친 일 5','$--warning'),
-      ]),
-      group('needs','Needs You',[
-        {title:'hide 에이전트 지원 PR 묶음 머지 조율',mark:'!',tone:'$--warning',open:false,age:'12m',ask:['승인','e2e 테스트 돌리던 중']},
-      ]),
-      group('working','Working',[
-        {title:'공통 후보 전체 검증과 PR 제출',open:false,desc:['raised',1],pr:{counts:[['failed',1],['mergeable',1]]},age:'4h',line:'sealed verify 다시 돌리는 중'},
-        {title:'Mac mini 연동 5단계 순차 구현',mark:'○',open:true,pr:{number:1188,state:'pending'},age:'2m',line:'4단계 리뷰 지적 수정 중'},
-        {title:'Implementor',depth:1,open:true,pr:{number:1188,state:'pending'},age:'2m',branch:'feat/core-host-node-layer5',line:'NodeLink 호출 옮기는 중'},
-        {title:'테스트 작성',depth:2,rails:[true],last:true,open:true,age:'1m',line:'e2e 스펙 두 개 추가 중'},
-        {title:'fixture 정리',depth:3,rails:[true,false],last:true,open:true,age:'40s',branch:'fix/e2e-fixture-home-isolation',line:'HOME 격리 옮기는 중'},
-        {title:'로그 확인',depth:4,rails:[true,false],chain:{pass:false,on:false},mark:'○',tone:'$--muted-foreground',age:'5m',selected:true},
-        {title:'사전 리뷰',depth:1,last:true,mark:'○',tone:'$--muted-foreground',age:'40m',branch:'layer5'},
-        {title:'에이전트 패널 표시 규칙과 UI 구조 정리안',age:'38s',line:'Sessions 분류 리뷰 3건을 v3에 반영 중'},
-      ],{count:3}),
-      group('done','Done',[
-        {title:'Factory 워커 시작 지연 수정',mark:'✓',tone:'$--success',pr:{number:872,state:'pending'},age:'6m',line:'진단 로그 추가하고 PR 올림'},
-      ]),
-      group('idle','Idle',[
-        {title:'P8 읽기 전용 준비 계획',mark:'◐',tone:'$--warning',pr:{number:809,state:'failed'},age:'19h',line:'Grok 훅 연결 마무리 남음'},
-        {title:'에이전트 막힘 상태 PRD',mark:'○',tone:'$--muted-foreground',pr:{number:861,state:'failed'},age:'3h'},
-        {title:'세션 읽기 큰 레코드 건너뛰기',mark:'○',tone:'$--muted-foreground',pr:{number:869,state:'mergeable'},age:'2h'},
-        {title:'코어 호스트 노드 이동 설계 문서',mark:'○',tone:'$--muted-foreground',age:'1d'},
-        {title:'Memory 기능 PRD 초안',mark:'○',tone:'$--muted-foreground',age:'1d'},
-      ]),
-      group('resolved','Resolved',[],{folded:true,count:7}),
-    ]);
-  }
 
   // A pane: its header (the ancestor path, the marks and title, the fork mark of
   // a pane Fork agent made, which is a root and has no path, the own PR chip,
@@ -186,5 +82,5 @@ export function sessionScreens(tokens, {frame, text, icon, themedXref, screenBut
       caption(`${id}-rule`,'승인은 label 줄이 없으면 "권한 요청에서 멈춤". 답변의 대기는 부모가 못 받은 시간. 초안은 초안이 걸린 부모를 연다. 띠는 PTY 크기를 바꾸지 않는다.'),
     ]);
   }
-  return {panel,headerBoard};
+  return {headerBoard};
 }

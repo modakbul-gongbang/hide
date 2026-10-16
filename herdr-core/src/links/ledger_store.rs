@@ -1386,9 +1386,14 @@ impl LinkStore {
         // The same descendant-to-spawn-turn attribution decides both the
         // visible verdict and which tasks a later turn may continue.
         let record = self.record_tree(session, &mut BTreeSet::new(), 0, &mut 0, false)?;
+        let (mut finished_tasks, open_tasks): (Vec<_>, Vec<_>) =
+            record.tasks.into_iter().partition(|task| task.done);
+        finished_tasks.sort_by_key(|task| std::cmp::Reverse(task.last_at_unix_ms));
+        finished_tasks.truncate(FINISHED_TASKS_IN_CONTEXT);
         Ok(LedgerContext {
             parent_name,
-            open_tasks: record.tasks.into_iter().filter(|task| !task.done).collect(),
+            open_tasks,
+            finished_tasks,
             open_missed: record
                 .missed
                 .into_iter()

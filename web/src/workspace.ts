@@ -5,20 +5,28 @@
 // strip); these functions only read them, so they are testable without a
 // page. The View areas' own rules are `viewLayout.ts`.
 
-import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
+import type { Checkout, DetailSlot, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
 export { TOOLS, type Tool } from "./laneTools";
 import type { Tool } from "./laneTools";
 
-/** What a tool is about: the Project (Work, Memory) or the front checkout (Files, Changes). The rail and the lane header draw it (PRD work-tab-pr-lens D-37). */
+/** What a tool is about: the Project (Memory, PRs) or the front checkout (Files, Changes). The rail and the lane header draw it (PRD work-tab-pr-lens D-37). */
 export type ToolScope = "project" | "checkout";
-export const TOOL_SCOPES: Record<Tool, ToolScope> = { work: "project", memory: "project", files: "checkout", changes: "checkout" };
+export const TOOL_SCOPES: Record<Tool, ToolScope> = { memory: "project", prs: "project", files: "checkout", changes: "checkout" };
 
-/** Which basis the Work tool draws (PRD work-tab-pr-lens D-01). */
-export type WorkLens = "sessions" | "prs";
+/** The PRs tool's scope chip, kept per Workspace (PRD sidebar-task-lens D-31). `only_checkout` is the front checkout only. */
+export type PrsView = { only_checkout: boolean };
 
-/** The Work tool's basis and scope chip, kept per Workspace (B2). `only_checkout` is the front checkout only. */
-export type WorkView = { lens: WorkLens; only_checkout: boolean };
+/**
+ * What the lane draws (PRD sidebar-task-lens D-50): the 보기 slot while the
+ * core says it is shown and holds something, else the Workspace's tool.
+ */
+export type LaneTool = Tool | "detail";
+
+export function laneToolOf(view: Pick<WorkspaceView, "tool"> | null, detail: DetailSlot | null | undefined): LaneTool | null {
+  if (detail?.shown && detail.items.length > 0) return "detail";
+  return view?.tool ?? null;
+}
 
 /** The front Workspace's presentation as the core published it. */
 export type WorkspaceView = {
@@ -28,8 +36,8 @@ export type WorkspaceView = {
   tool: Tool | null;
   /** The tool the lane last showed, kept while it is closed; null when it never showed one. */
   last_tool: Tool | null;
-  /** The Work tool's basis and scope. */
-  work: WorkView;
+  /** The PRs tool's scope chip. */
+  prs: PrsView;
   /** Whether the lane is pinned beside Agent Views rather than drawn over it (D-03). */
   pinned: boolean;
   /** Whether the files tool shows its tree column (D-05); with no view open the tree shows anyway. */
@@ -98,7 +106,7 @@ export type LaneFrame = {
 
 /** What `laneFrame` reads: the core's lane and this page's own facts. */
 export type LaneInput = {
-  tool: Tool | null;
+  tool: LaneTool | null;
   pinned: boolean;
   tree: boolean;
   laneWidth: number | null;

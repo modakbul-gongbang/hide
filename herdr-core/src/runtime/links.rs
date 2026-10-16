@@ -943,7 +943,7 @@ pub(super) fn associate_landed(
 }
 
 /// Attaches to each pull request the sessions the link record says made or
-/// worked on it and the checkouts they ran in: what the Work tab's PRs list
+/// worked on it and the checkouts they ran in: what the PRs tool's list
 /// reads to find a pull request's live agents (PRD work-tab-pr-lens D-09).
 pub(super) fn associate_pr_sessions(
     pull_requests: &mut [crate::model::PullRequestSnapshot],

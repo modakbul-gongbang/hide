@@ -18,7 +18,7 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v12";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v13";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -104,7 +104,9 @@ fn end_prompt(limits: LabelLimits) -> String {
         "work is {\"task\":{\"kind\":\"new\",\"name\":\"task name\"}|{\"kind\":\"continue\",\"ids\":[\"task-id\"]}|{\"kind\":\"none\"},\"missed\":[],\"resolved\":[],\"output_task_id\":null}. ",
         "Judge this human request as a task only when <work-author>true</work-author>: it is the request of the operator or of the parent that delegated the session, and letters from other agents are excluded. ",
         "If a concrete new deliverable was asked for, new with a task name of at most 80 characters; if it continues existing work in <open-tasks>, continue with at most 2 real IDs; questions, explanations and progress checks are none. ",
-        "If work-author is false, task is none. Verifying, fixing bugs in, merging or installing the same work continues the existing task. ",
+        "<finished-tasks> are the newest finished tasks. A request that orders the agent to carry out the work of one of them again (run it again, redo, measure again, reinstall) is a task, never none: continue with that task's real ID, which reopens it. ",
+        "A remark, a complaint, a doubt (\"this is confusing\", \"still slow\"), a question, an opinion, a proposal to discuss, an approval or a progress check is none even when it is about a finished task, and a different deliverable is new. ",
+        "If work-author is false, task is none. Verifying, fixing bugs in, merging or installing the same work continues the existing task, open or finished. ",
         "Put in missed only work outside the assigned work that nobody will take on once this session is closed. ",
         "problem is a breakage the agent reported finding somewhere unrelated to the assigned work; follow_up is a separate task or issue the agent proposed, making a deliverable other than the assigned one (another feature, fix or document), that nobody has taken yet. ",
         "Even when the agent calls it a follow-up, remaining work or a limitation, measuring, checking or verifying the assigned work's result again in the real app, in another environment or before release, the remaining part of the assigned work itself, and merging, installing, deploying or replacing the app are not missed, because the task judgment and PR and CI already own them. ",
@@ -112,7 +114,7 @@ fn end_prompt(limits: LabelLimits) -> String {
         "Each item is {\"kind\":\"problem|follow_up\",\"text\":\"one line of at most 80 characters\"}, at most 3 per turn. An optional offer to do something if wanted is not missed work. ",
         "If the turn reported actually handling an item of <open-missed>, put it in resolved as {\"id\":\"real ID\",\"issue_number\":null or a number}, and do not repeat in missed an item not handled yet. ",
         "output_task_id is the one real task ID the deliverable belongs to when this turn continued two tasks, and null without grounds. ",
-        "Decide end from the whole last answer, and use open-tasks and open-missed only for the IDs in work. ",
+        "Decide end from the whole last answer, and use open-tasks, finished-tasks and open-missed only for the IDs in work. ",
         "A sentence asking the user for a specific approval, choice or information is question (1) even when it concerns a separate later decision rather than the progress of the main work. ",
         "Copying that request into missed and setting end to waiting is wrong. If it also reported waiting on CI or a build, question comes first and line states the decision the user is to make. ",
         DATA,
@@ -191,6 +193,7 @@ pub(crate) fn request(
         schema_version: SCHEMA_VERSION.into(),
         pick: None,
         output_language: Some(language),
+        answer: hide_ai::AnswerMode::PlainJson,
     }
 }
 

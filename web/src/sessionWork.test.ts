@@ -8,11 +8,10 @@ const work = (id: string, cwd: string, items: MissedWork[]): SessionWorkSummary 
   cwd, ended_at_unix_ms: null, open_missed: items.filter((item) => item.status === "open").length, subtree_open_missed: 0, missed: items,
 });
 
-it("collects every open missed item in scope, of live and ended sessions alike, newest first", () => {
+it("collects every open missed item, of live and ended sessions alike, newest first", () => {
   const rows = [work("live", "/repo", [missed("a", 1), missed("handled", 9, "resolved")]), work("ended", "/repo/sub", [missed("b", 3)]), work("elsewhere", "/other", [missed("c", 5)])];
-  expect(openMissedWork(rows, null).map(({ item }) => item.id)).toEqual(["c", "b", "a"]);
-  expect(openMissedWork(rows, "/repo").map(({ item }) => item.id)).toEqual(["b", "a"]);
-  expect(openMissedWork([work("none", "/repo", [missed("done", 1, "dismissed")])], null)).toEqual([]);
+  expect(openMissedWork(rows).map(({ item }) => item.id)).toEqual(["c", "b", "a"]);
+  expect(openMissedWork([work("none", "/repo", [missed("done", 1, "dismissed")])])).toEqual([]);
 });
 
 it("titles a record by its manual name, else the model's goal or the native name", () => {

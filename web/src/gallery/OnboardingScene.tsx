@@ -231,7 +231,7 @@ export function OnboardingScene({ theme, state, system, language, scale, page = 
   useMemo(() => {
     window.hideHost = sceneHost(system, permissionOf(state, system), update);
     useShellStore.setState({ connection: "live", rest: sceneRest(state, system), agents: [], revision: 1, mobile: SCENE_MOBILE } as never);
-    useUiStore.setState({ screen: { kind: "main" }, overviewOpen: false } as never);
+    useUiStore.setState({ screen: { kind: "main" }, overviewOpen: false, mainView: "backlog" } as never);
   }, [state, system, update]);
 
   // Set once the presses below have landed and a frame has drawn them, so a capture waits for it.

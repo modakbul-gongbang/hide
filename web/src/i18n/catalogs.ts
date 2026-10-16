@@ -2,6 +2,7 @@ import { projectSettingsCatalogs, projectSettingsEnglish } from "./resources/pro
 import { usageCatalogs, usageEnglish } from "./resources/usage";
 import { commandsCatalogs, commandsEnglish } from "./resources/commands";
 import { agentSessionsCatalogs, agentSessionsEnglish } from "./resources/agentSessions";
+import { taskLensCatalogs, taskLensEnglish } from "./resources/taskLens";
 import { boardCatalogs, boardEnglish } from "./resources/board";
 import { cleanupCatalogs, cleanupEnglish } from "./resources/cleanup";
 import { commonCatalogs, commonEnglish } from "./resources/common";
@@ -43,6 +44,7 @@ export const english = {
   ...sessionWorkEnglish,
   ...deviceOverviewEnglish,
   ...agentSessionsEnglish,
+  ...taskLensEnglish,
   ...shellEnglish,
   ...editorSearchEnglish,
   ...documentsEnglish,
@@ -89,6 +91,7 @@ export const catalogs = {
     ...sessionWorkCatalogs.ko,
     ...deviceOverviewCatalogs.ko,
     ...agentSessionsCatalogs.ko,
+    ...taskLensCatalogs.ko,
     ...shellCatalogs.ko,
     ...editorSearchCatalogs.ko,
     ...documentsCatalogs.ko,
@@ -130,6 +133,7 @@ export const catalogs = {
     ...sessionWorkCatalogs["zh-CN"],
     ...deviceOverviewCatalogs["zh-CN"],
     ...agentSessionsCatalogs["zh-CN"],
+    ...taskLensCatalogs["zh-CN"],
     ...shellCatalogs["zh-CN"],
     ...editorSearchCatalogs["zh-CN"],
     ...documentsCatalogs["zh-CN"],
@@ -171,6 +175,7 @@ export const catalogs = {
     ...sessionWorkCatalogs.ja,
     ...deviceOverviewCatalogs.ja,
     ...agentSessionsCatalogs.ja,
+    ...taskLensCatalogs.ja,
     ...shellCatalogs.ja,
     ...editorSearchCatalogs.ja,
     ...documentsCatalogs.ja,

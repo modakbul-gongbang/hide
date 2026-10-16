@@ -7,7 +7,7 @@
 import { expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
-import { enterWorkspace, screenshot, showTool } from "../../web/e2e/wire";
+import { enterWorkspace, screenshot } from "../../web/e2e/wire";
 import { hostLog, isolate, launchShell, test, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
@@ -50,8 +50,6 @@ test("⌥ shows the logos with the keycaps while hidden, and a key, a blur or th
   await page.locator("[data-pane-view] .xterm-helper-textarea").first().focus();
   const rows = page.locator("nav[data-sidebar] li[data-pane]");
   const logos = page.locator("nav[data-sidebar] li[data-pane] [data-agent-mark], [data-tab] [data-agent-mark]");
-  await showTool(page, "work");
-  const sessionLogos = page.locator("aside[data-lane] [data-session-focus] [data-agent-mark]");
   await expect(rows).toHaveCount(2);
   await expect(logos).toHaveCount(0);
   const kept = [rows.first(), rows.first().locator("[data-agent-title]"), rows.nth(1)];
@@ -63,13 +61,11 @@ test("⌥ shows the logos with the keycaps while hidden, and a key, a blur or th
   await expect(page.locator("nav[data-sidebar] [data-keycap]")).toHaveCount(2);
   await expect(rows.locator("[data-agent-mark]")).toHaveCount(2);
   await expect(page.locator("[data-tab] [data-agent-mark]").first()).toBeVisible();
-  await expect(sessionLogos.first()).toBeVisible();
   await screenshot(page, "logo-peek-held");
   const heights = (await boxes(kept)).map((box) => box.split(",")[2]);
   expect(heights).toEqual(before.map((box) => box.split(",")[2]));
   await page.keyboard.up("Alt");
   await expect(logos).toHaveCount(0);
-  await expect(sessionLogos).toHaveCount(0);
   await expect(page.locator("[data-keycap]")).toHaveCount(0);
   expect(await boxes(kept)).toEqual(before);
 

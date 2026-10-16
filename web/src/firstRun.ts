@@ -160,13 +160,5 @@ export function notificationState(enabled: boolean, permission: NotificationPerm
 /** How often a screen showing the permission reads it again, so a change in System Settings shows within seconds (B16). */
 export const PERMISSION_POLL_MS = 2000;
 
-/** The empty Home (D-16): no project yet, projects but no agent, or the graph whenever it has an agent to draw (B29). */
-export type EmptyHome = "no_project" | "no_agent" | null;
-
-export function emptyHome(projects: number, agents: number): EmptyHome {
-  if (agents > 0) return null;
-  return projects === 0 ? "no_project" : "no_agent";
-}
-
 /** The id a notification about an agent carries, so its click and its withdrawal find it again. */
 export const AGENT_NOTICE_PREFIX = "agent:";

@@ -659,7 +659,7 @@ fn a_merged_pull_requests_card_reads_but_cannot_be_written() {
 }
 
 /// B44: checks running on a listed pull request nobody's agent works on are
-/// read again each minute while the Work tool's lens or a card is shown.
+/// read again each minute while the PRs tool or a card is shown.
 #[test]
 fn pending_checks_on_a_pull_request_without_an_agent_are_read_again_each_minute() {
     let mut pending = pull_request(2, "open-work", PullRequestBadge::Open, None);

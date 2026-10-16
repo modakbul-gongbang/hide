@@ -18,59 +18,31 @@
     "rules": { "noOverlap": true, "noSidewaysOverflow": true },
     "judgment": ["Does the actual record preserve the approved order and compact hierarchy in both themes?", "Do long Korean requests and missed rows remain legible in a narrow lane? Native behavior is verified separately."]
   },
-  "session-panel": {
-    "description": "The Sessions A selection: separate progress and branch metadata, a parent's complete PR count, own child PR marks, and the existing session groups and tree.",
+  "sidebar-task-lens": {
+    "description": "The sidebar's 프로젝트 | 태스크 switch and 태스크 list, the lane's 보기 slot holding a PR card or a session record, the rail Memory · PRs | Files · Changes and the PRs tool (PRD sidebar-task-lens D-50, the approved v4 boards).",
     "file": "design/hide-screens.pen",
-    "sheet": "screen-main",
+    "sheet": "stl-a",
     "scene": "session-panel",
-    "selector": "[data-session-panel]",
+    "selector": "[data-gallery-scene=session-panel]",
+    "readySelector": "[data-task-list]",
     "measurement": "web/e2e/session-panel-geometry.mjs",
     "frames": [
-      {
-        "node": "sfu-panel-l",
-        "theme": "light",
-        "width": 420,
-        "scale": 1,
-        "content": "reference",
-        "state": "rest"
-      },
-      {
-        "node": "sfu-panel-d",
-        "theme": "dark",
-        "width": 420,
-        "scale": 1,
-        "content": "reference",
-        "state": "rest"
-      }
+      { "node": "stl-a-l-win", "theme": "light", "width": 1440, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "stl-a-d-win", "theme": "dark", "width": 1440, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "stl-c-l-win", "theme": "light", "width": 1440, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "stl-c-d-win", "theme": "dark", "width": 1440, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "stl-e-l-c1-box", "theme": "light", "width": 968, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "stl-e-d-c1-box", "theme": "dark", "width": 968, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "stl-f-l-p1-box", "theme": "light", "width": 568, "scale": 1, "content": "reference", "state": "rest" },
+      { "node": "stl-f-d-p1-box", "theme": "dark", "width": 568, "scale": 1, "content": "reference", "state": "rest" }
     ],
-    "conditions": {
-      "themes": [
-        "light",
-        "dark"
-      ],
-      "widths": [
-        420,
-        320
-      ],
-      "contents": [
-        "reference",
-        "long"
-      ]
-    },
-    "states": {
-      "rest": "Project Sessions at rest.",
-      "children": "One row opened a level through its chevron.",
-      "resolved": "Resolved expanded."
-    },
-    "rules": {
-      "noOverlap": true,
-      "noSidewaysOverflow": true
-    },
+    "conditions": { "themes": ["light", "dark"], "widths": [292, 240], "contents": ["reference", "long"] },
+    "states": { "rest": "The 태스크 list by status at rest, the row of the pane with the keyboard selected." },
+    "rules": { "noOverlap": true, "noSidewaysOverflow": true },
     "judgment": [
-      "The A selection separates the title, progress and branch metadata; both themes keep that hierarchy with the existing tokens.",
-      "Does a parent's PR count include folded descendants while child marks still name their own PRs?",
-      "Are the existing group order, Needs You ask, unfinished mark and tree rails preserved?",
-      "Are long Korean titles recognizable at the narrow width without hiding the PR chip or the age?"
+      "The gallery scene draws the 태스크 list alone; the windows (A, C), the record in the 보기 slot (E) and the PRs tool (F) are compared against an isolated app capture, not a scene.",
+      "Do the groups, the second lines in the warning and danger colours, the child marks and the PR marks read as the boards draw them in both themes?",
+      "Are long Korean titles recognizable at 240 without hiding the PR mark or the time?"
     ]
   },
   "pane-header": {
@@ -1602,7 +1574,7 @@
     ]
   },
   "right-lane": {
-    "description": "The right lane (PRD right-lane): Agent Views fill the body and one lane of four tools (Work, Memory, Files, Changes) opens from the rail, over the agents or pinned beside them, with the file tree as its own column.",
+    "description": "The right lane (PRD right-lane, sidebar-task-lens): Agent Views fill the body and one lane of four tools (Memory, PRs, Files, Changes) opens from the rail, over the agents or pinned beside them, with the file tree as its own column.",
     "file": "design/hide-screens.pen",
     "sheet": "screen-workspace",
     "scene": "right-lane",
@@ -1620,14 +1592,14 @@
       { "node": "rl-tree-only-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "tree-only" },
       { "node": "rl-expanded-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "expanded" },
       { "node": "rl-expanded-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "expanded" },
-      { "node": "rl-work-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "work" },
-      { "node": "rl-work-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "work" },
+      { "node": "rl-prs-l-win", "theme": "light", "width": 1456, "scale": 1, "content": "reference", "state": "prs" },
+      { "node": "rl-prs-d-win", "theme": "dark", "width": 1456, "scale": 1, "content": "reference", "state": "prs" },
       { "node": "rl-narrow-l-win", "theme": "light", "width": 1040, "scale": 1, "content": "reference", "state": "narrow" },
       { "node": "rl-narrow-d-win", "theme": "dark", "width": 1040, "scale": 1, "content": "reference", "state": "narrow" }
     ],
     "conditions": { "themes": ["light", "dark"], "widths": [1456], "contents": ["reference"], "scales": [1] },
-    "states": { "rest": "Lane closed: the rail alone at the window edge.", "overlay": "Files over the agents, unpinned; the terminals keep their width.", "pinned": "Files pinned and docked beside the agents behind the divider.", "tree-overlay": "The tree on beside the document, over the agents; the lane widens by the tree.", "tree-only": "No document open: the tree fills the pinned lane.", "expanded": "The lane expanded over the whole body, tree on.", "work": "Work pinned on its Sessions basis, its header naming the project scope and the rail carrying the count that needs the operator.", "narrow": "A 1040 px window: the pinned lane opens over the agents, the pin still on." },
-    "urlStates": ["overlay", "pinned", "tree-overlay", "tree-only", "expanded", "work", "narrow"],
+    "states": { "rest": "Lane closed: the rail alone at the window edge.", "overlay": "Files over the agents, unpinned; the terminals keep their width.", "pinned": "Files pinned and docked beside the agents behind the divider.", "tree-overlay": "The tree on beside the document, over the agents; the lane widens by the tree.", "tree-only": "No document open: the tree fills the pinned lane.", "expanded": "The lane expanded over the whole body, tree on.", "prs": "PRs pinned, its header naming the project scope and the rail carrying the PRs tool's Needs You count.", "narrow": "A 1040 px window: the pinned lane opens over the agents, the pin still on." },
+    "urlStates": ["overlay", "pinned", "tree-overlay", "tree-only", "expanded", "prs", "narrow"],
     "rules": { "noOverlap": true, "noSidewaysOverflow": true },
     "judgment": ["Does the lane read as one surface over or beside the agents, its rail, header, pin, tree button and divider matching the boards?", "Does opening over the agents keep the terminals at their width, with only pinning narrowing them, once?"]
   },

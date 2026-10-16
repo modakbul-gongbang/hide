@@ -651,8 +651,8 @@ impl Core {
     }
 
     /// What a move of the core to `device` is made from (PRD
-    /// core-host-node-move B4), with the device's label records, which only
-    /// memory holds, in the form `labels.json` stores them.
+    /// core-host-node-move B4), with the device's label records, which memory
+    /// holds (bar their marks), in the form `labels.json` stores them.
     pub fn move_source(
         &self,
         device: &str,
@@ -674,7 +674,7 @@ impl Core {
 
     /// What a move of the core back to the node that dialed it is made
     /// from (PRD core-host-node-move B6), with that node's label records,
-    /// which only memory holds, in the form `labels.json` stores them.
+    /// which memory holds (bar their marks), in the form `labels.json` stores them.
     pub fn release_source(
         &self,
         node: &str,

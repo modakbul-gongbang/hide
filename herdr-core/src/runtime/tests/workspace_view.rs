@@ -532,44 +532,41 @@ fn a_file_open_opens_the_files_lane_and_an_agent_choice_moves_no_lane_state() {
     assert_eq!(lane(&runtime), (Some(Tool::Files), true, false));
 }
 
-/// PRD work-tab-pr-lens D-34, B2: the Work tool's basis and its checkout
-/// filter are the Workspace's own, sent with the tool, and a basis this build
-/// does not know is refused with the lane unchanged.
+/// PRD sidebar-task-lens B26: the PRs tool's checkout filter is the
+/// Workspace's own, sent with the tool, and a tool this build does not know
+/// (the removed Work tool's name included) is refused with the lane unchanged.
 #[test]
-fn the_work_basis_and_checkout_filter_are_stored_and_an_unknown_basis_is_refused() {
-    use crate::workspace_views::WorkLens;
+fn the_prs_checkout_filter_is_stored_and_an_unknown_tool_is_refused() {
     let (runtime, _checkout_id, directory) = strip_checkout("lane-work");
     let (_views, state) = views_path("lane-work");
     let mut runtime = with_views(runtime, &state);
     with_tabs(&mut runtime, &directory);
-    let work = |runtime: &Runtime| {
+    let prs = |runtime: &Runtime| {
         runtime
             .snapshot
             .workspace_view
             .as_ref()
             .expect("a front Workspace")
-            .work
+            .prs
     };
-    assert_eq!(work(&runtime).lens, WorkLens::Sessions);
+    assert!(!prs(&runtime).only_checkout);
     layout(
         &mut runtime,
-        serde_json::json!({"tool": "work", "work_lens": "prs", "work_only_checkout": true}),
+        serde_json::json!({"tool": "prs", "prs_only_checkout": true}),
     );
-    assert_eq!(lane(&runtime).0, Some(Tool::Work));
-    assert_eq!(work(&runtime).lens, WorkLens::Prs);
-    assert!(work(&runtime).only_checkout);
+    assert_eq!(lane(&runtime).0, Some(Tool::Prs));
+    assert!(prs(&runtime).only_checkout);
 
     runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"tool": "files", "work_lens": "everything"}),
+        serde_json::json!({"tool": "work"}),
     ));
     assert!(runtime.snapshot.status.last_error.is_some());
     assert_eq!(
         lane(&runtime).0,
-        Some(Tool::Work),
+        Some(Tool::Prs),
         "a refused call changes nothing, the tool included"
     );
-    assert_eq!(work(&runtime).lens, WorkLens::Prs);
 }
 
 /// PRD right-lane D-12, B2, B5, B7, B11, B20: every lane field ends at the
@@ -595,14 +592,14 @@ fn each_lane_field_ends_at_its_sent_value_and_a_repeat_converges() {
     )));
 
     let before = called(&runtime);
-    layout(&mut runtime, serde_json::json!({"tool": "work"}));
-    assert_eq!(lane(&runtime), (Some(Tool::Work), true, true));
+    layout(&mut runtime, serde_json::json!({"tool": "prs"}));
+    assert_eq!(lane(&runtime), (Some(Tool::Prs), true, true));
     assert_eq!(called(&runtime), before + 1);
     // The same tool again changes nothing stored but is a call the page
     // shows, so it reports a change.
     assert!(runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"tool": "work"})
+        serde_json::json!({"tool": "prs"})
     )));
     assert_eq!(called(&runtime), before + 2);
 
@@ -881,7 +878,7 @@ fn the_lane_drives_the_panel_the_readers_gate_on() {
     };
     layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     assert_eq!(panel(&runtime), (true, RightPanelSection::Changes));
-    layout(&mut runtime, serde_json::json!({"tool": "work"}));
+    layout(&mut runtime, serde_json::json!({"tool": "prs"}));
     assert_eq!(panel(&runtime), (true, RightPanelSection::AgentSessions));
     layout(&mut runtime, serde_json::json!({"tool": "memory"}));
     assert_eq!(panel(&runtime), (true, RightPanelSection::Memory));

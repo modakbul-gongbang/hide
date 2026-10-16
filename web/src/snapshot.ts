@@ -316,7 +316,7 @@ export type PullRequest = {
   state: PrState;
   /** The branch it merges into. */
   base_branch?: string;
-  /** The GitHub values the Work tab's PRs list and the card read (`PullRequestWork`). */
+  /** The GitHub values the PRs tool's list and the card read (`PullRequestWork`). */
   work?: PullRequestWork;
 };
 
@@ -791,10 +791,10 @@ export type Workspace = {
   agent_presence?: ProjectAgentPresence;
   /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
-  /** The project's tasks, which the device Overview's Tasks and backlog read. */
+  /** The project's tasks, which the sidebar's 태스크 list and the Overview's backlog read. */
   tasks?: ProjectTasks;
   /**
-   * The project's pull requests for the Work tool's PRs lens, one per branch:
+   * The project's pull requests for the PRs tool and the PR card, one per branch:
    * every open one, and a merged one while its worktree is recorded here or
    * for 14 days after it merged (PRD overview-lenses-prs D-52). A local Git
    * project's only; absent while it has none.
@@ -928,7 +928,7 @@ export type PaneLayout = {
 
 export type PaneHeader = {
   working: boolean;
-  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; raised?: RaisedAsk; facts?: {kind: "approval_command_unavailable"} | {kind: "pull_request"; checks: NonNullable<PullRequest["checks"]>; review: PullRequest["review"]}} | null;
+  band: {kind: string; tone: PaneHeaderTone; reason: string | null; since_unix_ms: number | null; action: PaneHeaderAction | null; more: number; exit_code: number | null; raised?: RaisedAsk; facts?: {kind: "pull_request"; checks: NonNullable<PullRequest["checks"]>; review: PullRequest["review"]}} | null;
 };
 export type PaneHeaderTone = "muted" | "warning" | "error" | "success" | "pr";
 export type PaneHeaderAction = {kind: "pr"; workspace_id: string; url: string; number: number; checks: NonNullable<PullRequest["checks"]>; tone: PaneHeaderTone} | {kind: "child"; pane_id: string; label: string};
@@ -1100,6 +1100,17 @@ export type DocumentsSection = {
   changed: { tab_id: string; document: EditorDocumentSnapshot }[];
 };
 
+export type SidebarLens = "projects" | "tasks";
+export type TaskView = "status" | "project";
+
+/** One thing the lane's 보기 slot shows (`DetailItem`, PRD sidebar-task-lens D-50). */
+export type DetailItem =
+  | { kind: "pull_request"; workspace_id: string; number: number }
+  | { kind: "record"; session: WorkSession };
+
+/** The 보기 slot: what it opened, oldest first and the one it shows last, and whether the lane draws it. */
+export type DetailSlot = { items: DetailItem[]; shown: boolean };
+
 /** What a display shows now (S7 contract 3): its document, a read in flight, a root not readable yet, or a read that failed. */
 export type ViewDisplayState = "open" | "opening" | "waiting" | "unavailable";
 
@@ -1112,9 +1123,7 @@ export type ViewDisplaySnapshot = {
   path: string;
   /** The document's name, or a browser page's title (its host until it has one). */
   label: string;
-  kind: "file" | "diff" | "browser" | "pull_request";
-  /** The pull request a `pull_request` display is the card of. */
-  pr?: number | null;
+  kind: "file" | "diff" | "browser";
   /** Which History group a diff shows; null for a file. */
   committed: boolean | null;
   preview: boolean;
@@ -1916,8 +1925,14 @@ export type SnapshotRest = {
     session_collapsed_checkout_ids?: string[];
     /** Agents whose children the sidebar tree opened; absence is folded. */
     expanded_agent_pane_ids?: string[];
-    /** Agents whose children Sessions opened, kept apart from the sidebar's. */
+    /** Agents whose children the sidebar's 태스크 list opened, kept apart from the 프로젝트 tree's (PRD sidebar-task-lens D-48). */
     sessions_expanded_agent_pane_ids?: string[];
+    /** Which list the sidebar shows (`contracts/snapshot-wire-enums.json`: `sidebar_lens`, D-10); absent reads as projects. */
+    sidebar_lens?: SidebarLens;
+    /** How the 태스크 list groups (`task_view`, D-11); absent reads as status. */
+    task_view?: TaskView;
+    /** The lane's 보기 slot (D-50), one per window. */
+    detail?: DetailSlot;
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;
@@ -1977,6 +1992,8 @@ export type SnapshotRest = {
     async_operations?: AsyncOperation[];
     tab_rename?: { request_id: string; tab_id: string; label: string; phase: "pending" | "succeeded" | "failed" } | null;
     pane_focus_request?: PaneFocusRequest | null;
+    /** The answers to the latest `browser_open` events that named themselves, oldest first and bounded. */
+    browser_opens?: import("./viewLayout").BrowserOpenReceipt[];
     /** The core's most recent failure; the shell logs its detail (B5). */
     last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number; request_id?: string | null } | null;
   };

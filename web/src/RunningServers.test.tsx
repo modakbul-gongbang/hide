@@ -21,7 +21,7 @@ const browserCanvas = vi.hoisted(() => {
 afterAll(() => browserCanvas.restore());
 
 const view: WorkspaceView = {
-  device_id: "local", path: "/projects/studio", tool: null, last_tool: null, work: { lens: "sessions", only_checkout: false }, pinned: false, tree: false,
+  device_id: "local", path: "/projects/studio", tool: null, last_tool: null, prs: { only_checkout: false }, pinned: false, tree: false,
   lane_width: null, tree_width: null, lane_called: 0, lane_calls: 0,
 };
 function checkout(servers: { host: string; port: number }[]): Checkout {
@@ -135,7 +135,7 @@ describe("Workspace server action", () => {
 
     expect(events.filter((event) => event.kind === "browser_open")).toEqual([{
       schema_version: 2, kind: "browser_open",
-      payload: { url: "http://[::1]:3000", workspace: { device_id: "local", path: view.path } },
+      payload: { url: "http://[::1]:3000", workspace: { device_id: "local", path: view.path }, request_id: expect.stringMatching(/^follow:/) },
     }]);
     expect(document.querySelector('[aria-label="Running servers"]')).toBeNull();
   });
@@ -158,7 +158,7 @@ describe("Workspace server action", () => {
     }
     expect(events.filter((event) => event.kind === "browser_open")).toEqual([{
       schema_version: 2, kind: "browser_open",
-      payload: { url: "http://127.0.0.1:4000", workspace: { device_id: "mini", path: view.path } },
+      payload: { url: "http://127.0.0.1:4000", workspace: { device_id: "mini", path: view.path }, request_id: expect.stringMatching(/^follow:/) },
     }]);
   });
 });

@@ -104,12 +104,29 @@ const NUMBER = <span className="font-mono" />;
 
 const NOW_TONE: Record<NowPart["key"], string> = { needs: "bg-warning", working: "bg-agent-working", waiting: "bg-muted-foreground", done: "bg-success" };
 
-/** The non-zero of `Needs You N · 일하는 중 N · 기다림 N · 끝남 N` with its colour bar, `쉬는 중 N` when nothing moves, `일감 없음` with no task (B48). */
-function NowCell({ now }: { now: NowCounts }) {
+/**
+ * The non-zero of `Needs You N · 일하는 중 N · 기다림 N · 끝남 N`, `쉬는 중 N`
+ * when nothing moves, `일감 없음` with no task (B48): with its colour bar in a
+ * row, and as words alone in the panel, Needs You in the warning colour
+ * (PRD sidebar-task-lens B41).
+ */
+function NowCell({ now, bar = true }: { now: NowCounts; bar?: boolean }) {
   const { t } = useInterfaceTranslation();
   if (now.total === 0) return <span className="text-muted-foreground">{t("overviewProjects.noTasks")}</span>;
   if (now.total === now.resting) return <span className="text-muted-foreground">{t("overviewProjects.restingCount", { count: now.resting })}</span>;
   const parts = nowParts(now);
+  if (!bar) {
+    return (
+      <span className="min-w-0 text-subtle-foreground">
+        {parts.map((part, index) => (
+          <span key={part.key}>
+            {index > 0 ? " · " : null}
+            <span className={cn(part.key === "needs" && "text-warning")}>{t(`overviewProjects.now.${part.key}`, { count: part.value })}</span>
+          </span>
+        ))}
+      </span>
+    );
+  }
   return (
     <span className="flex min-w-0 flex-col gap-xxs">
       <span aria-hidden="true" className="flex h-(--size-hairline) w-full gap-px overflow-hidden rounded-full bg-muted">
@@ -194,13 +211,19 @@ function ProjectRow({ row, largest, actions }: { row: ProjectRowModel; largest: 
       <span role="cell" className="pointer-events-none truncate font-mono text-micro text-muted-foreground">{activity !== null ? ageWords(language, Date.now() - activity, t) : ""}</span>
       <span role="cell">
         <Hint label={t("overviewTasks.openHint", { project: project.label })}>
-          <button type="button" className={cn(LINK, "text-subtle-foreground")} aria-label={t("overviewTasks.openHint", { project: project.label })} onClick={() => actions.openProjectSessions(project.device_id, project.id)} data-projects-open={project.id}>
+          <button type="button" className={cn(LINK, "text-subtle-foreground")} aria-label={t("overviewTasks.openHint", { project: project.label })} onClick={() => openProject(project, actions)} data-projects-open={project.id}>
             <ExternalLinkIcon aria-hidden="true" className="size-(--size-icon-sm)" />
           </button>
         </Hint>
       </span>
     </div>
   );
+}
+
+/** `열기 ↗`: the Overview closes and the project's latest checkout opens. */
+function openProject(project: { device_id: string; id: string }, actions: Actions) {
+  actions.closeOverview();
+  actions.openProjectById(project.device_id, project.id);
 }
 
 /** One project beside the tab (B57). */
@@ -237,26 +260,21 @@ export function ProjectPanel({ panel, projects, actions }: { panel: Extract<Over
           {activity !== null ? <span>· {ageWords(language, Date.now() - activity, t)}</span> : null}
         </p>
         <div className="flex flex-wrap gap-xs">
-          <Button size="sm" onClick={() => actions.openProjectSessions(project.device_id, project.id)}><ExternalLinkIcon />{t("overviewTasks.open")}</Button>
+          <Button size="sm" onClick={() => openProject(project, actions)} data-project-panel-open={project.id}><ExternalLinkIcon />{t("overviewTasks.open")}</Button>
           <Button size="sm" variant="outline" onClick={() => actions.openStartPanel()}><PlusIcon />{t("overviewTasks.newAgent")}</Button>
         </div>
-        <section className="space-y-xs">
-          <h3 className="font-medium text-subtle-foreground">{t("overviewProjects.colNow")}</h3>
-          <NowCell now={row.now} />
-          <button type="button" className={cn(LINK, "text-subtle-foreground")} onClick={() => { useUiStore.getState().setMainView("tasks"); useUiStore.getState().setOverview({ projectId: project.id, panel: null }); }}>
-            {t("overviewProjects.panel.tasksOnly")}<ArrowRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+        <p className="flex min-w-0 items-baseline gap-sm" data-project-panel-now={row.now.total}>
+          <span className="shrink-0 font-medium text-subtle-foreground">{t("overviewProjects.colNow")}</span>
+          <NowCell now={row.now} bar={false} />
+        </p>
+        <p className="flex min-w-0 flex-wrap items-center gap-sm" data-project-panel-backlog={backlog.rows.length}>
+          <span className="shrink-0 font-medium text-subtle-foreground">{t("overviewProjects.colBacklog")}</span>
+          <span>{project.tasks?.source?.label ?? ""}</span>
+          <span className="text-muted-foreground">{t("backlog.openCount", { count: backlog.rows.length })}</span>
+          <button type="button" className={cn(LINK, "text-subtle-foreground")} onClick={() => { useUiStore.getState().setMainView("backlog"); useUiStore.getState().setOverview({ projectId: project.id, panel: null }); }}>
+            {t("overviewProjects.panel.view")}<ArrowRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />
           </button>
-        </section>
-        <section className="space-y-xs">
-          <h3 className="font-medium text-subtle-foreground">{t("overviewProjects.colBacklog")}</h3>
-          <p className="flex items-center gap-sm">
-            <span>{project.tasks?.source?.label ?? ""}</span>
-            <span className="text-muted-foreground">{t("backlog.openCount", { count: backlog.rows.length })}</span>
-            <button type="button" className={cn(LINK, "text-subtle-foreground")} onClick={() => { useUiStore.getState().setMainView("backlog"); useUiStore.getState().setOverview({ projectId: project.id, panel: null }); }}>
-              {t("overviewProjects.panel.view")}<ArrowRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-            </button>
-          </p>
-        </section>
+        </p>
         {cleans ? (
           <section className="space-y-xs" data-project-panel-storage="true">
             <h3 className="font-medium text-subtle-foreground">{t("overviewProjects.panel.storage")} {row.disk.bytes !== null ? <span className="font-mono text-muted-foreground">{formatBytes(language, row.disk.bytes)}</span> : null}</h3>
