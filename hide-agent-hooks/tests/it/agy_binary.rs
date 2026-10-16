@@ -119,20 +119,20 @@ case "$1 $2" in
 esac
 "#;
 
-/// One real agy prompt on the CI account's key (PRD antigravity-first-class
-/// B36, D-17): Hide's block in the throwaway home's `hooks.json` and the
-/// helper beside a stand-in `hide`. agy fires Hide's hooks and injects the
-/// pane's letter into the conversation, which agy records, and the helper
-/// confirms the letter only after agy took the answer. Both happen before
-/// the model answers, so they hold whatever the account's quota allows; the
-/// refusal of a tool call needs the model to call one, which the CI key's
-/// free tier does not allow (`gemini-3.1-pro` has a quota of 0) and which the
-/// live check proves instead (docs/INSTALL.md). Unix only: the stand-in is a
-/// shell script.
+/// One real agy turn on the CI account's key (PRD antigravity-first-class
+/// B36, D-17): Hide's block in the throwaway home's `hooks.json`, the helper
+/// beside a stand-in `hide`, and a prompt asking for one direct
+/// `herdr agent start`. agy fires Hide's hooks, injects the pane's letter
+/// into the conversation (agy records it, and the helper confirms it only
+/// after agy took the answer), and the start is refused with Hide's reason
+/// before agy's own permission check. The turn runs on a flash model, the
+/// one the key's free tier serves (`gemini-3.1-pro`, agy's default in
+/// API-key mode, has a quota of 0). Unix only: the stand-in is a shell
+/// script.
 #[cfg(unix)]
 #[test]
-#[ignore = "runs one real agy prompt on HIDE_AGY_API_KEY in a throwaway home; the os contract lane's signed-in job runs it"]
-fn a_signed_in_agy_prompt_fires_hide_s_hooks_and_takes_the_letter() {
+#[ignore = "runs one real agy turn on HIDE_AGY_API_KEY in a throwaway home; the os contract lane's signed-in job runs it"]
+fn a_signed_in_agy_turn_fires_hide_s_hooks() {
     use std::io::Write;
 
     use crate::{programs, stand_ins};
@@ -168,7 +168,7 @@ fn a_signed_in_agy_prompt_fires_hide_s_hooks_and_takes_the_letter() {
     let log = root.join("agy.log");
     let prompt = serde_json::json!({
         "event": "user",
-        "message": { "content": "Say hello in one word. Use no tools." },
+        "message": { "content": "Run exactly one shell command with your shell tool, unchanged, and nothing else: herdr agent start probe --kind claude --pane w1:p1 . Do not read files or run any other command. Then report the exact error text the tool returned, word for word." },
     });
 
     let mut command = Command::new(&agy);
@@ -189,6 +189,7 @@ fn a_signed_in_agy_prompt_fires_hide_s_hooks_and_takes_the_letter() {
             "--output-format",
             "stream-json",
         ])
+        .args(["--model", "gemini-3.8-flash-medium"])
         .args(["--print-timeout", "180s", "-p", "", "--log-file"])
         .arg(&log)
         .current_dir(&workspace)
@@ -246,6 +247,22 @@ fn a_signed_in_agy_prompt_fires_hide_s_hooks_and_takes_the_letter() {
     assert!(
         transcript.contains("LETTER-CI-7731"),
         "the letter is not in the conversation:\n{report}"
+    );
+    // Refused: the start ended as agy's tool error with Hide's reason.
+    let refused = events.iter().any(|event| {
+        let step = &event["step_update"];
+        step["tool_name"] == "run_command"
+            && step["state"] == "ERROR"
+            && step["tool_info"]["error"]["message"]
+                .as_str()
+                .is_some_and(|message| {
+                    message.contains("denied by pre-tool hook")
+                        && message.contains("hide agent spawn --parent here")
+                })
+    });
+    assert!(
+        refused,
+        "agy's start was not refused with Hide's reason:\n{stdout}\n{report}"
     );
 }
 

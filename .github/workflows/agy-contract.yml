@@ -12,7 +12,7 @@
 # With `live`, the nightly also runs that check signed in on the CI
 # account's key (the `HIDE_AGY_API_KEY` secret, handed to agy as
 # `GEMINI_API_KEY` with `"modelProvider": "gemini"`), and on Linux and macOS
-# one real agy prompt through Hide's hooks. Without the secret the job says
+# one real agy turn through Hide's hooks. Without the secret the job says
 # "not configured" and passes (docs/INSTALL.md, What each system supports).
 name: agy contract
 
@@ -134,10 +134,10 @@ jobs:
           # writing an empty path.
           bin=$(bash scripts/install-agy.sh | tr -d '\r')
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
-      - name: The real agy, signed in with the CI key, lists Hide's hooks and takes a letter through them
-        # The prompt (hooks fired, the letter injected and confirmed) runs on
-        # Linux and macOS; its stand-in `hide` is a shell script.
+      - name: The real agy, signed in with the CI key, lists Hide's hooks and runs one turn through them
+        # The turn (hooks fired, the letter injected, a direct start refused)
+        # runs on Linux and macOS; its stand-in `hide` is a shell script.
         if: ${{ env.HIDE_AGY_API_KEY != '' }}
         env:
           HIDE_AGY_BINARY: ${{ steps.agy.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'test(=agy_binary::the_real_agy_loads_hide_s_hook_block) | test(=agy_binary::a_signed_in_agy_prompt_fires_hide_s_hooks_and_takes_the_letter)' --run-ignored only --no-capture
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'test(=agy_binary::the_real_agy_loads_hide_s_hook_block) | test(=agy_binary::a_signed_in_agy_turn_fires_hide_s_hooks)' --run-ignored only --no-capture
