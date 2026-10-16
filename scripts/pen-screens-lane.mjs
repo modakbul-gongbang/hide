@@ -1,10 +1,11 @@
 // The right lane's boards in `Screen / Workspace` (PRD right-lane B25, D-17):
 // the approved v3 states, closed, over the agents, pinned, the tree on over
-// the agents, the tree alone, expanded, Work pinned and a narrow window,
+// the agents, the tree alone, expanded, PRs pinned (PRD sidebar-task-lens
+// D-17) and a narrow window,
 // each a whole window with its measure line, in one theme. The rail, the lane
 // header, the pin, the tree button, the document header and the dividers are
 // refs of `Component / Workspace columns` in design/hide-ui.lib.pen; the
-// terminals, document, tree and Sessions rows are drawn here. Called from
+// terminals, document, tree and pull request rows are drawn here. Called from
 // pen-screens.mjs, which owns the ref helpers and the window template; names,
 // paths and agents are invented.
 
@@ -91,13 +92,13 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   }
 
   // -- the rail: icons alone, each tool's name in its hint --
-  const TOOLS = ['work', 'memory', 'files', 'changes'];
-  // What needs the operator in Work, as the rail's warning badge draws it (PRD work-tab-pr-lens B4).
-  const WORK_COUNT = '3';
+  const TOOLS = ['memory', 'prs', 'files', 'changes'];
+  // The PRs tool's Needs You rows, as the rail's warning badge draws it (PRD sidebar-task-lens B29).
+  const PRS_COUNT = '2';
   function rail(id, active) {
     const descendants = {
-      'lane-rail-work/lane-tool-badge': {enabled: true, fill: '$--warning'},
-      'lane-rail-work/lane-tool-badge-t': {content: WORK_COUNT},
+      'lane-rail-prs/lane-tool-badge': {enabled: true, fill: '$--warning'},
+      'lane-rail-prs/lane-tool-badge-t': {content: PRS_COUNT},
     };
     for (const key of TOOLS) {
       if (key !== active) continue;
@@ -114,7 +115,7 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
       'lane-header-tool': {content: tool},
       'lane-header-scope': {content: scope},
       // The scope's icon: a folder for the Project's tools, the default branch glyph for the checkout's (PRD work-tab-pr-lens D-37).
-      ...(tool === 'Work' ? {'lane-header-scope-glyph': {icon: 'folder'}} : {}),
+      ...(tool === 'PRs' ? {'lane-header-scope-glyph': {icon: 'folder'}} : {}),
       ...(pinned ? {'lane-header-pin': {fill: '$--secondary'}, 'lane-header-pin/lane-pin-glyph': {fill: '$--primary', stroke: '$--primary'}} : {}),
       ...(expanded ? {'lane-header-expand': {fill: '$--secondary'}, 'lane-header-expand/ZIZFR': {icon: 'minimize-2', fill: '$--foreground'}} : {}),
     });
@@ -190,23 +191,21 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
       frame(`${id}-foot`, 'Foot', {width: 'fill_container', height: 28, layout: 'horizontal', alignItems: 'center', padding: [0, 10], stroke: '$--border', strokeWidth: {top: 1}, strokeAlignment: 'inner'}, [mic(`${id}-foot-t`, only ? '파일을 고르면 옆에 열림' : '끌 때까지 남음 · ⌘⇧E')]),
     ]);
   }
-  const SESSIONS = [
-    ['Needs you', '$--warning', [['ask', '파일 보기 개선', 'settings-ui · 4분']]],
-    ['Working', '$--agent-working', [['work', '설정 화면 정리', 'settings-ui · 12분'], ['work', '동기화 검증', 'memory-sync · 31분']]],
-    ['Done', '$--success', [['done', '문서 검토', 'main · 1시간']]],
+  // The PRs tool's groups as the core decides them (status-model.md, Pull request groups).
+  const PULLS = [
+    ['Needs You', '$--warning', [['git-pull-request', '$--success', '#1217', '사이드바 태스크 목록', '리뷰 요청 · 4분'], ['git-pull-request', '$--destructive', '#1209', '설정 화면 정리', '검사 실패 · 12분']]],
+    ['Agent is working', '$--agent-working', [['git-pull-request-draft', '$--muted-foreground', '#1214', '동기화 검증', '작업 중 · 31분']]],
+    ['Waiting', '$--muted-foreground', [['git-pull-request', '$--success', '#1201', '문서 검토', '리뷰 대기 · 1시간']]],
   ];
-  function sessions(id) {
-    const MARK = {ask: '$--warning', work: '$--agent-working', done: '$--success'};
+  function pulls(id) {
     const chip = (key, label, on) => frame(`${id}-chip-${key}`, label, {height: 20, layout: 'horizontal', alignItems: 'center', padding: [0, 8], cornerRadius: 999, stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', ...(on ? {fill: '$--secondary'} : {})}, [cap(`${id}-chip-${key}-t`, label, on ? '$--foreground' : '$--muted-foreground', {weight: on ? '600' : '400'})]);
-    // Work's two bases (PRD work-tab-pr-lens B2): Sessions pressed here, the dot where something needs the operator.
-    const basis = (key, label, on) => frame(`${id}-basis-${key}`, label, {width: 'fill_container', height: 24, layout: 'horizontal', gap: 4, alignItems: 'center', justifyContent: 'center', cornerRadius: '$--radius-sm', ...(on ? {fill: '$--secondary'} : {})}, [cap(`${id}-basis-${key}-t`, label, on ? '$--foreground' : '$--muted-foreground', {weight: on ? '600' : '400'}), dot(`${id}-basis-${key}-d`, '$--warning', 5)]);
-    return frame(id, 'Work list · Sessions basis', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [8, 6]}, [
-      frame(`${id}-basis`, 'Sessions | PRs', {width: 'fill_container', height: 30, layout: 'horizontal', alignItems: 'center', padding: 3, margin: [0, 0, 6, 0], fill: '$--background', stroke: '$--border', strokeWidth: 1, strokeAlignment: 'inner', cornerRadius: '$--radius-md'}, [basis('sessions', 'Sessions', true), basis('prs', 'PRs', false)]),
-      frame(`${id}-chips`, 'Scope chips', {layout: 'horizontal', gap: 6, padding: [0, 6, 6, 6]}, [chip('all', 'All checkouts', true), chip('main', 'main only', false)]),
-      ...SESSIONS.flatMap(([group, fill, rows], groupIndex) => [
+    return frame(id, 'PRs tool', {width: 'fill_container', height: 'fill_container', layout: 'vertical', padding: [8, 6]}, [
+      frame(`${id}-head`, 'Scope and count', {width: 'fill_container', layout: 'horizontal', gap: 6, alignItems: 'center', padding: [0, 6, 6, 6]}, [chip('all', 'All checkouts', true), chip('main', 'main only', false), spacer(`${id}-head-sp`), mic(`${id}-head-n`, '열린 PR 4')]),
+      ...PULLS.flatMap(([group, fill, rows], groupIndex) => [
         frame(`${id}-g${groupIndex}`, group, {width: 'fill_container', height: 28, layout: 'horizontal', gap: 6, alignItems: 'center', padding: [0, 6]}, [cap(`${id}-g${groupIndex}-t`, group, fill, {weight: '600'}), cap(`${id}-g${groupIndex}-n`, String(rows.length))]),
-        ...rows.map(([state, title, meta], rowIndex) => frame(`${id}-g${groupIndex}r${rowIndex}`, title, {width: 'fill_container', height: 34, layout: 'horizontal', gap: 8, alignItems: 'center', padding: [0, 8], cornerRadius: '$--radius-xs'}, [
-          dot(`${id}-g${groupIndex}r${rowIndex}-d`, MARK[state], 7), body(`${id}-g${groupIndex}r${rowIndex}-t`, title, '$--foreground', {width: 'fill_container', weight: '500'}), cap(`${id}-g${groupIndex}r${rowIndex}-m`, meta),
+        ...rows.map(([glyph, glyphFill, number, title, meta], rowIndex) => frame(`${id}-g${groupIndex}r${rowIndex}`, title, {width: 'fill_container', height: 34, layout: 'horizontal', gap: 8, alignItems: 'center', padding: [0, 8], cornerRadius: '$--radius-xs'}, [
+          icon(`${id}-g${groupIndex}r${rowIndex}-g`, glyph, {size: 12, fill: glyphFill}), cap(`${id}-g${groupIndex}r${rowIndex}-n`, number, '$--muted-foreground', {mono: true}),
+          body(`${id}-g${groupIndex}r${rowIndex}-t`, title, '$--foreground', {width: 'fill_container', weight: '500'}), cap(`${id}-g${groupIndex}r${rowIndex}-m`, meta),
         ])),
       ]),
     ]);
@@ -214,9 +213,9 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
   // A lane over the agents is set apart by a shadow and its left border (B3).
   const SHADOW = {type: 'shadow', shadowType: 'outer', offset: {x: -16, y: 0}, blur: 40, spread: 0, color: suffix === 'l' ? '#00000052' : '#000000f0'};
   function lane(id, {tool, tree: treeMode = 'off', pinned, expanded = false, overlay, width}) {
-    const head = tool === 'work' ? header(`${id}-head`, 'Work', 'hide 전체', {pinned, expanded}) : header(`${id}-head`, '파일', 'settings-ui', {pinned, expanded});
+    const head = tool === 'prs' ? header(`${id}-head`, 'PRs', 'hide 전체', {pinned, expanded}) : header(`${id}-head`, '파일', 'settings-ui', {pinned, expanded});
     let content;
-    if (tool === 'work') content = sessions(`${id}-ses`);
+    if (tool === 'prs') content = pulls(`${id}-prs`);
     else if (treeMode === 'only') content = tree(`${id}-tree`, 'fill_container', {only: true});
     else {
       const documentWidth = treeMode === 'on' ? width - TREE_W : width;
@@ -318,12 +317,12 @@ export function laneBoards(tokens, {themedXref, template, alias}, suffix) {
       measures: [['터미널', '540px'], ['View', '520px · 핀'], ['트리', '520px · 트리만']], caption: '파일을 고르면 문서가 옆에 열림'},
     {key: 'expanded', no: 6, title: '확대', name: 'expanded', lane: {tool: 'files', tree: 'on', pinned: false, expanded: true, overlay: true, width: LANE_W},
       measures: [['터미널', '1068px · 아래에서 그대로'], ['View', '1068px · 확대'], ['트리', '240px · 켬']], caption: '다시 누르거나 Esc로 이전 배치'},
-    {key: 'work', no: 7, title: 'Work 도구 · 핀 · Sessions 기준', name: 'work, pinned', lane: {tool: 'work', pinned: true, overlay: false, width: LANE_W},
-      measures: [['터미널', '540px'], ['View', '520px · 핀'], ['범위', 'hide 전체'], ['Work 숫자', '3']], caption: '핀은 도구를 바꿔도 그대로 · PR 카드는 파일 도구에서 열림'},
+    {key: 'prs', no: 7, title: 'PRs 도구 · 핀', name: 'prs, pinned', lane: {tool: 'prs', pinned: true, overlay: false, width: LANE_W},
+      measures: [['터미널', '540px'], ['View', '520px · 핀'], ['범위', 'hide 전체'], ['PRs 숫자', '2']], caption: '핀은 도구를 바꿔도 그대로 · PR 카드는 lane의 보기 자리에 열림'},
     {key: 'narrow', no: 8, title: '좁은 창 · 핀을 켰지만 겹침', name: 'narrow 1040', width: 1040, lane: {tool: 'files', pinned: true, overlay: true, width: LANE_W}, tooltip: {label: '핀 · 폭이 부족해 겹쳐 열림', dx: 262, y: 4},
       measures: [['터미널', '652px · 유지'], ['View', '520px · 겹침'], ['남는 터미널 폭', '124px < 480px']], caption: '핀 켬 · 480px이 남지 않아 겹쳐 열림, 터미널을 눌러도 남음'},
   ];
-  const toolOf = spec => spec.lane ? (spec.lane.tool === 'work' ? 'work' : 'files') : null;
+  const toolOf = spec => spec.lane ? (spec.lane.tool === 'prs' ? 'prs' : 'files') : null;
   return STATES.map(spec => board(`rl-${spec.key}-${suffix}`, {
     no: spec.no, title: spec.title, measures: spec.measures, caption: spec.caption,
     win: window(`rl-${spec.key}-${suffix}-win`, {name: spec.name, width: spec.width, lane: spec.lane, tooltip: spec.tooltip, tool: toolOf(spec)}),
