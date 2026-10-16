@@ -61,6 +61,7 @@ test("an agent's View wears its mark, and the operator's line comment reaches th
     const wrapped = (await numberOf(4).boundingBox())!;
     expect(wrapped.height, "line 4 must wrap for this check").toBeGreaterThan(oneRow.height * 1.5);
     await numberOf(4).hover();
+    await screenshot(page, "comment-plus-wrapped-line");
     const plus = (await page.locator('[data-view-comment-add="4"]').boundingBox())!;
     expect(plus.y).toBeGreaterThanOrEqual(wrapped.y);
     expect(plus.y + plus.height).toBeLessThanOrEqual(wrapped.y + oneRow.height);
@@ -139,6 +140,9 @@ test("an area dragged on an image reaches its agent with a screenshot of that ar
     await page.mouse.up();
     const field = page.locator("[data-view-note-field]");
     await expect(field).toBeFocused();
+    // The picked area stays outlined while its note is open.
+    await expect(sheet.locator("[data-view-area-outline]")).toHaveCount(1);
+    await screenshot(page, "comment-image-area-note-open");
     await field.fill("Crop the owl tighter.");
     await page.keyboard.press("ControlOrMeta+Enter");
     await expect(page.locator('[data-view-region-pin="1"]')).toBeVisible();

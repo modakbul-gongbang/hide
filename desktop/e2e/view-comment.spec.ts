@@ -13,7 +13,7 @@ import type { AddressInfo } from "node:net";
 import { agentPane, type HideAnswer } from "../../web/e2e/agent-pane";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { fitWindow, focusPage, isolate, launch, NEEDS_FOCUS, test, type Isolated } from "./fixture";
+import { fitWindow, focusPage, isolate, launch, NEEDS_FOCUS, screenshot, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -157,6 +157,9 @@ test("Comment on a page: the operator picks an element in the page and its agent
   const field = note.locator("[data-view-note-field]");
   await expect(field).toBeFocused();
   await expect(shell.locator(`[data-browser-still="${display}"]`)).toBeVisible();
+  // The picked place stays outlined over the still while its note is open.
+  await expect(note.locator("[data-view-area-outline]")).toHaveCount(1);
+  await screenshot(shell, "comment-page-area-note-open");
   await shell.keyboard.type("Make the button one size smaller.");
   await shell.keyboard.press("ControlOrMeta+Enter");
   await expect(note).toHaveCount(0);
@@ -179,6 +182,8 @@ test("Comment on a page: the operator picks an element in the page and its agent
   const card = shell.locator('[data-page-note="open"]');
   await expect(card.locator("[data-view-comment]")).toContainText("Make the button one size smaller.");
   await card.locator("[data-view-comment-edit]").click();
+  // Editing keeps the comment's place outlined too.
+  await expect(card.locator("[data-view-area-outline]")).toHaveCount(1);
   await card.locator("[data-view-note-field]").fill("Make the button one size smaller. Keep the label.");
   await shell.keyboard.press("ControlOrMeta+Enter");
   await expect(card).toHaveCount(0);
