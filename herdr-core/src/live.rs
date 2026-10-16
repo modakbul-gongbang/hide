@@ -1135,12 +1135,22 @@ fn run_close_effects(context: &LiveContext, effects: Vec<CloseEffectRequest>) {
                 context.api_connector.as_ref(),
                 &effect.key,
                 replacement,
+                &effect.target,
                 effect.allow_replacement_create,
             )
-            .and_then(|(tab_id, payload)| {
+            .map_err(|failure| {
+                if let Some(shell) = &failure.shell_in_tab
+                    && let Some(runtime) = context.runtime.upgrade()
+                    && let Ok(mut guard) = runtime.lock()
+                {
+                    guard.note_shell_in_tab(&effect.key, shell);
+                }
+                failure.message
+            })
+            .and_then(|(shell, payload)| {
                 let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
                 let mut guard = runtime.lock().map_err(|_| "runtime unavailable")?;
-                guard.ingest_close_replacement(&effect, &tab_id, payload)?;
+                guard.ingest_close_replacement(&effect, &shell, payload)?;
                 context.notifier.notify();
                 Ok(())
             })
@@ -1226,12 +1236,47 @@ fn capture_close_item(
     Ok(CloseCaptureOutcome { item })
 }
 
+/// Why a close's shell could not be handed over. A shell already standing in
+/// the closing tab is named: it is this close's own, so the runtime keeps it
+/// among the tab's panes and a retry closes beside it.
+#[derive(Debug)]
+pub(crate) struct ReplacementFailure {
+    pub(crate) message: String,
+    pub(crate) shell_in_tab: Option<String>,
+}
+
+impl From<String> for ReplacementFailure {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            shell_in_tab: None,
+        }
+    }
+}
+
+impl From<&str> for ReplacementFailure {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
+/// Makes, or on a retry finds by its marker, the shell a close needs first,
+/// and answers it with a fresh session that holds it: a new tab in the
+/// primary workspace, or a pane in the closing tab beside the pane `target`
+/// closes when `replacement_in_tab`.
 fn prepare_close_replacement(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
+    target: &CloseCaptureTarget,
     allow_create: bool,
-) -> Result<(String, SessionSnapshotPayload), String> {
+) -> Result<(String, SessionSnapshotPayload), ReplacementFailure> {
+    if context.replacement_in_tab {
+        let CloseCaptureTarget::Pane { pane_id } = target else {
+            return Err("a shell inside the tab needs the pane it stands beside".into());
+        };
+        return prepare_shell_in_tab(connector, key, context, pane_id, allow_create);
+    }
     let started = Instant::now();
     let snapshot =
         fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
@@ -1299,6 +1344,89 @@ fn prepare_close_replacement(
     }
     place_replacement_at_its_checkout(&mut snapshot, &tab_id, &context.checkout_path);
     Ok((tab_id, snapshot))
+}
+
+/// The shell a named tab keeps when its last agent pane closes: split from
+/// that pane at the checkout, unfocused, and stamped with the close's marker,
+/// which is the only proof a retry adopts it by.
+fn prepare_shell_in_tab(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    closing_pane: &str,
+    allow_create: bool,
+) -> Result<(String, SessionSnapshotPayload), ReplacementFailure> {
+    let pane_id = match marked_shells_in_tab(connector, key, &context.tab_id)?.as_slice() {
+        [] if !allow_create => {
+            return Err("The replacement shell disappeared; retry to make another".into());
+        }
+        [] => split_shell_in_tab(connector, key, context, closing_pane)?,
+        [id] => id.clone(),
+        _ => return Err("multiple shells carry the same close intent".into()),
+    };
+    let held = |message: String| ReplacementFailure {
+        message,
+        shell_in_tab: Some(pane_id.clone()),
+    };
+    let mut snapshot = fetch_session_with_connector(connector)
+        .map_err(|error| held(error.message().to_owned()))?;
+    if !snapshot.layouts.iter().any(|layout| {
+        layout.tab_id == context.tab_id && layout.panes.iter().any(|pane| pane.pane_id == pane_id)
+    }) {
+        return Err(held("replacement shell is not confirmed in its tab".into()));
+    }
+    // As for a new tab's shell (below), its folder is the one it was made at.
+    if let Some(pane) = snapshot
+        .panes
+        .iter_mut()
+        .find(|pane| pane.pane_id == pane_id)
+    {
+        pane.cwd = Some(context.checkout_path.clone());
+    }
+    Ok((pane_id, snapshot))
+}
+
+fn marked_shells_in_tab(
+    connector: &dyn ApiConnector,
+    key: &str,
+    tab_id: &str,
+) -> Result<Vec<String>, String> {
+    let layout = export_reopen_layout(connector, key, tab_id)?;
+    let marker = reopen_intent_marker(key, ReopenIntentStage::CloseReplacement);
+    let mut owned = Vec::new();
+    pane_ids_with_reopen_marker(&layout.root, &marker, &mut owned);
+    Ok(owned)
+}
+
+/// A lost or malformed answer can follow a split Herdr made, so a failed
+/// split reads the tab once more for the marked pane a retry would adopt.
+fn split_shell_in_tab(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+    closing_pane: &str,
+) -> Result<String, ReplacementFailure> {
+    let params = wire::replacement_pane_params(
+        closing_pane,
+        &context.checkout_path,
+        reopen_intent_env(key, ReopenIntentStage::CloseReplacement),
+    )?;
+    reopen_request(
+        connector,
+        &format!("herdr-core:{key}:replacement"),
+        "pane.split",
+        params,
+    )
+    .and_then(wire::split_pane)
+    .map_err(|message| ReplacementFailure {
+        message,
+        shell_in_tab: marked_shells_in_tab(connector, key, &context.tab_id)
+            .ok()
+            .and_then(|owned| match owned.as_slice() {
+                [id] => Some(id.clone()),
+                _ => None,
+            }),
+    })
 }
 
 /// Herdr reads a new pane's cwd off its process, which still has the
@@ -1980,7 +2108,7 @@ fn ensure_workspace_and_tab(
         wire::layout_apply_params(
             &workspace_id,
             seed_tab_id.as_deref(),
-            &context.tab_label,
+            context.herdr_tab_label(),
             &tagged_root,
         )?,
     )?;
@@ -2016,7 +2144,7 @@ fn repair_incomplete_tab_layout(
         wire::layout_apply_params(
             &layout.workspace_id,
             Some(&layout.tab_id),
-            &context.tab_label,
+            context.herdr_tab_label(),
             &tag_reopen_layout(root, key, ReopenIntentStage::Layout),
         )?,
     )?;
@@ -2106,10 +2234,12 @@ fn reopen_pane(
                 connector,
                 &format!("herdr-core:{key}:pane-layout"),
                 "layout.apply",
+                // The tab is still there under the name it has now, which
+                // may be a rename made after the close.
                 wire::layout_apply_params(
                     &current_layout.workspace_id,
                     Some(&context.tab_id),
-                    &context.tab_label,
+                    None,
                     &root,
                 )?,
             )?;
@@ -4791,6 +4921,9 @@ mod tests {
                         "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}
             }}),
             "layout.apply" => {
+                // The tab keeps its own label: Herdr would keep any label
+                // sent as the tab's name.
+                assert!(params["tab_label"].is_null());
                 let root = &params["root"];
                 assert_eq!(root["direction"], "right");
                 assert!((root["ratio"].as_f64().unwrap() - 0.4).abs() < 0.000_001);
@@ -4837,10 +4970,12 @@ mod tests {
             checkout_id: "checkout".into(),
             checkout_path: "/tmp".into(),
             tab_id: "w1:t1".into(),
-            tab_label: "Tab".into(),
+            tab_label: "Agent one".into(),
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
+            tab_name: crate::recent_closed::ClosedTabName::Unnamed,
         };
         let pane = ClosedPane {
             pane_id: "closed".into(),
@@ -4918,6 +5053,8 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
+            tab_name: Default::default(),
         };
         let error = repair_incomplete_tab_layout(
             &LocalSocketConnector::new("/tmp/hide-reopen-over-count-must-not-connect.sock"),
@@ -5026,6 +5163,8 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
+            tab_name: Default::default(),
         };
         let pane = ClosedPane {
             pane_id: "w1:p2".into(),
@@ -5157,6 +5296,8 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
+            tab_name: Default::default(),
         };
         let layout_root = ClosedLayoutNode::Split {
             direction: crate::recent_closed::ClosedSplitDirection::Right,
@@ -5272,6 +5413,8 @@ mod tests {
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
+            replacement_in_tab: false,
+            tab_name: Default::default(),
         };
         let root = ClosedLayoutNode::Split {
             direction: crate::recent_closed::ClosedSplitDirection::Right,

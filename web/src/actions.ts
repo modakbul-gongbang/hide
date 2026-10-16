@@ -77,6 +77,7 @@ import { SECRETARY_PROMPT, paneListed } from "./factory/secretary";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import { zoomViewer } from "./viewers/viewerZoom";
+import { submitDrop, type CapturedDrop } from "./explorerDrop";
 import {
   activeDisplay,
   adjacentInOrder,
@@ -499,11 +500,11 @@ export function createActions(send: DispatchFn) {
   /**
    * The keyboard follows what the operator opened into the view that shows
    * it once the core places it (B20), so ⌘W, ⌘S and typing act on that file
-   * rather than on the tree, row or palette it was opened from.
+   * rather than on the tree, row, palette or terminal it was opened from.
+   * `workspace` names where the open lands when it is not the front one.
    */
-  const followOpen = (path: string, kind: "file" | "diff", committed: boolean | null = null) => {
-    const front = frontViewWorkspace();
-    if (front) ui().setViewFocusRequest({ workspace: workspaceKey(front), opened: { path, kind, committed } });
+  const followOpen = (path: string, kind: "file" | "diff", committed: boolean | null = null, workspace = frontViewWorkspace()) => {
+    if (workspace) ui().setViewFocusRequest({ workspace: workspaceKey(workspace), opened: { path, kind, committed } });
   };
 
   /**
@@ -1301,6 +1302,14 @@ export function createActions(send: DispatchFn) {
      */
     readProjectTasks(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
+    },
+
+    /**
+     * Says the operator is looking at this local Git project; the core reads it
+     * again when its last good answer is old, and shows no spinner for it.
+     */
+    lookAtProject(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false, look: true } });
     },
 
     /** Reads each of these local Git projects' GitHub answer again (General's GitHub row, Check again). */
@@ -2561,6 +2570,11 @@ export function createActions(send: DispatchFn) {
       this.openLink(url, external || deviceId !== localDeviceId(rest()));
     },
 
+    /** A project's GitHub repository page: the default browser's for an SSH device's project, as for its pull request. */
+    openRepository(repository: string, deviceId: string, external: boolean) {
+      this.openLink(`https://github.com/${repository}`, external || deviceId !== localDeviceId(rest()));
+    },
+
     /**
      * A path a terminal link names on this Mac (docs/ARCHITECTURE.md, A
      * clicked path is one event). Inside a registered checkout it is one
@@ -2600,6 +2614,7 @@ export function createActions(send: DispatchFn) {
           return;
         }
         if (found.kind === "file" && line !== null) requestLine([path, found.real], line, column);
+        if (found.kind === "file") followOpen(path, "file", null, here ?? { device_id: deviceId, path: owner.checkout.path });
         if (here) {
           dispatch({
             schema_version: 2,
@@ -2717,6 +2732,21 @@ export function createActions(send: DispatchFn) {
       const here = explorerTarget();
       if (!here) return diagnostic("path_move: no focused checkout");
       dispatch({ schema_version: 2, kind: "path_move", payload: { ...here, path, destination } });
+    },
+
+    /** A paste of a copy, or Duplicate: one `path_copy` of `path` into the folder `destination`; the host names the copy when the name is taken. */
+    copyEntry(path: string, destination: string) {
+      const here = explorerTarget();
+      if (!here) return diagnostic("path_copy: no focused checkout");
+      ui().setExplorerNotice(null);
+      dispatch({ schema_version: 2, kind: "path_copy", payload: { ...here, path, destination } });
+    },
+
+    /** Files and folders dropped from the file manager into the folder `destination` (docs/UI_BEHAVIOR.md, Explorer). */
+    importDropped(destination: string, dropped: CapturedDrop) {
+      const here = explorerTarget();
+      if (!here) return diagnostic("path_import: no focused checkout");
+      void submitDrop(here, destination, dropped);
     },
 
     /** Opens the trash confirmation; nothing is dispatched until it is confirmed. */

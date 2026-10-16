@@ -261,6 +261,27 @@ function useAreaOf(displayId: string): string | null {
 }
 
 /**
+ * Why Comment can end without the operator's own turn-off, in words they can
+ * act on, keyed by what hided answers; a failure the operator cannot act on
+ * falls to `feedback.unavailable.other` with its reason.
+ */
+const COMMENT_STOPS = {
+  display_busy: "display_busy",
+  comment_limit: "comment_limit",
+  comment_unavailable_here: "comment_unavailable_here",
+  browser_control_unavailable: "browser_control_unavailable",
+  browser_control_busy: "browser_control_busy",
+  display_missing: "display_missing",
+  display_closed: "display_closed",
+  page_unresponsive: "page_unresponsive",
+  dialog_open: "dialog_open",
+} as const;
+
+function isCommentStop(reason: string): reason is keyof typeof COMMENT_STOPS {
+  return Object.hasOwn(COMMENT_STOPS, reason);
+}
+
+/**
  * Comment on a page (PRD view-opener-feedback B9-B11, B32): while it is on,
  * hided holds the page and draws the overlay in it, so a click or a drag
  * there picks a place rather than reaching the page, and the note on it is
@@ -319,8 +340,8 @@ function BrowserCommentButton({ display, workspace, areaId, address, actions }: 
   );
   const reason = !on && mode?.reason ? mode.reason : null;
   const words = reason
-    ? reason === "display_busy" || reason === "comment_limit" || reason === "comment_unavailable_here"
-      ? t(`feedback.unavailable.${reason}`)
+    ? isCommentStop(reason)
+      ? t(`feedback.unavailable.${COMMENT_STOPS[reason]}`)
       : t("feedback.unavailable.other", { reason })
     : on || starting
       ? t("feedback.commentStop")

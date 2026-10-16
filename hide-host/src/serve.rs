@@ -1106,6 +1106,10 @@ pub fn handle_with_progress(
             crate::attachments::read_sources(&paths, &mut |index| progress(Value::from(index)))
                 .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,
         ),
+        Call::ReadDropped { paths } => to_value(
+            crate::attachments::read_dropped(&paths, &mut |index| progress(Value::from(index)))
+                .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,
+        ),
         Call::RemoveClipboard { path } => to_value(
             crate::attachments::remove_clipboard(Path::new(&path))
                 .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,
@@ -1460,6 +1464,30 @@ pub fn handle_with_progress(
                 root.dir(),
                 &relative_path(&path)?,
                 &relative_path(&destination)?,
+            )?)
+        }
+        Call::Copy {
+            root,
+            path,
+            destination,
+        } => {
+            let root = open_root(&root)?;
+            to_value(crate::copy::copy_into(
+                root.dir(),
+                &relative_path(&path)?,
+                &relative_path(&destination)?,
+            )?)
+        }
+        Call::Import {
+            root,
+            destination,
+            entries,
+        } => {
+            let root = open_root(&root)?;
+            to_value(crate::copy::import(
+                root.dir(),
+                &relative_path(&destination)?,
+                &entries,
             )?)
         }
         Call::Trash { root, path, inode } => {

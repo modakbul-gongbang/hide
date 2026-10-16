@@ -2422,6 +2422,105 @@ fn a_trash_asked_while_a_move_runs_waits_for_the_move_and_then_runs() {
     crate::files::tests::remove_from_trash(&[&folder_name]);
 }
 
+/// A copy lands beside its source under the host's `copy` name, selects what
+/// exists now rather than the name the page expected, and leaves the open tab
+/// of its source where it was: a copy adds an item and moves none.
+#[test]
+fn a_copy_takes_the_host_chosen_name_and_moves_no_open_tab() {
+    let f = Fixture::new();
+    f.open_and_wait("a.txt");
+    f.explorer(
+        "path_copy",
+        serde_json::json!({"path": f.path("a.txt"), "destination": f.root_text()}),
+    );
+    f.settled("path_copy", &f.path("a.txt"), "finished");
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a copy.txt")).unwrap(),
+        "old\n"
+    );
+    let runtime = f.shared.lock().unwrap();
+    let slot = runtime.snapshot.explorer_operation.as_ref().unwrap();
+    assert_eq!(slot.destination, f.path("a copy.txt"));
+    assert_eq!(
+        runtime.snapshot.ui_state.selected_path.as_deref(),
+        Some(f.path("a copy.txt").as_str())
+    );
+    assert!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .all(|tab| tab.path == f.path("a.txt")),
+        "the source's tab still shows the source"
+    );
+}
+
+/// A copy that cannot be made says so at the folder it was pasted into and
+/// leaves nothing behind.
+#[test]
+fn a_copy_into_a_missing_folder_fails_where_it_was_pasted_and_adds_nothing() {
+    let f = Fixture::new();
+    f.explorer(
+        "path_copy",
+        serde_json::json!({"path": f.path("a.txt"), "destination": f.path("nowhere")}),
+    );
+    f.settled("path_copy", &f.path("a.txt"), "failed");
+    let runtime = f.shared.lock().unwrap();
+    let slot = runtime.snapshot.explorer_operation.as_ref().unwrap();
+    assert!(slot.message.is_some());
+    drop(runtime);
+    let names: Vec<_> = std::fs::read_dir(&f.root)
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names.len(), 1, "only a.txt is there");
+}
+
+/// A drop writes the staged files into the folder under free names and
+/// selects the first item; the staged bytes are read through the core's own
+/// node, the machine hided staged them on.
+#[test]
+fn a_drop_is_written_from_its_staged_files_under_free_names() {
+    let f = Fixture::new();
+    let staging = tempfile::tempdir().unwrap();
+    let staged = staging.path().join("one.txt");
+    std::fs::write(&staged, "dropped").unwrap();
+    f.explorer(
+        "path_import",
+        serde_json::json!({
+            "destination": f.root_text(),
+            "items": [
+                {"path": "a.txt", "directory": false, "staged": staged.to_string_lossy()},
+                {"path": "dir", "directory": true},
+            ],
+        }),
+    );
+    f.wait("the drop to finish", |runtime| {
+        runtime
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| {
+                operation.kind == "path_import" && operation.phase == "finished"
+            })
+    });
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a copy.txt")).unwrap(),
+        "dropped"
+    );
+    assert_eq!(
+        std::fs::read_to_string(f.root.join("a.txt")).unwrap(),
+        "old\n"
+    );
+    assert!(f.root.join("dir").is_dir());
+    let runtime = f.shared.lock().unwrap();
+    assert_eq!(
+        runtime.snapshot.ui_state.selected_path.as_deref(),
+        Some(f.path("a copy.txt").as_str())
+    );
+}
+
 /// At most four changes wait behind the running one; the newest past that is
 /// refused and logged, and the four run in the order they were asked.
 #[test]

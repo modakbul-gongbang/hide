@@ -586,6 +586,8 @@ impl Runtime {
             let mut tab = TabSnapshot {
                 agent: representative.map(Into::into),
                 naming: crate::model::TabNaming {
+                    // Set with any pending rename, below.
+                    by_operator: false,
                     focused_pane_id: layout.focused_pane_id.clone(),
                     number: crate::model::tab_number(&session_tab.label, session_tab.number),
                     processes: payload
@@ -2641,13 +2643,24 @@ impl Runtime {
                     selected_pane_id.as_deref().is_some_and(|pane_id| {
                         focused_checkout.is_some() && !focused_checkout_pane_set.contains(pane_id)
                     });
+                // The shell a running close made in its tab was read from
+                // Herdr directly, and the event stream can still be behind
+                // that read: an update without the shell, or with it before
+                // its folder is known, is not its end. The keyboard stays on
+                // it rather than fall back to the pane the close is taking.
+                let selected_close_shell_pending = (selected_pane_missing
+                    || selected_left_focused_checkout)
+                    && selected_pane_id
+                        .as_deref()
+                        .is_some_and(|pane_id| self.close_shell_in_flight(pane_id));
                 // A rendered pane that leaves the selected checkout has
                 // completed an expected lifecycle transition. Retarget only
                 // inside that checkout, or leave it empty. A pane that was
                 // never rendered is still a pending or invalid selection and
                 // keeps the explicit projection error below.
                 let selected_pane_retired = selected_was_projected
-                    && (selected_pane_missing || selected_left_focused_checkout);
+                    && (selected_pane_missing || selected_left_focused_checkout)
+                    && !selected_close_shell_pending;
                 let replacement_pane_id = {
                     selected_pane_retired
                         .then(|| {
@@ -2724,7 +2737,10 @@ impl Runtime {
                 // commands to Herdr's unrelated globally focused workspace.
                 let target_pane_id = if selected_pane_retired {
                     replacement_pane_id.as_deref()
-                } else if selected_pane_missing || explicit_checkout_missing {
+                } else if selected_pane_missing
+                    || explicit_checkout_missing
+                    || selected_close_shell_pending
+                {
                     None
                 } else if focused_checkout.is_some() {
                     // With no selection, the keyboard lands in the tab the
@@ -2815,6 +2831,7 @@ impl Runtime {
                     self.push_diagnostic("pane.selection_retired", message);
                     selection_changed = true;
                 } else if !selected_creation_pending
+                    && !selected_close_shell_pending
                     && (selected_pane_missing || selected_pane_invalid_for_context)
                 {
                     let pane_id = selected_pane_id.as_deref().unwrap_or("<missing>");
@@ -4303,7 +4320,7 @@ impl Runtime {
             )),
             None => Err("No checkout is focused".to_owned()),
         };
-        let (operation, target, (document_root, channel)) = match planned {
+        let (mut operation, target, (document_root, channel)) = match planned {
             Ok(planned) => planned,
             Err(message) => {
                 self.snapshot.explorer_operation = Some(ExplorerOperationSnapshot {
@@ -4330,9 +4347,22 @@ impl Runtime {
             "component": "explorer", "kind": "explorer.change_requested",
             "operation": operation.kind.as_str(), "id": id, "device": target.device_id,
         }));
+        // A drop's bytes wait in hided's staging on this machine, whatever
+        // device the checkout is on, so its worker reads them through the
+        // core's own node.
+        let own_node = if operation.kind == files::ExplorerOperationKind::PathImport {
+            let node = self.node.as_str().to_owned();
+            self.node_link(&node).ok()
+        } else {
+            None
+        };
         let Some(context) = self.worker_context.clone() else {
-            let result =
-                files::apply_explorer_operation(channel.as_ref(), &document_root, &operation);
+            let result = files::run_explorer_operation(
+                channel.as_ref(),
+                own_node.as_deref(),
+                &document_root,
+                &mut operation,
+            );
             return self.ingest_explorer_operation_result(id, &target, &operation, result);
         };
         let worker_operation = operation.clone();
@@ -4340,9 +4370,13 @@ impl Runtime {
         match thread::Builder::new()
             .name(format!("herdr-core-explorer-{}", operation.kind.as_str()))
             .spawn(move || {
-                let operation = worker_operation;
-                let result =
-                    files::apply_explorer_operation(channel.as_ref(), &document_root, &operation);
+                let mut operation = worker_operation;
+                let result = files::run_explorer_operation(
+                    channel.as_ref(),
+                    own_node.as_deref(),
+                    &document_root,
+                    &mut operation,
+                );
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -4396,7 +4430,7 @@ impl Runtime {
         id: u64,
         target: &ExplorerTarget,
         operation: &files::ExplorerOperation,
-        result: Result<(), String>,
+        result: Result<files::Applied, String>,
     ) -> bool {
         let Some(slot) = self.snapshot.explorer_operation.as_mut() else {
             return false;
@@ -4405,9 +4439,23 @@ impl Runtime {
             return false;
         }
         let source = operation.source.clone();
-        let destination = operation.destination.clone();
+        let mut destination = operation.destination.clone();
+        let mut selection = operation.selection.clone();
+        // A copy, or a drop, adds items and moves none: no path the core
+        // carries (an expanded folder, an open tab) follows it anywhere.
+        let adds_only = matches!(
+            operation.kind,
+            files::ExplorerOperationKind::PathCopy | files::ExplorerOperationKind::PathImport
+        );
         match result {
-            Ok(()) => {
+            Ok(applied) => {
+                // The host chose the new item's name when the wanted one was
+                // taken, so the slot and the selection name what exists.
+                if let Some(named) = applied.destination {
+                    destination = named.clone();
+                    selection = named;
+                }
+                slot.destination = destination.clone();
                 slot.phase = "finished".to_owned();
                 let in_checkout: Vec<String> = self
                     .snapshot
@@ -4421,7 +4469,7 @@ impl Runtime {
                     })
                     .map(|tab| tab.id.clone())
                     .collect();
-                if source != destination {
+                if source != destination && !adds_only {
                     for folder in self.expanded_paths_on(&target.device_id).iter_mut() {
                         if let Some(moved) = retarget_path(folder, &source, &destination) {
                             *folder = moved;
@@ -4477,7 +4525,7 @@ impl Runtime {
                     }
                     self.sync_active_editor_document();
                 }
-                self.snapshot.ui_state.selected_path = Some(operation.selection.clone());
+                self.snapshot.ui_state.selected_path = Some(selection);
                 self.push_diagnostic(
                     format!("explorer.{}", operation.kind.as_str()),
                     format!("{source} -> {destination}"),

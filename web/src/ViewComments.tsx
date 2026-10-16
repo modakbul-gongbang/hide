@@ -744,11 +744,12 @@ export function RegionLayer({ displayId, path, source, workspace: view, actions 
             }}
             onPointerCancel={() => setDrag(null)}
           >
-            {dragging ? <div className="pointer-events-none absolute border-2 border-primary bg-primary/10" style={rectStyle(dragging)} /> : null}
+            {dragging ? <AreaOutline rect={dragging} /> : null}
+            {!dragging && formHere && formHere.commentId === null && formHere.anchor.kind === "region" ? <AreaOutline rect={scaledRect(formHere.anchor.rect, page)} /> : null}
             {here.map((comment) => {
               const rect = scaledRect(comment.anchor.kind === "region" ? comment.anchor.rect : { x: 0, y: 0, width: 0, height: 0 }, page);
               return (
-                <div key={comment.id} className={cn("pointer-events-none absolute border-2", comment.not_delivered ? "border-warning bg-warning/10" : "border-primary bg-primary/10")} style={rectStyle(rect)} data-view-region={comment.id}>
+                <AreaOutline key={comment.id} rect={rect} notDelivered={comment.not_delivered} id={comment.id}>
                   <button
                     type="button"
                     className="pointer-events-auto absolute -left-(--size-badge-height) -top-(--size-badge-height) rounded-full outline-none focus-visible:ring-1 focus-visible:ring-ring"
@@ -764,7 +765,7 @@ export function RegionLayer({ displayId, path, source, workspace: view, actions 
                       <CommentCard comment={comment} workspace={view} displayId={displayId} actions={actions} />
                     </div>
                   ) : null}
-                </div>
+                </AreaOutline>
               );
             })}
             {formHere ? (
@@ -783,6 +784,15 @@ export function RegionLayer({ displayId, path, source, workspace: view, actions 
         );
       })}
     </>
+  );
+}
+
+/** The outline of a picked or saved area; a picked area keeps it for as long as its note is open (docs/UI_BEHAVIOR.md, View openers and comments). */
+function AreaOutline({ rect, notDelivered = false, id, children }: { rect: ViewRect; notDelivered?: boolean; id?: string; children?: ReactNode }) {
+  return (
+    <div className={cn("pointer-events-none absolute border-2", notDelivered ? "border-warning bg-warning/10" : "border-primary bg-primary/10")} style={rectStyle(rect)} data-view-region={id} data-view-area-outline={id ? undefined : ""}>
+      {children}
+    </div>
   );
 }
 
@@ -891,6 +901,7 @@ export function PageNoteLayer({ commentKey, displayId, workspace, actions, add, 
         close();
       }}
     >
+      {at ? <AreaOutline rect={{ x: at.x, y: at.y, width: at.width, height: at.height }} notDelivered={comment?.not_delivered} /> : null}
       {at ? (
         <div ref={card} className="absolute w-(--size-view-note)" style={style}>
           {body}

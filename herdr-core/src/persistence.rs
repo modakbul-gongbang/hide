@@ -189,6 +189,11 @@ struct StoredUiState {
     /// Absent in a store written before the Factory secretary existed.
     #[serde(default)]
     factory_secretary_pane: Option<String>,
+    /// Absent in a store written before Rename was recorded, which loads
+    /// empty: no tab named before then counts as the operator's until it is
+    /// renamed again. More entries than the limit (a hand edit) are cut to it.
+    #[serde(default)]
+    operator_tab_names: BTreeMap<String, String>,
 }
 
 /// Settings › Issues as stored. `default_agent` is only ever read: it named
@@ -467,6 +472,11 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
                 recent
             },
             factory_secretary_pane: stored.factory_secretary_pane,
+            operator_tab_names: stored
+                .operator_tab_names
+                .into_iter()
+                .take(crate::model::OPERATOR_TAB_NAME_LIMIT)
+                .collect(),
         },
         stored.pane_terminal_sizes,
         disposition,
@@ -560,6 +570,7 @@ pub fn save(
         recent_checkouts: state.recent_checkouts.clone(),
         recent_pane_ids: state.recent_pane_ids.clone(),
         factory_secretary_pane: state.factory_secretary_pane.clone(),
+        operator_tab_names: state.operator_tab_names.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
@@ -826,6 +837,26 @@ mod tests {
         let (state, _sizes, disposition) = decode(source);
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert!(state.pane_read_records.is_empty());
+    }
+
+    /// A store written before Rename was recorded names no tab as the
+    /// operator's, so no tab outlives its agents until it is renamed again;
+    /// a recorded name survives a save and a load.
+    #[test]
+    fn operator_tab_names_load_empty_from_an_older_store_and_survive_a_save() {
+        let older = br#"{"schema_version":1,"expanded_paths":[],"selected_path":null,"selected_pane_id":null}"#;
+        let (mut state, _sizes, disposition) = decode(older);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert!(state.operator_tab_names.is_empty());
+
+        state
+            .operator_tab_names
+            .insert("w1:t1".to_owned(), "Planning".to_owned());
+        let folder = tempfile::tempdir().unwrap();
+        let path = folder.path().join("state.json");
+        save(&path, &state, &PaneTerminalSizes::new()).expect("state saves");
+        let (reloaded, _sizes, _) = load(&path);
+        assert_eq!(reloaded.operator_tab_names, state.operator_tab_names);
     }
 
     #[test]

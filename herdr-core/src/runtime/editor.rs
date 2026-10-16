@@ -1,3 +1,5 @@
+use super::documents::CloseAfter;
+use super::workspace_view::WorkspaceKey;
 use super::*;
 
 pub(super) enum PreparedFileTab {
@@ -192,11 +194,13 @@ impl Runtime {
     }
 
     /// A close that waits on its save: the tab closes when the save lands
-    /// and the draft matches what was written.
+    /// and the draft matches what was written, and then the lane of `lane`
+    /// when that close left it nothing to show (`close_emptied_lane`).
     pub(super) fn start_file_save_then_close(
         &mut self,
         close_tab_id: String,
         payload: FileSavePayload,
+        lane: Option<WorkspaceKey>,
     ) -> bool {
         if payload.tab_id != close_tab_id {
             self.set_error(
@@ -206,7 +210,7 @@ impl Runtime {
             );
             return true;
         }
-        self.request_file_save(payload, true)
+        self.request_file_save(payload, CloseAfter::Document { lane })
     }
 
     pub(super) fn prepare_file_tab(
@@ -869,6 +873,12 @@ impl Runtime {
                                 })
                             }),
                         replacement_shell: self.primary_needs_shell(session_workspace_id, tab_id),
+                        replacement_in_tab: false,
+                        tab_name: match (tab.naming.operator_name(), tab.naming.manual_name()) {
+                            (Some(name), _) => ClosedTabName::Named(name.to_owned()),
+                            (None, Some(name)) => ClosedTabName::Labeled(name.to_owned()),
+                            (None, None) => ClosedTabName::Unnamed,
+                        },
                     })
             })
     }
@@ -1273,17 +1283,6 @@ impl Runtime {
             .panes
             .iter()
             .all(|pane| pane.failed_terminal_id.is_some());
-        if context.replacement_shell && !self.admit_agent_tab(&context.checkout_path) {
-            return true;
-        }
-        let Some(live_context) = self.live.as_ref().cloned() else {
-            self.set_reopen_notices(vec![live::ReopenNotice {
-                pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
-                    .then_some(target_id.clone()),
-                message: "Closing this item requires the local Herdr connection".into(),
-            }]);
-            return true;
-        };
         let retain_for_reopen =
             !self
                 .snapshot
@@ -1297,6 +1296,22 @@ impl Runtime {
                         && record.phase == crate::agent_sleep::DormantPhase::Closing
                         && record.close_key.is_none()
                 });
+        // A shell inside the tab keeps the tab, so the primary workspace keeps
+        // its tab too and needs no new one.
+        context.replacement_in_tab = retain_for_reopen && self.keeps_named_tab(&target, &tab);
+        context.replacement_shell |= context.replacement_in_tab;
+        let new_tab_shell = context.replacement_shell && !context.replacement_in_tab;
+        if new_tab_shell && !self.admit_agent_tab(&context.checkout_path) {
+            return true;
+        }
+        let Some(live_context) = self.live.as_ref().cloned() else {
+            self.set_reopen_notices(vec![live::ReopenNotice {
+                pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
+                    .then_some(target_id.clone()),
+                message: "Closing this item requires the local Herdr connection".into(),
+            }]);
+            return true;
+        };
         let request = live::CloseCaptureRequest {
             failed_terminals: tab
                 .panes
@@ -1318,7 +1333,7 @@ impl Runtime {
             panes: self.closed_panes(&tab),
             target,
         };
-        if request.context.replacement_shell
+        if new_tab_shell
             && !self.reserve_agent_effect(
                 &request.context.checkout_path,
                 &format!("close:{}", request.key),
@@ -1387,7 +1402,7 @@ impl Runtime {
             request.key.clone(),
             PendingClose {
                 replacement_effect_started: false,
-                replacement_tab_id: None,
+                replacement_id: None,
                 allow_replacement_create: true,
                 target_id: target_id.clone(),
                 scope_id,
@@ -1435,7 +1450,8 @@ impl Runtime {
             // A sleep's own close (not kept for reopen) is Hide's, not the
             // operator's, so it never takes the screen elsewhere. One that
             // opens a replacement shell keeps its tab (`leaving_tab`), so its
-            // checkout is never empty.
+            // checkout is never empty; a shell made inside the tab takes the
+            // keyboard once it exists (`ingest_close_replacement`).
             self.move_from_closing_target(&request.target, &tab, request.retain_for_reopen);
         }
         let selection_after = self.close_selection_state(restore_checkout_id.as_deref());
@@ -1733,7 +1749,7 @@ impl Runtime {
             request.key.clone(),
             PendingClose {
                 replacement_effect_started: false,
-                replacement_tab_id: None,
+                replacement_id: None,
                 allow_replacement_create: true,
                 request: request.clone(),
                 target_id,
@@ -1926,6 +1942,8 @@ impl Runtime {
                     tab_index: 0,
                     agent_area: None,
                     replacement_shell: false,
+                    replacement_in_tab: false,
+                    tab_name: ClosedTabName::Unnamed,
                 },
                 panes: Vec::new(),
                 target: request.target.clone(),
@@ -2925,6 +2943,9 @@ impl Runtime {
                         }
                         _ => None,
                     };
+                    if let Some(name) = context.and_then(ClosedContext::operator_tab_name) {
+                        self.remember_operator_tab_name(tab_id, Some(name));
+                    }
                     if let Some(context) = context {
                         match self.queue_restored_agent_tab(context, tab_id) {
                             Ok(()) => self.finish_agent_effect(

@@ -1142,6 +1142,9 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
                 .iter()
                 .any(|tab| tab.id == tab_id && tab.dirty)
         );
+        // The lane waits on the save with the view it shows.
+        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+        assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
         runtime.dispatch_json(&explorer_event(
             "file_conflict",
             serde_json::json!({"tab_id": tab_id, "action": "keep_editing"}),
@@ -1155,11 +1158,16 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let mut runtime = shared.lock().unwrap();
     let emptied = tree(&mut runtime);
     assert_eq!(emptied.display_count, 0);
-    // B10: the last area stays, empty; the lane stays on the files tool,
-    // where the tree shows alone (PRD right-lane B12).
+    // B10: the last area stays, empty; with the tree off, the lane closes
+    // once the save has landed and keeps Files to reopen on (PRD right-lane
+    // B12).
     assert!(matches!(emptied.root, ViewNodeSnapshot::Area(_)));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(view.tool, Some(crate::workspace_views::Tool::Files));
+    assert!(!view.tree);
+    assert_eq!(
+        (view.tool, view.last_tool),
+        (None, Some(crate::workspace_views::Tool::Files))
+    );
 }
 
 /// B5: a draft in one display keeps every display of that document open.

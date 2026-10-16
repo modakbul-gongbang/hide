@@ -309,6 +309,12 @@ pub enum ExplorerOperationKind {
     DirCreate,
     PathRename,
     PathMove,
+    /// An item copied into a folder of the same checkout, whole; the host
+    /// names the copy.
+    PathCopy,
+    /// Files and folders dropped from the operator's file manager, written
+    /// into a folder; the host names each top-level item.
+    PathImport,
     /// The item goes to the platform Trash. There is no permanent delete;
     /// a filesystem with no Trash refuses the move and the item stays.
     PathTrash,
@@ -321,6 +327,8 @@ impl ExplorerOperationKind {
             Self::DirCreate => "dir_create",
             Self::PathRename => "path_rename",
             Self::PathMove => "path_move",
+            Self::PathCopy => "path_copy",
+            Self::PathImport => "path_import",
             Self::PathTrash => "path_trash",
         }
     }
@@ -354,6 +362,31 @@ pub struct ExplorerOperation {
     /// path while the modal was open. `None` leaves only the existence
     /// check, which is all a rename or move has ever had.
     pub expected_inode: Option<u64>,
+    /// What a drop from the file manager carries, in the order the page listed
+    /// it. Empty for every other change.
+    pub import: Vec<ImportItem>,
+}
+
+/// One file or folder of a drop, below the folder it lands in. The page's
+/// bytes wait in hided's staging until the worker reads them (`staged`),
+/// off the runtime lock, into `data`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ImportItem {
+    /// The wire spelling of a path below the destination folder.
+    pub path: String,
+    pub directory: bool,
+    /// The staged file holding a file's bytes, absolute on the core's machine.
+    pub staged: Option<String>,
+    /// The bytes, base64 encoded, once read.
+    pub data: String,
+}
+
+/// What a finished change tells the core beyond success: where the new item
+/// ended up, when the host chose its name.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct Applied {
+    /// The path of the first new item, in the checkout device's spelling.
+    pub destination: Option<String>,
 }
 
 /// An inode on the shell's wire, as decimal text. A browser reads a JSON
@@ -401,6 +434,7 @@ impl ExplorerOperation {
             destination: path.clone(),
             selection: path,
             expected_inode: None,
+            import: Vec::new(),
         })
     }
 
@@ -420,6 +454,7 @@ impl ExplorerOperation {
             destination: destination.clone(),
             selection: destination,
             expected_inode: None,
+            import: Vec::new(),
         })
     }
 
@@ -443,6 +478,66 @@ impl ExplorerOperation {
             destination: destination.clone(),
             selection: destination,
             expected_inode: None,
+            import: Vec::new(),
+        })
+    }
+
+    /// `path` copied into the folder `destination_dir` of the same checkout.
+    /// The host chooses the copy's name when the item's own is taken, so the
+    /// destination here is the name it would take if free; the host's answer
+    /// replaces it (`Applied`). A folder is not copied into itself.
+    pub fn copy_into(root: &str, path: &str, destination_dir: &str) -> Result<Self, String> {
+        let source = path_inside_root(root, path, false)?;
+        let destination_dir = path_inside_root(root, destination_dir, true)?;
+        let name = source
+            .file_name()
+            .ok_or_else(|| "The item has no name".to_owned())?;
+        if destination_dir.starts_with(&source) {
+            return Err("A folder cannot be copied into itself".to_owned());
+        }
+        let destination = path::wire_join(root, &item_below(&destination_dir, name)?);
+        Ok(Self {
+            kind: ExplorerOperationKind::PathCopy,
+            source: path::wire_join(root, &source),
+            destination: destination.clone(),
+            selection: destination,
+            expected_inode: None,
+            import: Vec::new(),
+        })
+    }
+
+    /// A drop's items written into the folder `destination_dir`. Refused from
+    /// the strings alone when it holds nothing, more than the cap, or a path
+    /// that is not a name below the folder; the host judges the rest.
+    pub fn import_into(
+        root: &str,
+        destination_dir: &str,
+        items: Vec<ImportItem>,
+    ) -> Result<Self, String> {
+        let folder = path_inside_root(root, destination_dir, true)?;
+        if items.is_empty() {
+            return Err("The drop holds nothing".to_owned());
+        }
+        if items.len() > hide_node_link::mutate::IMPORT_MAX_ITEMS {
+            return Err(format!(
+                "A drop may hold {} items; nothing was added",
+                hide_node_link::mutate::IMPORT_MAX_ITEMS
+            ));
+        }
+        for item in &items {
+            RelPath::parse(&item.path)
+                .ok()
+                .filter(|path| !path.is_root())
+                .ok_or_else(|| format!("{} is not a path below the folder", item.path))?;
+        }
+        let destination = path::wire_join(root, &folder);
+        Ok(Self {
+            kind: ExplorerOperationKind::PathImport,
+            source: destination.clone(),
+            destination: destination.clone(),
+            selection: destination,
+            expected_inode: None,
+            import: items,
         })
     }
 
@@ -471,6 +566,7 @@ impl ExplorerOperation {
             destination: source,
             selection: path::wire_join(root, &selection),
             expected_inode,
+            import: Vec::new(),
         })
     }
 }
@@ -509,7 +605,7 @@ pub fn apply_explorer_operation(
     channel: &dyn NodeLink,
     root: &DocumentRoot,
     operation: &ExplorerOperation,
-) -> Result<(), String> {
+) -> Result<Applied, String> {
     let root_ref = root_ref(channel, root).map_err(|error| change_failure(operation, error))?;
     let source = relative_or_root(&root.path, &operation.source)?;
     let destination = RelPath::parse(&relative_or_root(&root.path, &operation.destination)?)
@@ -540,6 +636,56 @@ pub fn apply_explorer_operation(
                 .ok_or_else(|| "The destination has no folder".to_owned())?
                 .into_string(),
         },
+        ExplorerOperationKind::PathCopy => {
+            let folder = destination
+                .parent()
+                .ok_or_else(|| "The destination has no folder".to_owned())?;
+            let copied = call_as::<hide_node_link::mutate::Copied>(
+                channel,
+                Call::Copy {
+                    root: root_ref,
+                    path: source,
+                    destination: folder.as_str().to_owned(),
+                },
+                CHANGE_TIMEOUT,
+            )
+            .map_err(|error| change_failure(operation, error))?;
+            let named = folder
+                .join(&copied.name)
+                .map_err(|error| error.to_string())?;
+            return Ok(Applied {
+                destination: Some(path::wire_join(&root.path, &named)),
+            });
+        }
+        ExplorerOperationKind::PathImport => {
+            let entries = operation
+                .import
+                .iter()
+                .map(|item| hide_node_link::mutate::ImportEntry {
+                    path: item.path.clone(),
+                    directory: item.directory,
+                    data: item.data.clone(),
+                })
+                .collect();
+            let imported = call_as::<hide_node_link::mutate::Imported>(
+                channel,
+                Call::Import {
+                    root: root_ref,
+                    destination: source,
+                    entries,
+                },
+                CHANGE_TIMEOUT,
+            )
+            .map_err(|error| change_failure(operation, error))?;
+            return Ok(Applied {
+                destination: imported.names.first().map(|name| {
+                    path::wire_join(
+                        &operation.destination,
+                        &RelPath::root().join(name).expect("a name the host made"),
+                    )
+                }),
+            });
+        }
         ExplorerOperationKind::PathTrash => Call::Trash {
             root: root_ref,
             path: source,
@@ -547,8 +693,63 @@ pub fn apply_explorer_operation(
         },
     };
     call_as::<hide_node_link::mutate::Changed>(channel, call, CHANGE_TIMEOUT)
-        .map(drop)
+        .map(|_| Applied::default())
         .map_err(|error| change_failure(operation, error))
+}
+
+/// Reads the staged bytes of a drop on the core's own node, the machine that
+/// holds hided's staging, into the operation's items. A staged file that is
+/// gone or changed is a failure of the whole drop: nothing has been written
+/// yet.
+pub fn load_dropped(
+    own_node: &dyn NodeLink,
+    operation: &mut ExplorerOperation,
+) -> Result<(), String> {
+    let paths: Vec<String> = operation
+        .import
+        .iter()
+        .filter_map(|item| item.staged.clone())
+        .collect();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let read: Vec<hide_node_link::attachments::ReadFile> =
+        crate::node_access::call_as(own_node, Call::ReadDropped { paths }, DROP_READ_TIMEOUT)
+            .map_err(|error| match error {
+                LinkError::Refused(refusal) => refusal.message,
+                other => format!("The dropped files could not be read: {other}; nothing was added"),
+            })?;
+    let mut read = read.into_iter();
+    for item in &mut operation.import {
+        if item.staged.is_none() {
+            continue;
+        }
+        let file = read
+            .next()
+            .ok_or_else(|| "A dropped file was not read; nothing was added".to_owned())?;
+        item.data = file.data;
+    }
+    Ok(())
+}
+
+/// Reading 40 MiB of staged files from a local disk takes well under a minute.
+const DROP_READ_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// [`apply_explorer_operation`] after a drop's bytes are read: the one call a
+/// worker makes for any change.
+pub fn run_explorer_operation(
+    channel: &dyn NodeLink,
+    own_node: Option<&dyn NodeLink>,
+    root: &DocumentRoot,
+    operation: &mut ExplorerOperation,
+) -> Result<Applied, String> {
+    if operation.kind == ExplorerOperationKind::PathImport {
+        let own_node = own_node.ok_or_else(|| {
+            "This machine's files could not be reached; nothing was added".to_owned()
+        })?;
+        load_dropped(own_node, operation)?;
+    }
+    apply_explorer_operation(channel, root, operation)
 }
 
 fn file_name(path: &RelPath) -> Result<String, String> {
@@ -915,6 +1116,159 @@ pub(crate) mod tests {
                 },
             ]
         );
+    }
+
+    /// Records each request and answers every one with `answer`, the shape a
+    /// copy or a drop gets back from the host that named the new items.
+    struct AnsweringHost {
+        answer: serde_json::Value,
+        calls: std::sync::Mutex<Vec<Call>>,
+    }
+
+    impl NodeLink for AnsweringHost {
+        fn call(
+            &self,
+            call: Call,
+            _timeout: Duration,
+        ) -> Result<crate::node_access::LinkAnswer, LinkError> {
+            self.calls.lock().unwrap().push(call);
+            Ok(self.answer.clone().into())
+        }
+    }
+
+    #[test]
+    fn a_copy_asks_the_host_for_one_item_and_takes_the_name_the_host_chose() {
+        let root = "/repo";
+        let identity = RootIdentity {
+            device: 1,
+            inode: 2,
+        };
+        let document_root = DocumentRoot {
+            device_id: "macbook".to_owned(),
+            path: "/repo".to_owned(),
+            identity: Some(identity),
+        };
+        let host = AnsweringHost {
+            answer: serde_json::json!({ "name": "a copy.rs" }),
+            calls: Default::default(),
+        };
+        let copy = ExplorerOperation::copy_into(root, "/repo/src/a.rs", "/repo/dest").unwrap();
+        assert_eq!(copy.kind, ExplorerOperationKind::PathCopy);
+        let applied = apply_explorer_operation(&host, &document_root, &copy).unwrap();
+        assert_eq!(applied.destination.as_deref(), Some("/repo/dest/a copy.rs"));
+        assert_eq!(
+            *host.calls.lock().unwrap(),
+            vec![Call::Copy {
+                root: RootRef {
+                    path: "/repo".to_owned(),
+                    identity
+                },
+                path: "src/a.rs".to_owned(),
+                destination: "dest".to_owned()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_copy_or_a_drop_outside_the_checkout_or_into_itself_is_refused_before_anything_is_sent() {
+        let root = "/repo";
+        for (path, destination, expected) in [
+            ("/repo-other/a", "/repo", "outside the workspace"),
+            ("/repo/a", "/repo-other", "outside the workspace"),
+            ("/repo/a", "/repo/../etc", "not a normal path"),
+            ("/repo", "/repo/src", "root itself"),
+            ("/repo/src", "/repo/src", "into itself"),
+            ("/repo/src", "/repo/src/nested", "into itself"),
+        ] {
+            let refused = ExplorerOperation::copy_into(root, path, destination).unwrap_err();
+            assert!(
+                refused.contains(expected),
+                "{path} -> {destination}: {refused}"
+            );
+        }
+        let item = |path: &str| ImportItem {
+            path: path.to_owned(),
+            directory: false,
+            staged: None,
+            data: String::new(),
+        };
+        assert!(
+            ExplorerOperation::import_into(root, "/repo", Vec::new())
+                .unwrap_err()
+                .contains("holds nothing")
+        );
+        assert!(
+            ExplorerOperation::import_into(root, "/repo-other", vec![item("a")])
+                .unwrap_err()
+                .contains("outside the workspace")
+        );
+        for path in ["", "../escape", "/abs", "a/../b"] {
+            assert!(
+                ExplorerOperation::import_into(root, "/repo", vec![item(path)]).is_err(),
+                "{path:?}"
+            );
+        }
+        let many = (0..=hide_node_link::mutate::IMPORT_MAX_ITEMS)
+            .map(|n| item(&format!("f{n}")))
+            .collect();
+        assert!(
+            ExplorerOperation::import_into(root, "/repo", many)
+                .unwrap_err()
+                .contains("nothing was added")
+        );
+    }
+
+    #[test]
+    fn a_drop_sends_the_bytes_to_the_host_and_selects_the_first_name_it_made() {
+        let identity = RootIdentity {
+            device: 1,
+            inode: 2,
+        };
+        let document_root = DocumentRoot {
+            device_id: "macbook".to_owned(),
+            path: "/repo".to_owned(),
+            identity: Some(identity),
+        };
+        let host = AnsweringHost {
+            answer: serde_json::json!({ "names": ["a copy.txt", "photos"] }),
+            calls: Default::default(),
+        };
+        let drop = ExplorerOperation::import_into(
+            "/repo",
+            "/repo/src",
+            vec![
+                ImportItem {
+                    path: "a.txt".to_owned(),
+                    directory: false,
+                    staged: None,
+                    data: "aGk=".to_owned(),
+                },
+                ImportItem {
+                    path: "photos".to_owned(),
+                    directory: true,
+                    staged: None,
+                    data: String::new(),
+                },
+            ],
+        )
+        .unwrap();
+        let applied = apply_explorer_operation(&host, &document_root, &drop).unwrap();
+        assert_eq!(applied.destination.as_deref(), Some("/repo/src/a copy.txt"));
+        match host.calls.lock().unwrap().as_slice() {
+            [
+                Call::Import {
+                    destination,
+                    entries,
+                    ..
+                },
+            ] => {
+                assert_eq!(destination, "src");
+                assert_eq!(entries.len(), 2);
+                assert_eq!(entries[0].data, "aGk=");
+                assert!(entries[1].directory);
+            }
+            other => panic!("one import call was expected: {other:?}"),
+        }
     }
 
     #[test]

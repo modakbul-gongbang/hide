@@ -31,7 +31,7 @@ it("numbers grouped roots in physical tab order, skipping children and duplicate
   const checkout = checkoutWith(["t1", "t2", "t3"]);
   for (const [index, panes] of [[0, ["a", "b", "child"]], [1, ["c"]], [2, ["single"]]] as const) {
     checkout.tabs[index]!.panes = panes.map((id) => ({ id })) as Checkout["tabs"][number]["panes"];
-    checkout.tabs[index]!.sidebar = { manual_name: null, number: index + 1 };
+    checkout.tabs[index]!.sidebar = { manual_name: null, number: index + 1, named_by_operator: false };
   }
   const rest = legacyRest({ navigator: { focused_device_id: "local", devices: [{ id: "local", kind: "local" }], workspaces: [{ id: "w1", device_id: "local", expanded: true, checkouts: [checkout] }] }, status: { remote: [] } } as unknown as SnapshotRest, agents);
   const placed = rest.navigator!.workspaces![0]!.checkouts[0]!;

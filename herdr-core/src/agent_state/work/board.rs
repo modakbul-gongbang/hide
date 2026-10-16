@@ -9,8 +9,8 @@
 use crate::agent_state::tally::scope::{RowRef, row_references};
 use crate::delivery::INACTIVITY_MS;
 use crate::model::{
-    MergeState, PullRequestBadge, PullRequestChecks, PullRequestSnapshot, ReviewAsk,
-    ReviewDecision, SidebarAgentSnapshot, WorkspaceSnapshot,
+    ExtraQuery, MergeQueuePlace, MergeState, PullRequestBadge, PullRequestChecks,
+    PullRequestSnapshot, ReviewAsk, ReviewDecision, SidebarAgentSnapshot, WorkspaceSnapshot,
 };
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
@@ -178,13 +178,19 @@ fn is_open(pr: &PullRequestSnapshot) -> bool {
 /// session of theirs made or worked on, review asks made of them or their
 /// team, and bots'. A merged one needs the first two. A teammate's pull
 /// request none of these reach is not listed.
+///
+/// A pull request is left out only when every judgment says it is not the
+/// operator's. While the account or the review asks are unknown (issue #1189)
+/// one that may be theirs is listed, since leaving it out would hide a pull
+/// request the operator may own.
 pub(crate) fn listed(pr: &PullRequestSnapshot) -> bool {
     let work = &pr.work;
+    let may_be_mine = work.mine != Some(false);
     match pr.badge {
         PullRequestBadge::Closed => false,
-        PullRequestBadge::Merged => work.mine || !work.sessions.is_empty(),
+        PullRequestBadge::Merged => may_be_mine || !work.sessions.is_empty(),
         PullRequestBadge::Open | PullRequestBadge::Review => {
-            work.mine
+            may_be_mine
                 || !work.sessions.is_empty()
                 || work.asked_of_me != ReviewAsk::None
                 || work.author_is_bot
@@ -232,8 +238,16 @@ fn standing(pr: &PullRequestSnapshot) -> Option<Placed> {
     let work = &pr.work;
     // Blocked is for work the operator or their sessions own: someone else's
     // pull request that was only asked of them is the review's, whatever its
-    // checks say (D-08, D-25).
-    let owned = work.mine || !work.sessions.is_empty() || work.author_is_bot;
+    // checks say (D-08, D-25). Whether the operator wrote it is unknown while
+    // the account is, and then the pull request is not judged at all.
+    let owned = if !work.sessions.is_empty() || work.author_is_bot {
+        true
+    } else {
+        match work.mine {
+            Some(mine) => mine,
+            None => return Some(unjudged(ExtraQuery::Account)),
+        }
+    };
     if owned && blocking_failure(pr) {
         return Some(place("blocked", failed_reason(pr)));
     }
@@ -249,7 +263,24 @@ fn standing(pr: &PullRequestSnapshot) -> Option<Placed> {
             Reason::of("conflict").base(&pr.base_branch),
         ));
     }
-    if work.mine {
+    // A bot's pull request is nobody's but its own, so the account tells
+    // nothing about it.
+    let mine = match work.mine {
+        Some(mine) => mine,
+        None if work.author_is_bot => false,
+        None => return Some(unjudged(ExtraQuery::Account)),
+    };
+    if mine {
+        // A pull request in the merge queue is placed before this point, and
+        // the states below are the ones a queued pull request can be in.
+        if work.queue == MergeQueuePlace::Unknown
+            && !matches!(
+                work.merge_state,
+                MergeState::Dirty | MergeState::Draft | MergeState::Unknown
+            )
+        {
+            return Some(unjudged(ExtraQuery::MergeQueue));
+        }
         match work.merge_state {
             MergeState::Clean | MergeState::HasHooks => {
                 return Some(place("needs_you", Reason::of("merge")));
@@ -286,6 +317,7 @@ fn standing(pr: &PullRequestSnapshot) -> Option<Placed> {
     // A pull request of someone else's: only the review asked of the
     // operator or their team moves it (D-15).
     match work.asked_of_me {
+        ReviewAsk::Unknown => return Some(unjudged(ExtraQuery::ReviewRequests)),
         ReviewAsk::Direct => {
             return Some(place(
                 "needs_you",
@@ -320,6 +352,19 @@ fn standing(pr: &PullRequestSnapshot) -> Option<Placed> {
         ));
     }
     Some(place("waiting", waiting_review(pr)))
+}
+
+/// A pull request a judgment it needs could not be made for: it waits in the
+/// plain Waiting group, which says nothing about whose move it is, with the
+/// question that was not answered (issue #1189). The group is never one it may
+/// not belong to.
+fn unjudged(query: ExtraQuery) -> Placed {
+    let slug = match query {
+        ExtraQuery::Account => "account",
+        ExtraQuery::ReviewRequests => "review_requests",
+        ExtraQuery::MergeQueue => "merge_queue",
+    };
+    place("waiting", Reason::of("unjudged").text(slug))
 }
 
 fn waiting_review(pr: &PullRequestSnapshot) -> Reason {
@@ -439,7 +484,7 @@ pub(crate) fn project(
                     .name(agent.identity_label.clone())
                     .since(agent.changed_at_unix_ms),
             )
-        } else if let Some(position) = pr.work.queue_position {
+        } else if let MergeQueuePlace::At(position) = pr.work.queue {
             place("merged", Reason::of("queued").count(position))
         } else if pr.is_draft {
             place("drafts", Reason::of("draft").since(pr.created_at_unix_ms))
@@ -605,7 +650,9 @@ mod tests {
             head_oid: None,
             cross_repository: false,
             work: crate::model::PullRequestWork {
-                mine: true,
+                mine: Some(true),
+                asked_of_me: ReviewAsk::None,
+                queue: MergeQueuePlace::NotQueued,
                 merge_state: MergeState::Clean,
                 ..Default::default()
             },
@@ -783,17 +830,17 @@ mod tests {
     #[test]
     fn bots_and_the_review_asks_of_others_pull_requests_are_listed_and_a_stranger_s_is_not() {
         let mut bot = pr(1);
-        bot.work.mine = false;
+        bot.work.mine = Some(false);
         bot.work.author_is_bot = true;
         let mut direct = pr(2);
-        direct.work.mine = false;
+        direct.work.mine = Some(false);
         direct.work.asked_of_me = ReviewAsk::Direct;
         direct.work.author = Some("ann".into());
         let mut team = pr(3);
-        team.work.mine = false;
+        team.work.mine = Some(false);
         team.work.asked_of_me = ReviewAsk::Team;
         let mut stranger = pr(4);
-        stranger.work.mine = false;
+        stranger.work.mine = Some(false);
         let board = board(vec![bot, direct, team, stranger], &[]);
         assert_eq!(row(&board, 1).group, "bots");
         assert_eq!(
@@ -808,7 +855,7 @@ mod tests {
     #[test]
     fn a_teammate_s_pull_request_asked_of_me_is_a_review_even_when_its_checks_fail() {
         let mut theirs = pr(1);
-        theirs.work.mine = false;
+        theirs.work.mine = Some(false);
         theirs.work.asked_of_me = ReviewAsk::Direct;
         theirs.work.author = Some("ann".into());
         theirs.checks = PullRequestChecks::Failed;
@@ -823,7 +870,7 @@ mod tests {
     #[test]
     fn a_queued_pull_request_leads_merging_and_a_merged_one_follows_it() {
         let mut queued = pr(1);
-        queued.work.queue_position = Some(2);
+        queued.work.queue = MergeQueuePlace::At(2);
         let mut merged = pr(2);
         merged.badge = PullRequestBadge::Merged;
         merged.merged_at_unix_ms = Some(NOW - 10);
@@ -863,10 +910,131 @@ mod tests {
     #[test]
     fn a_pull_request_a_session_made_is_listed_even_when_someone_else_wrote_it() {
         let mut theirs = pr(1);
-        theirs.work.mine = false;
+        theirs.work.mine = Some(false);
         theirs.work.sessions = vec!["s1".into()];
         theirs.work.merge_state = MergeState::Blocked;
         let board = board(vec![theirs], &[]);
         assert_eq!(row(&board, 1).group, "waiting");
+    }
+
+    /// A pull request read with every extra question unanswered: only the
+    /// list's own values are known.
+    fn unread(number: u32) -> PullRequestSnapshot {
+        let mut pr = pr(number);
+        pr.work.mine = None;
+        pr.work.asked_of_me = ReviewAsk::Unknown;
+        pr.work.queue = MergeQueuePlace::Unknown;
+        pr
+    }
+
+    fn placed(board: &Board, number: u32) -> (&'static str, &'static str, Option<&str>) {
+        let row = row(board, number);
+        (row.group, row.reason.kind, row.reason.text.as_deref())
+    }
+
+    #[test]
+    fn a_pull_request_whose_author_is_unknown_is_listed_in_waiting_and_judged_by_nothing() {
+        let board = board(vec![unread(1)], &[]);
+        assert_eq!(placed(&board, 1), ("waiting", "unjudged", Some("account")));
+        assert_eq!(
+            board.needs_you, 0,
+            "an unjudged pull request asks nothing of the operator"
+        );
+    }
+
+    #[test]
+    fn what_the_list_alone_decides_is_decided_while_the_account_is_unknown() {
+        let mut draft = unread(1);
+        draft.is_draft = true;
+        let mut bot = unread(2);
+        bot.work.author_is_bot = true;
+        bot.work.asked_of_me = ReviewAsk::None;
+        let mut merged = unread(3);
+        merged.badge = PullRequestBadge::Merged;
+        merged.merged_at_unix_ms = Some(NOW - 10);
+        let mut worked_failing = unread(4);
+        worked_failing.work.sessions = vec!["s4".into()];
+        worked_failing.checks = PullRequestChecks::Failed;
+        worked_failing.work.merge_state = MergeState::Blocked;
+        let mut worked_clean = unread(5);
+        worked_clean.work.sessions = vec!["s5".into()];
+        let board = board(vec![draft, bot, merged, worked_failing, worked_clean], &[]);
+        assert_eq!(row(&board, 1).group, "drafts");
+        assert_eq!(row(&board, 2).group, "bots");
+        assert_ne!(
+            row(&board, 2).reason.kind,
+            "unjudged",
+            "a bot is not the operator"
+        );
+        assert_eq!(placed(&board, 3).0, "merged");
+        assert_eq!(placed(&board, 4).0, "blocked", "their own session owns it");
+        assert_eq!(placed(&board, 5), ("waiting", "unjudged", Some("account")));
+    }
+
+    #[test]
+    fn an_unknown_review_ask_of_a_teammate_s_pull_request_waits_and_a_known_one_still_moves() {
+        let mut unasked = unread(1);
+        unasked.work.mine = Some(false);
+        let mut direct = unread(2);
+        direct.work.mine = Some(false);
+        direct.work.asked_of_me = ReviewAsk::Direct;
+        direct.work.author = Some("ann".into());
+        let mut none = unread(3);
+        none.work.mine = Some(false);
+        none.work.asked_of_me = ReviewAsk::None;
+        let board = board(vec![unasked, direct, none], &[]);
+        assert_eq!(
+            placed(&board, 1),
+            ("waiting", "unjudged", Some("review_requests"))
+        );
+        assert_eq!(placed(&board, 2).1, "review");
+        assert!(
+            board.rows.iter().all(|row| row.number != 3),
+            "judged to be nobody's stays unlisted"
+        );
+    }
+
+    #[test]
+    fn an_unknown_queue_holds_back_only_the_pull_requests_a_queue_could_hold() {
+        let unknown_queue = |number: u32, state: MergeState| {
+            let mut pr = pr(number);
+            pr.work.queue = MergeQueuePlace::Unknown;
+            pr.work.merge_state = state;
+            pr
+        };
+        let mut queued = unknown_queue(5, MergeState::Clean);
+        queued.work.queue = MergeQueuePlace::At(1);
+        let board = board(
+            vec![
+                unknown_queue(1, MergeState::Clean),
+                unknown_queue(2, MergeState::Behind),
+                unknown_queue(3, MergeState::Dirty),
+                unknown_queue(4, MergeState::Unknown),
+                queued,
+                pr(6),
+            ],
+            &[],
+        );
+        assert_eq!(
+            placed(&board, 1),
+            ("waiting", "unjudged", Some("merge_queue"))
+        );
+        assert_eq!(
+            placed(&board, 2),
+            ("waiting", "unjudged", Some("merge_queue"))
+        );
+        assert_eq!(
+            placed(&board, 3).0,
+            "blocked",
+            "a conflicted pull request leaves the queue"
+        );
+        assert_eq!(placed(&board, 4).1, "checking");
+        assert_eq!(placed(&board, 5).1, "queued");
+        assert_eq!(
+            placed(&board, 6).1,
+            "merge",
+            "a queue that answered not queued is judged"
+        );
+        assert_eq!(board.needs_you, 1);
     }
 }
