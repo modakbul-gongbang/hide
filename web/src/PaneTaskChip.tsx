@@ -47,13 +47,14 @@ export function PaneTaskChip({ paneId, actions }: { paneId: string; actions: Act
     if (leave.current !== null) window.clearTimeout(leave.current);
   }, []);
   // A pin outlives a pane that loses its tasks only as long as the pane does.
+  const gone = !found;
   useEffect(() => {
-    if (found) return;
+    if (!gone) return;
     if (pinned) setPinned(null);
     // A chip that comes back opens only when the pointer arrives again.
     setHovered(false);
     setFocused(false);
-  }, [found, pinned, setPinned]);
+  }, [gone, pinned, setPinned]);
   if (!found) return null;
   const { agent, progress } = found;
   const open = pinned || hovered || focused;

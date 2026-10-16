@@ -2342,11 +2342,6 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "detail_open", payload: { item: { kind: "record", session } } });
     },
     /**
-     * A pane head's title (B15): the slot shows that session's record, or,
-     * when the lane already draws it, the lane goes back to its tool. The
-     * keyboard stays in the pane's terminal.
-     */
-    /**
      * ⇧⌘U: pins the focused pane's task checklist open, or closes it when it
      * is pinned there. A pane without tasks draws no chip and pins nothing, so
      * a list never opens by itself once that pane later has tasks.
@@ -2358,6 +2353,11 @@ export function createActions(send: DispatchFn) {
       if (ui().taskListPane === paneId) return ui().setTaskListPane(null);
       if (paneProgress(state, paneId)) ui().setTaskListPane(paneId);
     },
+    /**
+     * A pane head's title (B15): the slot shows that session's record, or,
+     * when the lane already draws it, the lane goes back to its tool. The
+     * keyboard stays in the pane's terminal.
+     */
     togglePaneRecord(session: import("./snapshot").WorkSession) {
       const top = rest()?.ui_state?.detail?.items.at(-1);
       if (top?.kind === "record" && workKey(top.session) === workKey(session) && laneUpWith("detail")) return this.toggleDetail();
