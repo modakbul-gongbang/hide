@@ -114,6 +114,29 @@ Then open the pull request against `main` and answer the template.
 Write the issue it finishes on the `Closes #N` line and nothing else there; a big issue split across several pull requests gets one sub-issue per piece, and each pull request closes its own.
 `Related:` names only the PRD path and the pull requests this one follows or depends on, because Hide and GitHub relate a pull request to an issue only through a closing keyword.
 
+## Starting work beside open pull requests
+
+Where work starts is decided twice: before it has code, and after its first push, from the conflicts git computes.
+Of the 100 pull requests opened from 2026-10-14 13:06 KST, one that was already green conflicted with a pull request merged before it, merged main and waited for `verify` again 14 times, 1,602 minutes in all, and 46 of their 215 `verify` runs (21%) ran on a merge of main into the branch (read from the pull requests' commits and `verify` runs, with `git merge-tree` run again on the two parents of each merge of main).
+A stack lets the later of two conflicting pull requests resolve the conflict once, on top of the earlier one, while both are still open.
+
+1. Before there is code, start on an open pull request's branch only when the work needs what it adds: its API, state, schema or contract.
+   Open the pull request with `--base <that branch>`.
+   Work that only might overlap an open pull request starts from main, like work that does not: most pull requests touch `docs/UI_BEHAVIOR.md` or `docs/ARCHITECTURE.md`, so stacking on a guessed overlap would put nearly every pull request in one line.
+2. After the first push, as a draft pull request or a branch, run `python3 scripts/merge-order.py <number>`, or `--branch <name>` before there is a pull request.
+   It merges the branch and every open pull request with main in memory (`git merge-tree`) and those results with each other, so a conflict it reports is the one the branch would meet once the other merged.
+   No conflict, or one only in documents and design files (`*.md`, `*.pen`, `site/`), leaves the branch where it is; a documents-only conflict is resolved once, by merging main right before the merge.
+   A conflict in code goes to step 3.
+3. For a code conflict with an open pull request A, the script's `Do:` line says which of these applies:
+   - A turned green first: change the base to A's branch and merge A's branch in (`gh pr edit <number> --base <A's branch>`, then `git merge origin/<A's branch>`), merging rather than rebasing, so the conflict is resolved once and `verify` runs once on the result.
+   - The branch turned green first: it stays below, and A stacks on it when A turns green.
+   - A is risky: nothing stacks on a pull request that changes `Cargo.lock`, `contracts/`, `hide-node-link`'s `PROTOCOL_VERSION` or a workflow under `.github/workflows/`, because it plans every lane or changes what every other change builds against, and its failure would hold every layer above it. Merge main once after A merges.
+   - A's stack already has three layers: nothing more stacks on it, because a change to a layer runs `verify` again on every layer above; run the script again after its bottom layer merges. Three is a starting value, not a measured one.
+
+In a stack, an upper layer merges only the layer directly below it, never main, and the bottom layer alone merges main.
+That keeps each layer's diff to its own change and resolves each conflict once, at the layer where it starts.
+The `merge-order` skill (`skills/merge-order/SKILL.md`) runs these steps for an agent and points back here.
+
 ## Merging into main
 
 `main` accepts pull-request merges, and the `verify` check has to pass; this repository currently uses merge commits, and there is no way around branch protection, including for maintainers.
@@ -136,6 +159,21 @@ Above it, a pull request that closes no issue gets a reminder, not a refusal: Hi
 The check does not prove a behavior that only the two changes together break, which only the unit and end-to-end suites would see.
 Main's push run is the net for that: a push to main plans every lane, and in a burst of merges GitHub keeps one pending run, which checks the merges' combined state.
 Whoever merges watches the first completed push run that contains the merge.
+
+### Which green pull request merges first
+
+Only the reviewer merges, so one person keeps the order.
+When more than one pull request is green, `python3 scripts/merge-order.py` lists the ones that may merge now, in this order:
+
+1. The one whose merge breaks the fewest open pull requests: it counts the green and running pull requests that would then conflict in code, and leaves out a red one, which has to push again anyway.
+2. A pull request that conflicts with one already green goes after it: one that is not green yet is not on the list, and of two green ones that break as many, the one green longer goes first.
+   7 of the 14 waits counted under [Starting work beside open pull requests](#starting-work-beside-open-pull-requests) came from merging a pull request that conflicted with one already green.
+3. Of two that break as many, the more important work goes first, which only the reviewer can weigh; the script then puts the stack with more green layers first.
+4. A pull request that breaks many goes last, and merges main once.
+
+A stack merges from the bottom: `premerge-check.py` refuses a pull request whose base is not main, and when a layer merges GitHub moves the next layer's base to main, because the repository deletes a merged branch (it did so for #1246 on 2026-10-16).
+Merge the layers one after another as far as they are green, without waiting for the whole stack.
+Each merge changes the counts, so run the script again before the next merge; the merge command is still the one `premerge-check.py` prints.
 
 When main's push run fails, merge nothing else until main is green again, except the change that makes it green.
 Revert the merge the failure points to in a pull request of its own (`git revert -m 1 <merge commit>`), then land the change again from the latest main in a new pull request; fix forward instead only when the fix is smaller than the revert and ready now.
@@ -236,6 +274,7 @@ A script that stops earning its place here is deleted rather than left unreferen
 | `zsh scripts/check-herdr-contract.sh` | The full contract, including the responses only a live server answers | A running Herdr server |
 | `bash scripts/check-typed-live-remote.sh <stage>` | The same boundary against a live and a remote server: `behavior`, `probe`, `suites` or `attribution` | An authorized remote fixture |
 | `python3 scripts/premerge-check.py <number>` | A pull request may merge into main as main is now: its latest `verify` passed, it does not conflict, and the fast checks pass on the merge result ([Merging into main](#merging-into-main)) | `gh` logged in for this repository, and the web and Rust toolchains the checks build with |
+| `python3 scripts/merge-order.py [<number> \| --branch <name>]` | Which green pull request merges first and what each breaks ([Which green pull request merges first](#which-green-pull-request-merges-first)), or where a pull request or branch stands beside the open ones ([Starting work beside open pull requests](#starting-work-beside-open-pull-requests)); it only reads and fetches | `gh` logged in for this repository |
 | `python3 scripts/check-no-attribution.py` | No AI tooling attribution in the branch name, the commits, or a prepared PR body | A fetched `origin/main`; `--range` and `--pr-body` override the defaults |
 | `python3 scripts/check-herdr-release.py <source\|asset>` | A Herdr release at its public and local source boundaries before the pin moves | A Herdr checkout or a reference binary |
 | `python3 scripts/check-worktree-performance-evidence.py [dir]` | A worktree performance run recorded what the guide requires | A completed native run directory |
