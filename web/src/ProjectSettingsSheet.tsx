@@ -86,7 +86,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
     setRepositoryDraft(confirmedRepository ?? "");
     setRepositoryEditing(confirmedRepository !== null);
   }, [confirmedRepository, write?.state, intent?.state]);
-    const branches = workspace?.branches ?? [];
+  const branches = workspace?.branches ?? [];
   const base = workspace ? projectBaseBranch(rest, workspace) : { branch: "", missing: null };
   const baseChoice = record?.base_branch;
   const selectedBase = baseChoice?.mode === "branch" ? baseChoice.branch : baseChoice?.mode === "auto" ? null : rest?.ui_state?.project_base_branches?.[target.root];

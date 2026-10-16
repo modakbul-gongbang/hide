@@ -1305,8 +1305,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
 
 /**
  * A plain folder (`folderCheckout`): the project and its only checkout are
- * one row. Line one is the project's name and its status badge, which stays
- * while the agent rows are open because it is the project's own summary; line
+ * one row. Line one is the project's name, with no agent counts; line
  * two is the purpose. The row opens the checkout and is marked while that
  * checkout is the Workspace in front, and its
  * menu is the project's followed by the checkout's. It ends as a checkout row

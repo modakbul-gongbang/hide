@@ -149,7 +149,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // checkout is one line; its purpose comes back when they fold (below).
     await expect(primary.locator("[data-purpose]")).toHaveCount(0);
     // The project row carries no agent counts: its checkouts and their agents say that.
-    await expect(project.locator("[data-project-status]")).toHaveCount(0);
+    await expect(project.locator("[data-project-row]").locator("xpath=..").locator("[data-badge-part]")).toHaveCount(0);
     await expect(project.locator("[data-project-row]")).toHaveAccessibleName("repo");
     await screenshot(page, "projects-sidebar-closed");
 
@@ -277,7 +277,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     const folderRow = folder.locator("[data-checkout]");
     await expect(folderRow).toHaveCount(1);
     await expect(folderRow).toHaveAttribute("data-checkout-kind", "folder");
-    await expect(folder.locator("[data-project-status]")).toHaveCount(0);
+    await expect(folderRow.locator("xpath=..").locator("[data-badge-part]")).toHaveCount(0);
     const folderToggle = folder.locator("[data-checkout-toggle]");
     await expect(folderToggle).toHaveAttribute("aria-expanded", "true");
     await folderToggle.click();
@@ -650,7 +650,7 @@ test("a project whose agents all sleep folds, and stays open once opened", async
     await sendEvent(page, daemon, "agent_sleep", { pane_id: napPane });
     // B4: folded, with no agent row, and no moon or counts on the project row.
     await expect(toggle).toHaveAttribute("aria-expanded", "false", { timeout: 30_000 });
-    await expect(project.locator("[data-project-asleep], [data-project-status]")).toHaveCount(0);
+    await expect(project.locator("[data-project-row]").locator("xpath=..").locator("[data-badge-part]")).toHaveCount(0);
     await expect(project.locator(`[data-pane="${napPane}"]`)).toHaveCount(0);
     await expect(project.locator("[data-project-weight]")).toHaveAttribute("data-project-weight", "quiet");
     await screenshot(page, "projects-asleep-folded");

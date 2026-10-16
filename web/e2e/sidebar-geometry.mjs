@@ -27,7 +27,6 @@ const PARTS = [
   "[data-row-name]",
   "[data-checkout-age]",
   "[data-checkout-status]",
-  "[data-project-status]",
   "[data-checkout-toggle]",
   "[data-project-toggle]",
 ].join(", ");
@@ -165,7 +164,7 @@ export async function sidebarColumns(page) {
       times: distinct(
         [
           ...boxes("[data-agent-elapsed], [data-checkout-age]"),
-          ...Array.from(document.querySelectorAll(`${list} :is([data-project-status], [data-checkout-status])`))
+          ...Array.from(document.querySelectorAll(`${list} :is([data-checkout-status])`))
             .filter((badge) => badge.getClientRects().length > 0 && !badge.nextElementSibling?.matches("[data-checkout-age]"))
             .map((badge) => badge.getBoundingClientRect()),
         ].map((box) => box.right),
@@ -191,7 +190,7 @@ export async function sidebarOverflow(page, width) {
     }
     for (const row of Array.from(document.querySelectorAll("[data-pane], [data-checkout-row] > *, [data-project] > *"))) {
       const right = row.getBoundingClientRect().right;
-      for (const part of Array.from(row.querySelectorAll("[data-agent-elapsed], [data-checkout-age], [data-project-status], [data-checkout-status], button"))) {
+      for (const part of Array.from(row.querySelectorAll("[data-agent-elapsed], [data-checkout-age], [data-checkout-status], button"))) {
         if (part.getBoundingClientRect().right > right + 0.5) problems.push(`${part.textContent ?? part.tagName} passes its row`);
       }
     }

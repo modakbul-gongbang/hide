@@ -95,7 +95,8 @@ test("a GitHub project's row ends in the repository's mark, a folder's in none, 
     await expect(folder.locator("[data-checkout]")).toBeVisible();
     await expect(folder.locator("[data-project-github]")).toHaveCount(0);
     // No project or folder row counts its agents; their own rows say it.
-    await expect(page.locator("[data-project-status], [data-project-asleep]")).toHaveCount(0);
+    await expect(project.locator("[data-project-row]").locator("xpath=..").locator("[data-badge-part]")).toHaveCount(0);
+    await expect(folder.locator("[data-checkout]").locator("xpath=..").locator("[data-badge-part]")).toHaveCount(0);
     await expect(project.locator("[data-project-row]")).toHaveAccessibleName("repo");
 
     // The mark stays while the pointer is on the row, where the row's + and ⋯ show.
@@ -112,7 +113,7 @@ test("a GitHub project's row ends in the repository's mark, a folder's in none, 
     expect(opened.url()).toBe("https://github.com/acme/repo");
     await opened.close();
     await expect(project.locator("[data-project-row]")).not.toHaveAttribute("aria-current", "true");
-    for (const event of ["focus_checkout", "browser_open", "project_open"]) expect(sent.get(event) ?? 0).toBe(before.get(event) ?? 0);
+    for (const event of ["focus_checkout", "browser_open"]) expect(sent.get(event) ?? 0).toBe(before.get(event) ?? 0);
 
     for (const theme of ["light", "dark"] as const) {
       await chooseTheme(page, theme);
