@@ -1270,7 +1270,8 @@ enum CommandReply {
     /// `<local-command-stdout>` record: the command is not a request.
     Local,
     /// Anything else follows, a skill's or a user command's expansion among
-    /// it: the command went to the model.
+    /// it, or an answer of Claude Code's that starts the operator's turn
+    /// (`/goal`): the command went to the model.
     Model,
     /// No conversation record follows yet.
     Pending,
@@ -1309,7 +1310,16 @@ impl CommandReply {
                             .any(|tag| text.trim_start().starts_with(tag))
                     }),
             };
-            return if own_reply { Self::Local } else { Self::Model };
+            // A command Claude Code answers and then hands to the model, as
+            // `/goal` does, marks its answer as the start of the operator's
+            // turn (2.1.294-2.1.301); a command it only answers (`/model`)
+            // leaves no mark. The mark, not the command's name, decides.
+            let starts_turn = item.get("turnOrigin").and_then(Value::as_str) == Some("human");
+            return if own_reply && !starts_turn {
+                Self::Local
+            } else {
+                Self::Model
+            };
         }
         if following.is_some() {
             Self::Pending
@@ -1836,6 +1846,26 @@ fn parse_codex_line(item: &Value) -> LineResult {
                 .with_provider_injected(true),
         );
     }
+    match codex_internal_context(&text) {
+        Some(CodexInternal::Own) => {
+            return LineResult::Event(
+                ConversationEvent::new(role, EventKind::Injected, timestamp, text)
+                    .with_provider_injected(true),
+            );
+        }
+        Some(CodexInternal::UserGoal(objective)) => {
+            return LineResult::Event(
+                ConversationEvent::new(
+                    role,
+                    EventKind::Human,
+                    timestamp,
+                    objective.unwrap_or(text),
+                )
+                .with_images(images),
+            );
+        }
+        None => {}
+    }
     let kind = if is_interruption(&text) {
         EventKind::Interrupted
     } else if has_injected_prefix(&text) {
@@ -1849,6 +1879,46 @@ fn parse_codex_line(item: &Value) -> LineResult {
         text
     };
     LineResult::Event(ConversationEvent::new(role, kind, timestamp, text).with_images(images))
+}
+
+/// What a Codex user message wrapped in `<codex_internal_context>` is.
+#[derive(Debug, PartialEq, Eq)]
+enum CodexInternal {
+    /// `source="user_goal"`: the operator set a goal with `/goal`. The
+    /// objective is their words; `None` when Codex wrote none to read (it
+    /// omits a long one), and the message is then kept as written.
+    UserGoal(Option<String>),
+    /// Any other source: Codex's own text for the turn, such as the
+    /// `source="goal"` reminder it adds to every turn while a goal is active.
+    Own,
+}
+
+/// Codex writes what it adds to a turn on its own behalf as a user message
+/// wrapped in `<codex_internal_context source="...">` (codex-cli 0.163.0).
+/// The wrapper is Codex's format, not ours, so this one function reads it:
+/// the source names whose words the message carries, and only `user_goal`
+/// carries the operator's, as `User set the goal: "<JSON string>"`.
+fn codex_internal_context(text: &str) -> Option<CodexInternal> {
+    let rest = text.trim_start().strip_prefix("<codex_internal_context")?;
+    let (attributes, body) = rest.split_once('>')?;
+    if attributes
+        .split_whitespace()
+        .all(|attribute| attribute != r#"source="user_goal""#)
+    {
+        return Some(CodexInternal::Own);
+    }
+    let objective = body
+        .trim_start()
+        .strip_prefix("User set the goal: ")
+        .and_then(|quoted| {
+            serde_json::Deserializer::from_str(quoted)
+                .into_iter::<String>()
+                .next()
+                .and_then(std::result::Result::ok)
+        })
+        .map(|objective| objective.trim().to_owned())
+        .filter(|objective| !objective.is_empty());
+    Some(CodexInternal::UserGoal(objective))
 }
 
 /// All prefixes that identify prompt scaffolding live here so both providers
@@ -2313,6 +2383,27 @@ mod tests {
             );
             assert_eq!(parsed.events[2].text, hidden, "{agent:?}");
         }
+    }
+
+    #[test]
+    fn a_codex_goal_without_a_readable_objective_keeps_its_message() {
+        // Codex omits an objective past its evidence limit (codex-cli 0.163.0).
+        let omitted = "<codex_internal_context source=\"user_goal\">\nUser set the goal: [objective omitted; exceeds the evidence limit].\n</codex_internal_context>";
+        let line = serde_json::json!({
+            "timestamp": "2026-10-17T00:00:00Z",
+            "type": "response_item",
+            "payload": {"type": "message", "role": "user",
+                "content": [{"type": "input_text", "text": omitted}]},
+        })
+        .to_string();
+        let parsed = parse_codex_events(&line);
+        assert_eq!(parsed.events.len(), 1);
+        assert_eq!(parsed.events[0].kind, EventKind::Human);
+        assert_eq!(parsed.events[0].text, omitted);
+        assert_eq!(
+            codex_internal_context("<codex_internal_context source=\"budget\">\nBudget reached."),
+            Some(CodexInternal::Own)
+        );
     }
 
     #[test]
