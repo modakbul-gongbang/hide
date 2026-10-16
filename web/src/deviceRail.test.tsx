@@ -59,7 +59,7 @@ describe("a rail tile (quick device-rail-slack)", () => {
 
   it("is a focusable button whose name carries the device and each count it marks (B4)", () => {
     const html = view({ tile: mini, counts: { needs_you: 2, done: 1 } });
-    expect(tile(html)).toContain('aria-label="Mac mini, Needs You 2, To read 1"');
+    expect(tile(html)).toContain('aria-label="Mac mini, Needs You 2, Unread 1"');
     expect(html.startsWith("<button")).toBe(true);
     expect(html).not.toContain("tabindex");
   });
@@ -80,7 +80,7 @@ describe("a rail tile (quick device-rail-slack)", () => {
     expect(html).toContain("text-status-foreground");
     // Done alone is a dot with no number; the hint still names both counts.
     expect(marks(view({ tile: mini, counts: { needs_you: 0, done: 3 } }))).toEqual([["done", ""]]);
-    expect(tile(html)).toContain('aria-label="Mac mini, Needs You 2, To read 8"');
+    expect(tile(html)).toContain('aria-label="Mac mini, Needs You 2, Unread 8"');
   });
 
   it("draws a count of ten or more as `9+`, and no mark at all when both counts are zero (B4)", () => {

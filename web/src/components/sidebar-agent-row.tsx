@@ -5,7 +5,8 @@ import { agentProductName } from "../agentAdapters";
 import { agentClosing } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { branchChip, forkLabel, lineText, lineTone, markTone, markWords, rowAccessibleName, rowDimmed, sidebarLine } from "../agentRow";
+import { branchChip, forkLabel, lineParts, lineTone, markTone, markWords, rowAccessibleName, rowDimmed, sidebarLine, treeLine } from "../agentRow";
+import { RowLineText } from "./row-line-text";
 import { homeTurnLine, originLine } from "../hideAiOrigin";
 import { AgentForkMark } from "./fork-mark";
 import { RowLetterMark } from "./letter-mark";
@@ -131,9 +132,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   // Each row reads only the facts it draws, so a snapshot that moves nothing here renders nothing.
   const closing = useShellStore((s) => agentClosing(s.rest?.status?.async_operations, agent.pane_id));
   const agentPrStaleness = useAgentStaleness(agent);
-  // A tree row is one line (B14), except that a block keeps its cause, read or
-  // not (agent-blocked-state B2): the triangle alone does not say what stopped it.
-  const line = tree && agent.status_code !== "error" && !rowDimmed(agent) ? null : sidebarLine(agent);
+  const line = tree ? treeLine(agent) : sidebarLine(agent);
   const branch = branchShown ? branchChip(agent) : null;
   const attention = agent.state.attention;
   const unreachable = remote !== null && !remote.reachable;
@@ -238,9 +237,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
               {homeTurnLine(t, agent.hide_ai.turn)}
             </span>
           ) : line ? (
-            <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
-              {lineText(t, agent, line)}
-            </span>
+            <RowLineText aria-hidden="true" data-agent-line={line.mode} parts={lineParts(t, agent, line)} className={cn("pointer-events-none text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))} />
           ) : null}
           {tree && agent.hide_ai ? (
             <span aria-hidden="true" data-agent-task={originLine(t, agent.hide_ai)} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">

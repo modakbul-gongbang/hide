@@ -116,7 +116,7 @@ export const devicesEnglish = {
   "devices.rail.hide": "Hide rail",
   "devices.rail.notConnected": "Not connected",
   "devices.rail.needsYou": "Needs You {{count}}",
-  "devices.rail.done": "To read {{count}}",
+  "devices.rail.done": "Unread {{count}}",
   "devices.catalog.loading": "Reading projects from {{device}}…",
   "devices.catalog.error": "{{device}} is {{state}}",
   "devices.catalog.errorMessage": "{{device}} is {{state}}: {{message}}",

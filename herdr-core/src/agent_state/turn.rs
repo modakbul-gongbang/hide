@@ -182,7 +182,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         RowMark::Done => "success",
         RowMark::Unread => "news",
         RowMark::Quiet if asking => "warning",
-        RowMark::Quiet => "subtle",
+        RowMark::Quiet | RowMark::Asleep => "subtle",
     };
     let bright = needs_you || agent.escalation.is_some();
     let chip_tone = Tone {
@@ -190,7 +190,7 @@ pub(crate) fn row_state(agent: &SidebarAgentSnapshot) -> RowState {
         read: asking && !bright && !agent.emphasized,
     };
     let mark_tone = Tone {
-        kind: if agent.mark == RowMark::Quiet {
+        kind: if matches!(agent.mark, RowMark::Quiet | RowMark::Asleep) {
             "subtle"
         } else {
             chip_kind
@@ -737,7 +737,6 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
                 AgentStatusCode::Stopped
             }
             Some(StopVerdict::Unfinished) => AgentStatusCode::Unfinished,
-            Some(StopVerdict::Waiting) => AgentStatusCode::Waiting,
             verdict => agent_status_code(
                 demand,
                 activity,
@@ -758,6 +757,12 @@ pub(crate) fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     );
     agent.status_word_visible = status_word_visible;
     agent.detail = detail;
+    // A finished turn's leftover tasks are said on its line (status-marks D-19).
+    agent.background_left = if finished_verdict(agent) {
+        super::axes::background_left(agent)
+    } else {
+        0
+    };
     agent.requires_close_confirmation =
         agent_requires_close_confirmation(activity, demand, agent.blocked);
     agent.requires_close_status_check =
@@ -1269,10 +1274,11 @@ mod row_tests {
                 RowMark::Unread,
                 AgentStatusCode::Unfinished,
             ),
+            // A wait nothing proves reads as work left (status-marks D-17).
             (
                 Some(LabelEnd::Waiting),
                 RowMark::Unread,
-                AgentStatusCode::Waiting,
+                AgentStatusCode::Unfinished,
             ),
             (None, RowMark::Unread, AgentStatusCode::Stopped),
         ];
@@ -1304,6 +1310,84 @@ mod row_tests {
             agent.state.line.as_ref().map(|line| line.mode),
             Some("kept")
         );
+    }
+
+    /// status-marks D-16, B27, B28: a turn the label read as finished is to
+    /// read as done, the tasks it left counted on its line; any other verdict,
+    /// or none, keeps the row in progress on them.
+    #[test]
+    fn a_finished_turn_is_not_hidden_by_the_background_tasks_it_left() {
+        use crate::labels::analysis::LabelEnd;
+        let facts = |end| {
+            Some(crate::request_view::RowFacts {
+                end,
+                wake_devices: 2,
+                ..Default::default()
+            })
+        };
+        let mut rows = vec![row()];
+        rows[0].activity = "stopped".into();
+        rows[0].completed = true;
+        rows[0].unread = true;
+        rows[0].row_facts = facts(Some(LabelEnd::Done));
+        crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+        let agent = &rows[0];
+        assert_eq!(
+            (
+                agent.group.as_str(),
+                agent.mark,
+                agent.status_code,
+                agent.wait,
+                agent.background_left
+            ),
+            ("done", RowMark::Done, AgentStatusCode::Done, None, 2)
+        );
+
+        for end in [Some(LabelEnd::Waiting), Some(LabelEnd::Unfinished), None] {
+            rows[0].row_facts = facts(end);
+            crate::agent_state::apply_lineage(&mut rows, &[], &[]);
+            let agent = &rows[0];
+            assert_eq!(
+                (
+                    agent.group.as_str(),
+                    agent.mark,
+                    agent.status_code,
+                    agent.wait,
+                    agent.background_left
+                ),
+                (
+                    "working",
+                    RowMark::Going,
+                    AgentStatusCode::Waiting,
+                    Some(crate::model::AgentWait::Background),
+                    0
+                ),
+                "{end:?}"
+            );
+            let line = agent.state.line.as_ref().expect("a waiting line");
+            assert_eq!(line.mode, "waiting", "{end:?}");
+        }
+    }
+
+    /// status-marks D-21, B31: a sleeping agent keeps a moon and is counted on
+    /// no badge, whatever its turn was.
+    #[test]
+    fn a_sleeping_row_draws_asleep_and_counts_on_no_badge() {
+        let mut agent = row();
+        agent.activity = "stopped".into();
+        agent.completed = true;
+        agent.unread = true;
+        agent.sleep = Some(crate::model::AgentSleepSnapshot {
+            state: "sleeping".into(),
+            reason: None,
+            since_unix_ms: 1,
+            progress: None,
+        });
+        derive_from_axes(&mut agent);
+        assert_eq!(agent.mark, RowMark::Asleep);
+        let mut counts = crate::model::MarkCountsSnapshot::default();
+        agent.mark.count_into(&mut counts);
+        assert_eq!(counts, crate::model::MarkCountsSnapshot::default());
     }
 
     /// D-07, D-08: a quiet row waiting on its pull request's checks is in

@@ -137,7 +137,8 @@ Regression owners: `a_descendants_demand_or_completion_turns_every_ancestor_unre
 ## A quiet row that waits
 
 A row with no demand of its own, not blocked and stopped (idle or done) waits when something in progress will wake it: work that is still running, or an answer someone is still making for it.
-It has not finished, so it sits in Working, draws the in-progress ring, has `status_code: waiting` (the word `Waiting`, said only on hover and in its accessible name), and is not emphasized.
+It has not finished, so it sits in Working, draws the in-progress ring, has `status_code: waiting`, and is not emphasized.
+In every list, the project tree included, its line leads with `대기 · ` (Waiting) and goes on with the label's sentence or, with none, the proven cause, so a ring whose line is missing or does not start with 대기 is an agent at work (status-marks D-18, B29).
 Why it waits is one additive wire value, `wait`, beside `group: working`; absent means the row waits for nothing.
 No new group value reaches the wire, so a decoder that does not know the field draws an ordinary Working row.
 `apply_lineage` decides it on the same pass that sums `descendant_counts`, by this precedence (`axes.rs::own_wait` and the children check):
@@ -145,10 +146,13 @@ No new group value reaches the wire, so a decoder that does not know the field d
 | `wait` | The row waits for | Proven by |
 | --- | --- | --- |
 | `children` | A live descendant that is working, or stopped on a background task its session proves. Only a lineage root waits this way. | The lineage and the descendants' own axes |
-| `background` | A background command, monitor or task its own agent started and that is still running in the process that started it | The session's own records, read for the Herdr state the label worker asked under (below) |
+| `background` | A background command, monitor or task its own agent started and that is still running in the process that started it, on a turn the label did not read as finished | The session's own records, read for the Herdr state the label worker asked under (below) |
 | `checks` | The running checks of a pull request the row is responsible for, or the GitHub read a turn that just printed a pull request's address set off (A row waiting on its checks, below) | GitHub's answer for the pull request, read by `gh`, and the turn's own sighting |
 | `reply` | A Hide `request` or `block` letter the row's session sent whose answer is still awaited and still being made: the recipient has not taken the letter in yet, or it is working, or it or a descendant of it is on a proven background task, or a descendant of it works | The delivery ledger (`Ledger::awaited_answers`) for the letter and whether it was taken in, and the recipient's row for the rest |
 
+A turn the label read as finished (`done`) is not hidden by the background tasks it left (status-marks D-16, B27): the row is Unread with the green dot, carries the count as `background_left`, and its line ends with `· 백그라운드 N` (`agents.line.backgroundLeft`), its hover and accessible name with `백그라운드 N개 남음`; the narrow row cuts the sentence and keeps that tail.
+The Done notification goes out as for any finished turn, and opening the row reads it; a task that wakes the agent starts a new turn, which decides the mark again.
+A `waiting` or `unfinished` verdict, or none (Hide AI off included), keeps the row in progress on its background tasks, and children, a reply being made or running checks keep it in progress whatever the verdict (B28).
 A merely ready or finished descendant is quiet, and one whose activity Herdr reports as unknown does not make its root wait, because a waiting state the projection cannot vouch for is not drawn.
 A descendant holding a question, approval or error waits on its parent, not the other way round, so it does not make the root wait: it turns the root unread through the descendant signals above, and moves the root to Needs You only once one of the six escalation causes raises it (Delegated escalation).
 A delegated row that waits on its own (`background` or `reply`) is Working, like a delegated row that is running, and its ancestors' counts take it as working; its root waits on it only while it waits on a background task, because a reply is made by the agent that answers, not by the row that asked; an ordinary delegated row that waits for nothing keeps Seen.
@@ -173,13 +177,13 @@ A pull request counts while it is open and its checks rollup is pending with at 
 A project whose GitHub status is stale, unavailable or unreadable holds nothing either, because its last answer may be long over.
 Each exclusion writes one `checks_wait.excluded` diagnostic per pane, pull request and reason (`stale` or `expected_only`), so the log says why a row did not wait.
 A device's rows link no pull request, so they never wait on checks.
-The wait is `wait: checks` with `checks_wait`, the pull request's number, on the row (`own_wait` takes it after a background task and before a reply), and its line, with no sentence, says `CI 대기 · PR #N`.
+The wait is `wait: checks` with `checks_wait`, the pull request's number, on the row (`own_wait` takes it after a background task and before a reply), and its line, with no sentence, says `대기 · CI · PR #N`.
 
 A turn that ends having just printed a pull request's address is not a stop until GitHub has answered for it (D-09): the sighting sets off a GitHub read (`projects.rs`, `Sighted.owed`), and until that read lands or fails the row waits on that pull request the same way, so a turn that opened a pull request with checks about to start is never announced finished first.
 The hold has no timer of its own: the read landing, a failed read and the agent working again each end it.
 
 While any row waits on running checks, its project is read again once a minute whatever the window shows (`request_view.rs::reread_pending_checks`), and GitHub's answer re-lays the checks and rebuilds the lineage and the read axis (`refresh_checks_waits`).
-When the checks a row waited on end, in the same agent state, the row records how (`checks_ended`: the number and whether they passed), and the end is news (D-08): the read fingerprint carries it (`PaneReadRecord::checks_ended`), so the row turns unread, lands in To read with a plain dot, and its line says `CI 통과 · PR #N` or, in the warning colour, `CI 실패 · PR #N`.
+When the checks a row waited on end, in the same agent state, the row records how (`checks_ended`: the number and whether they passed), and the end is news (D-08): the read fingerprint carries it (`PaneReadRecord::checks_ended`), so the row turns unread, lands in Unread with a plain dot, and its line says `CI 통과 · PR #N` or, in the warning colour, `CI 실패 · PR #N`.
 An end the operator has read is not news again, and the end is forgotten when the agent's state moves.
 
 Regression owners: `a_checks_wait_is_in_progress_and_its_end_is_news` in `agent_state/turn.rs` and the runtime checks-wait tests.
@@ -256,12 +260,12 @@ Whether the operator has read a demand is Hide's own record, never Herdr's tab-s
 
 ## The four groups
 
-The sections are named for whose move is next: Needs You (`내 차례`) and To read (`읽을 것`) are the two the operator acts on; Working and Seen keep their names (status-marks D-11).
+The sections are named for whose move is next: Needs You (`내 차례`) and Unread (`읽을 것`) are the two the operator acts on; Working and Seen keep their names (status-marks D-11).
 
 | Group | Membership |
 | --- | --- |
 | Needs You | An unread demand - question, approval or block - or a pane Herdr reports as blocked, or whose native question or plan waits for the operator, right now |
-| Done (To read) | No demand, stopped, completion reported, and unread |
+| Done (Unread) | No demand, stopped, completion reported, and unread |
 | Working | Running, or a quiet row waiting on a working descendant, a proven background task or a reply still being made |
 | Seen | Everything else: ready idle, read demands, read completions, unknown |
 
@@ -275,32 +279,35 @@ Done is deliberately separate from Needs You: a stop to read is "look when you h
 
 ## The mark
 
-Every row draws one of five marks, decided once in the core (`RowMark::of` in `agent_state/tally.rs`) and carried on the wire as `mark` (`turn`, `going`, `done`, `unread`, `quiet`); no surface derives a mark of its own (status-marks D-01, D-12).
-A mark says whose move is next, and its shape alone tells the five apart:
+Every row draws one of six marks, decided once in the core (`RowMark::of` in `agent_state/tally.rs`) and carried on the wire as `mark` (`turn`, `going`, `done`, `unread`, `quiet`, `asleep`); no surface derives a mark of its own (status-marks D-01, D-12).
+Four say whose move is next, and their shapes alone tell them apart; `asleep` is the one exception, an agent Hide stopped that wakes when opened (D-21):
 
 | Mark | Shape | When |
 | --- | --- | --- |
 | `turn` | A `!` in a 12 px warning badge | The operator's turn: the row is in Needs You or carries an escalation, or it is an own question, approval or block the operator has read (drawn at `--opacity-read-status`) |
 | `going` | A static three-quarter ring in the working colour | In progress: the agent works, or it waits (`wait`) on children, a background task, its pull request's checks or a reply |
-| `done` | A 7 px green dot | To read, and the label read the turn as finished |
-| `unread` | A 7 px dot in the foreground colour | To read, with work left, a wait nothing proves, or no verdict |
-| `quiet` | Nothing; the slot is kept so titles line up | Everything else: read, idle, unknown, asleep, a disconnected device's row, a delegated child's own request |
+| `done` | A 7 px green dot | Unread, and the label read the turn as finished |
+| `unread` | A 7 px dot in the foreground colour | Unread, with work left (a wait nothing proves is work left), or no verdict |
+| `quiet` | Nothing; the slot is kept so titles line up | Everything else: read, idle, unknown, a disconnected device's row, a delegated child's own request |
+| `asleep` | A grey moon (`☾`), not dimmed | An agent Hide put to sleep, waking, or one that could not be reopened; counted on no badge |
 
 The ring does not turn (D-02): motion is not how the operator tells in progress from waiting.
 A delegated row draws only `going` or `quiet` (B24): its question is its parent's to answer; one of the six escalation causes still makes it `turn`.
 Colour never carries the distinction alone: the mark's name and the word that leads its line are its hover text and part of the row's accessible name (`markWords` in `web/src/agentRow.ts`), as in `내 차례 · 질문` or `읽을 것 · 일 남음`.
 
-How a stop ended is the label's verdict (`axes.rs::stop_verdict`): finished, unfinished (work left) or waiting on something nothing proves.
-Only a finished verdict draws the green dot and the word Done (`끝남`); work left is `Unfinished` (`일 남음`) and a wait nothing proves is `Waiting` (`대기`); a stop no label judged (summaries off, a failed or pending analysis) is `Stopped` (`멈춤`), said only on hover, in accessible names and in notifications, and its line is empty (D-03, D-04).
-Read, a stop with work left or an unproven wait keeps its line, subdued, with its word (`line.mode: kept`, B7).
+How a stop ended is the label's verdict (`axes.rs::stop_verdict`): finished, or unfinished (work left); a label `waiting` that nothing proves is running is work left too, since nothing will wake the agent (status-marks D-17).
+Only a finished verdict draws the green dot and the word Done (`끝남`); work left is `Unfinished` (`일 남음`), so a plain dot means stopped with no confirmation that the work is done; a stop no label judged (summaries off, a failed or pending analysis) is `Stopped` (`멈춤`), said only on hover, in accessible names and in notifications, and its line is empty (D-03, D-04).
+Read, a stop with work left keeps its line, subdued, with its word (`line.mode: kept`, B7).
 
-A line leads with the word for what is asked or how the turn ended (`질문 · …`, `승인 · …`, `막힘 · …`, `끝남 · …`, `일 남음 · …`, `대기 · …`); an in-progress row says its sentence alone, or with none the cause Hide proved (B10).
+A line leads with the word for what is asked or how the turn ended (`질문 · …`, `승인 · …`, `막힘 · …`, `끝남 · …`, `일 남음 · …`); an Unread row's line is only ever `끝남 · …` or `일 남음 · …` (B6).
+A working row says its sentence alone or has no line; a waiting row's line is `대기 · ` and its sentence, or with none the proven cause: `대기 · 백그라운드 작업`, `대기 · 자식 N명 작업 중`, `대기 · 답장`, `대기 · CI · PR #N` (B10, B29).
+The web splits a line into its lead word, sentence and background tail (`lineParts`), and a narrow row cuts only the sentence, so the lead and the tail always show.
 A Needs You line's ask verb says the same word: an Answer reads `질문` (Question) and an Approval `승인` (Approval), followed by ` · ` and what to do.
-A row with no mark that is asleep, waking, unreachable or of unknown state is drawn dimmed whole, and its line says why (B16).
+A row of unknown state, or on an unreachable device, has no mark and is drawn dimmed whole, and its line says why (B16).
 A row on a device that is not connected still carries the last state Hide knew of it, which may be long over; while `status.remote` says the device is not connected, the shell draws that row and a tree popover's child with no mark, dimmed, with the line `<device> 연결 끊김` (`agents.line.disconnected`), and its hover and accessible name say the same instead of the stale mark words.
-A saved sleeping conversation's row (`SleepingSessionRow`, the phone's sleeping row) draws no moon: an empty mark slot, dimmed, with `재움 · 열면 깨어남`, `깨우는 중` or `재움 · 다시 열지 못함` on its line.
+A sleeping, waking or failed agent's row, and a saved sleeping conversation's row (`SleepingSessionRow`, the phone's sleeping row), draw the grey moon and are not dimmed (B31): a sleeping one has no line, and its hover and accessible name say `재움 · 열면 깨어남`; a waking one says `깨우는 중` and a failed one `재움 · 다시 열지 못함` on its line.
 
-Regression owners: `precedence_is_the_turn_then_progress_then_a_stop_to_read`, `a_dot_to_read_is_green_only_on_a_finished_verdict` in `agent_state/turn.rs`, and `web/src/agentRow.test.ts`.
+Regression owners: `precedence_is_the_turn_then_progress_then_a_stop_to_read`, `a_dot_to_read_is_green_only_on_a_finished_verdict`, `a_finished_turn_is_not_hidden_by_the_background_tasks_it_left`, `a_sleeping_row_draws_asleep_and_counts_on_no_badge` in `agent_state/turn.rs`, and `web/src/agentRow.test.ts`.
 
 ## Close protection is separate from read state
 
@@ -1034,16 +1041,16 @@ Sentences keep their original language in every mode.
 | --- | --- | --- |
 | Row title | Every adapter: manual title, then Hide AI goal, then proven native automatic title, then provider. See [Task identity](#task-identity). | Every adapter: manual title, then proven native automatic title, then provider. No Herdr workspace label or control name becomes a title. See [Task identity](#task-identity). |
 | Pending native question | The turn mark, Question, Needs You until answered, including after reading. Second line: turn-end `expected_reply`, otherwise the question's first non-empty line (40 characters including a truncation ellipsis), otherwise `progress`. | The same turn mark, Question and Needs You until answered; its first non-empty line supplies the second line without an AI call. With no question text the status word stands in. |
-| Plain-text question at the end of a turn, with no native wait | If the analysis identifies a question: the turn mark, Question, Needs You while unread, with `expected_reply`. Reading moves it to Seen unless it is still running; the request sentence remains until resolved. | Text alone creates no question, no turn mark and no Needs You. A stopped, unread Herdr `done` is in To read with the plain dot, the word Stopped on hover and no sentence. A Herdr `idle` is Seen, not To read. |
+| Plain-text question at the end of a turn, with no native wait | If the analysis identifies a question: the turn mark, Question, Needs You while unread, with `expected_reply`. Reading moves it to Seen unless it is still running; the request sentence remains until resolved. | Text alone creates no question, no turn mark and no Needs You. A stopped, unread Herdr `done` is in Unread with the plain dot, the word Stopped on hover and no sentence. A Herdr `idle` is Seen, not Unread. |
 | Approval / Herdr blocked pane / native plan wait | The turn mark, Approval, Needs You until answered, including after reading. The second line follows `expected_reply`, native question, then `progress`; a plan document's heading is never extracted as a sentence. | The same turn mark, Approval and Needs You; without a native question sentence the word Approval stands in, including for a plan document. |
 | AI-identified error or block with a named cause, without a native wait | The turn mark, Blocked, Needs You while unread; the second line is the cause in `progress`. Reading leaves the dimmed mark and cause in Seen unless it is running. | No cause is inferred from plain text and no Blocked mark is invented. Herdr's own lifecycle decides the group: an unread `done` is Done with no sentence, an `idle` is Seen. A native blocked pane still uses Approval above. |
 | Working second line | `progress`; with an unresolved demand, `expected_reply`, native question, then `progress`. A quiet working row's display can hide its sentence until hover or selection. | No generated progress; Working stands in when there is no sentence. A working row with a native question still carries that question. Proven background tasks, working children and replies still being made still supply Waiting independently of AI. |
-| To read (unread) mark and second line | The green dot only for a finished verdict, the plain dot for work left or an unproven wait; the line leads with `끝남`, `일 남음` or `대기` and then `expected_reply`, otherwise `progress`. A turn that ended on its pull request's running checks is in progress until they end, and their end is the line. | The plain dot, no line; the word Stopped is said only on hover, in accessible names and in notifications. No inferred unfinished verdict; proven waits, running checks included, still prevent a premature stop. |
+| Unread (unread) mark and second line | The green dot only for a finished verdict, the plain dot for work left or an unproven wait; the line leads with `끝남`, `일 남음` or `대기` and then `expected_reply`, otherwise `progress`. A turn that ended on its pull request's running checks is in progress until they end, and their end is the line. | The plain dot, no line; the word Stopped is said only on hover, in accessible names and in notifications. No inferred unfinished verdict; proven waits, running checks included, still prevent a premature stop. |
 | Seen second line | A read unresolved demand keeps its sentence; a read completion, idle or unknown row has none. | A native unresolved question keeps its question; ordinary read completion, idle and unknown rows have no sentence. |
 | Whether a root enters Needs You | Native question/approval/block, an unread AI question or named block, or one of the explicit delegated escalations. Working and Done alone do not enter it. | Native question/approval/block and the same explicit escalations; a plain-text end question alone does not enter it. |
 | App icon count | Number of root Needs You rows across devices while the desktop Needs You switch is on; Done contributes zero. | The same count rule, with fewer inferred demands. macOS uses the Dock, Linux a supported launcher, Windows a taskbar dot with the count in its description. |
 | Desktop notification title | The root's row title, capped by the host at 120 characters. | The root's row title by the off priority above, with the same cap. |
-| Desktop notification body | With `detail`: translated row `status_code` word ` · ` exact `detail` ` · ` project. Examples: `Question · Choose staging? · my-app`, `Approval · Review the plan · my-app`, `Blocked · Login required · my-app`, `Done · Build fixed · my-app`, `Unfinished · Three tests remain · my-app`, `Stopped · my-app` for a stop no label judged. Without `detail` the row's word and the project (`Approval · my-app`); a frame with no `status_code` says its section (`Needs You · my-app`, `To read · my-app`). | The same composition. Native question: `Question · Choose staging? · my-app`. Approval without a sentence: `Approval · my-app`. Plain-text end question on an unread completed turn: `Done · my-app`. |
+| Desktop notification body | With `detail`: translated row `status_code` word ` · ` exact `detail` ` · ` project. Examples: `Question · Choose staging? · my-app`, `Approval · Review the plan · my-app`, `Blocked · Login required · my-app`, `Done · Build fixed · my-app`, `Unfinished · Three tests remain · my-app`, `Stopped · my-app` for a stop no label judged. Without `detail` the row's word and the project (`Approval · my-app`); a frame with no `status_code` says its section (`Needs You · my-app`, `Unread · my-app`). | The same composition. Native question: `Question · Choose staging? · my-app`. Approval without a sentence: `Approval · my-app`. Plain-text end question on an unread completed turn: `Done · my-app`. |
 | Phone push title and body | Title is the same root row title. With `detail`, the phone language's row status word, exact sentence and project use the desktop format. Without `detail`, the row's word and the project; a payload with no `status_code` says the section (`내 차례 · my-app`, `읽을 것 · my-app` in Korean). | The same composition from native facts only. Native question in Korean: `질문 · Choose staging? · my-app`; approval without text: `승인 · my-app`; a plain-text question on an unread completed turn: `끝남 · my-app`. |
 
 The status prefix is the row's translated `status_code`, not a new classification: English uses Question, Approval, Blocked, Done and Stopped; Korean uses 질문, 승인 대기, 막힘, 완료 and 멈춤.

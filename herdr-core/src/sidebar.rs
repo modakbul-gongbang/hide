@@ -719,6 +719,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         wait: None,
         checks_wait: None,
         checks_ended: None,
+        background_left: 0,
         descendant_signals: BTreeSet::new(),
         lineage_parent_pane_id: None,
         lineage_path_pane_ids: Vec::new(),

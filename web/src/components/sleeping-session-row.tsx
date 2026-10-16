@@ -18,18 +18,21 @@ export function SleepingSessionRow({ session, actions, inset = "var(--spacing-xs
   const uncertain = session.phase === "close_unknown" || session.phase === "wake_unknown";
   const pending = session.phase !== "sleeping" && session.phase !== "failed" && !uncertain;
   const caption = t(sleepingCaption(session));
+  // A sleeping row says itself through its moon and hover; waking, failing or
+  // an unsure state says so on its line (status-marks B31).
+  const lineShown = session.phase !== "sleeping" || session.checking;
   return (
     <li data-sleeping-session={session.sleep_id} className="flex min-w-0 items-start gap-xs rounded-sm py-xs pr-xs text-body" style={{ paddingLeft: inset }}>
-      {/* A row with no mark, dimmed whole, its state on its line (status-marks D-05, B16); the action stays at full strength. */}
-      <span className="flex min-w-0 flex-1 items-start gap-xs opacity-(--opacity-dimmed)">
+      {/* A grey moon at full strength, the one mark outside the four (status-marks D-21, B31). */}
+      <span className="flex min-w-0 flex-1 items-start gap-xs">
         <span className="flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
-          <StatusMark mark="quiet" />
+          <StatusMark mark="asleep" data-agent-status-mark="asleep" />
           <AgentRowMark kind={session.kind} />
         </span>
         <Hint label={[session.identity_label, agentProductName(session.kind), session.reason, caption].filter(Boolean).join("\n")}>
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="min-h-(--size-sidebar-line) truncate leading-(--size-sidebar-line) text-subtle-foreground">{session.identity_label}<span className="sr-only">, {agentProductName(session.kind)}, </span></span>
-            <span className="truncate text-caption leading-(--size-sidebar-line-detail) text-subtle-foreground" data-sleeping-line={session.phase} aria-busy={session.checking || pending || undefined}>{caption}</span>
+            <span className="min-h-(--size-sidebar-line) truncate leading-(--size-sidebar-line) text-subtle-foreground">{session.identity_label}<span className="sr-only">, {agentProductName(session.kind)}, {lineShown ? null : caption}</span></span>
+            {lineShown ? <span className="truncate text-caption leading-(--size-sidebar-line-detail) text-subtle-foreground" data-sleeping-line={session.phase} aria-busy={session.checking || pending || undefined}>{caption}</span> : null}
           </span>
         </Hint>
       </span>

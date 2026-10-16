@@ -682,6 +682,7 @@ mod tests {
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
             wait: None,
             checks_wait: None,
+            background_left: 0,
             checks_ended: None,
             descendant_signals: std::collections::BTreeSet::new(),
             lineage_parent_pane_id: None,
@@ -909,7 +910,7 @@ mod tests {
                 "Refactor the parser",
                 Some("session-a"),
                 Some("w1:p1"),
-                crate::agent_state::RowMark::Quiet,
+                crate::agent_state::RowMark::Asleep,
                 AgentStatusCode::Sleeping,
             )
         );

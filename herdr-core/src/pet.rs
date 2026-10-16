@@ -203,6 +203,7 @@ mod tests {
             direct_child_counts: crate::model::DescendantCountsSnapshot::default(),
             wait: None,
             checks_wait: None,
+            background_left: 0,
             checks_ended: None,
             descendant_signals: std::collections::BTreeSet::new(),
             lineage_parent_pane_id: None,

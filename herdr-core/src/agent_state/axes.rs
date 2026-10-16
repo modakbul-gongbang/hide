@@ -382,13 +382,29 @@ fn quiet_itself(agent: &SidebarAgentSnapshot) -> bool {
 }
 
 /// A quiet row whose session proves a background task it started is still
-/// running in the process that started it.
+/// running in the process that started it, on a turn the label did not read
+/// as finished: a finished turn is not hidden by tasks it left behind
+/// (status-marks D-16, B27, B28).
 fn background_wait(agent: &SidebarAgentSnapshot) -> bool {
-    quiet_itself(agent)
-        && agent
-            .row_facts
-            .as_ref()
-            .is_some_and(|facts| facts.wake_devices > 0)
+    quiet_itself(agent) && background_left(agent) > 0 && !turn_read_finished(agent)
+}
+
+/// How many background tasks the row's session proves still run.
+pub(crate) fn background_left(agent: &SidebarAgentSnapshot) -> u32 {
+    agent
+        .row_facts
+        .as_ref()
+        .map_or(0, |facts| facts.wake_devices)
+}
+
+/// Whether the label read the turn's end as finished, before any wait is
+/// laid: `stop_verdict` reads the same end once the row is known to wait on
+/// nothing.
+fn turn_read_finished(agent: &SidebarAgentSnapshot) -> bool {
+    agent
+        .row_facts
+        .as_ref()
+        .is_some_and(|facts| facts.end == Some(LabelEnd::Done) && !facts.wake_vanished)
 }
 
 /// Whether the row moves its own work on: running with nothing asked of
@@ -435,16 +451,15 @@ fn own_wait(agent: &SidebarAgentSnapshot, answering: bool) -> Option<AgentWait> 
 }
 
 /// How the label read a stopped turn that nothing proven will wake: finished,
-/// with work left, or waiting on something the session cannot prove is
-/// running (B15). A turn whose awaited work died with its process has work
-/// left whatever the label said (B16). `None` without a label (summaries off,
-/// a failed or pending analysis), and for a row with a demand, running work
-/// or a proven wait.
+/// or with work left, which a wait the session cannot prove is running is too
+/// (status-marks D-17). A turn whose awaited work died with its process has
+/// work left whatever the label said (B16). `None` without a label (summaries
+/// off, a failed or pending analysis), and for a row with a demand, running
+/// work or a proven wait.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StopVerdict {
     Finished,
     Unfinished,
-    Waiting,
 }
 
 pub(crate) fn stop_verdict(agent: &SidebarAgentSnapshot) -> Option<StopVerdict> {
@@ -459,8 +474,7 @@ pub(crate) fn stop_verdict(agent: &SidebarAgentSnapshot) -> Option<StopVerdict> 
     }
     match end {
         LabelEnd::Done => Some(StopVerdict::Finished),
-        LabelEnd::Unfinished => Some(StopVerdict::Unfinished),
-        LabelEnd::Waiting => Some(StopVerdict::Waiting),
+        LabelEnd::Unfinished | LabelEnd::Waiting => Some(StopVerdict::Unfinished),
         _ => None,
     }
 }
@@ -468,10 +482,7 @@ pub(crate) fn stop_verdict(agent: &SidebarAgentSnapshot) -> Option<StopVerdict> 
 /// Whether the label read this stopped turn as not finished and nothing is
 /// left to wake the agent: work left, or a wait nothing proves.
 pub(crate) fn stopped_unfinished(agent: &SidebarAgentSnapshot) -> bool {
-    matches!(
-        stop_verdict(agent),
-        Some(StopVerdict::Unfinished | StopVerdict::Waiting)
-    )
+    stop_verdict(agent) == Some(StopVerdict::Unfinished)
 }
 
 /// Whether the label read this stopped turn as finished: the one case a dot

@@ -21,6 +21,8 @@ export type PhoneAgent = {
   wait: AgentWait | null;
   /** How many of its descendants work, for a row waiting on them. */
   descendants_working: number;
+  /** The background tasks a finished turn left running (status-marks D-19); absent when none. */
+  background_left?: number;
   agent_kind: string;
   title: string;
   place: string | null;

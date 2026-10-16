@@ -1,4 +1,5 @@
 import type { HTMLAttributes } from "react";
+import { MoonIcon } from "lucide-react";
 import { cn } from "../lib/utils";
 import type { RowMark } from "../snapshot";
 
@@ -9,7 +10,9 @@ import type { RowMark } from "../snapshot";
  * colours: the operator's turn is a `!` in a warning badge, in progress is a
  * static three-quarter ring, to read is a small dot (green only when the label
  * read the turn as finished), and quiet keeps its slot empty so titles line up.
- * Each shape carries its own colour; a caller's class dims a read turn.
+ * An agent Hide put to sleep keeps a grey moon, the one shape outside the four
+ * (status-marks D-21). Each shape carries its own colour; a caller's class dims
+ * a read turn.
  */
 export function StatusMark({ mark, className, ...rest }: { mark: RowMark } & HTMLAttributes<HTMLSpanElement>) {
   return (
@@ -31,6 +34,8 @@ export function StatusMark({ mark, className, ...rest }: { mark: RowMark } & HTM
         </svg>
       ) : mark === "done" || mark === "unread" ? (
         <span className={cn("size-(--size-status-mark) rounded-full", mark === "done" ? "bg-success" : "bg-foreground")} />
+      ) : mark === "asleep" ? (
+        <MoonIcon className="size-full text-muted-foreground" />
       ) : null}
     </span>
   );

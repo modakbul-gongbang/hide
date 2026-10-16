@@ -44,7 +44,7 @@ export const firstRunEnglish = {
   "firstRun.project.title": "Add your first project",
   "firstRun.project.skip": "Skip for now",
   "firstRun.notice.needsYou": "Needs You",
-  "firstRun.notice.done": "To read",
+  "firstRun.notice.done": "Unread",
   "firstRun.notice.body": "{{state}} · {{project}}",
   "firstRun.home.noProject": "Add a project to start an agent.",
   "firstRun.home.addProject": "Add project",

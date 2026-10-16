@@ -1132,6 +1132,10 @@ pub struct DeviceTestStageSnapshot {
     pub detail: String,
 }
 
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
 /// An agent's state on four independent lifecycle axes, plus the values the shell draws
 /// from them.
 ///
@@ -1360,6 +1364,10 @@ pub struct SidebarAgentSnapshot {
     /// fingerprint, so the end turns the row unread once.
     #[serde(skip_serializing)]
     pub checks_ended: Option<ChecksEnded>,
+    /// The background tasks a finished turn left running, which its line
+    /// names (status-marks D-19); 0 on any other row.
+    #[serde(skip_serializing_if = "is_zero_u32")]
+    pub background_left: u32,
     /// The demands and completions of this row's live descendants, keyed by
     /// the descendant pane. It is what the read record compares against, so
     /// a descendant asking or finishing turns this row unread the same way
@@ -6374,6 +6382,7 @@ mod wire_enum_tests {
             RowMark::Done,
             RowMark::Unread,
             RowMark::Quiet,
+            RowMark::Asleep,
         ];
         for variant in marks {
             match variant {
@@ -6381,7 +6390,8 @@ mod wire_enum_tests {
                 | RowMark::Going
                 | RowMark::Done
                 | RowMark::Unread
-                | RowMark::Quiet => {}
+                | RowMark::Quiet
+                | RowMark::Asleep => {}
             }
         }
         assert_wire(&contract, "row_mark", &marks);

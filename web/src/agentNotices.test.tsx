@@ -116,8 +116,8 @@ it("counts every device's Needs You group for the app icon, not Done", () => {
 it.each([
   [false, false, [], 0, false],
   [true, false, ["Needs You · my-app"], 2, true],
-  [false, true, ["To read · my-app"], 0, true],
-  [true, true, ["Needs You · my-app", "To read · my-app"], 2, true],
+  [false, true, ["Unread · my-app"], 0, true],
+  [true, true, ["Needs You · my-app", "Unread · my-app"], 2, true],
 ] as const)("with Needs You=%s and Done=%s sends only the chosen groups and counts Needs You", async (needsYou, done, bodies, badge, wanted) => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   const shown: string[] = [];

@@ -1484,8 +1484,8 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
     assert_eq!(restarted.snapshot().ui_state.agent_sleep_after_hours, None);
 }
 
-/// B10, B20: a sleeping agent keeps its row, name and place, quiet and dimmed
-/// (status-marks B16);
+/// B10, B20: a sleeping agent keeps its row, name and place, with its moon
+/// (status-marks D-21, B31);
 /// an awake row carries no `sleep` key, so an older reader's decode holds.
 #[test]
 fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
@@ -1506,7 +1506,7 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
             &serde_json::json!("reviewer"),
             &serde_json::json!("claude"),
             &serde_json::json!("Review the parser"),
-            &serde_json::json!("quiet"),
+            &serde_json::json!("asleep"),
             &serde_json::json!("sleeping"),
             &serde_json::json!("seen"),
             &serde_json::json!("sleeping"),

@@ -1,7 +1,7 @@
 import { sectionTree, sectionCount, directChildren, unfoldedRows } from "../test/legacyRowTree";
 import { legacyAgentRow } from "../test/legacyAgentRow";
 import { describe, expect, it } from "vitest";
-import { badgeParts, badgeWords, branchChip, forkLabel, lineText, markWords, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sidebarLine } from "./agentRow";
+import { badgeParts, badgeWords, branchChip, forkLabel, lineParts, lineText, markWords, rowAccessibleName, rowDimmed, lineShownAtRest, lineTone, markTone, rowLine, sidebarLine, treeLine } from "./agentRow";
 import { createInterfaceI18n } from "./i18n/instance";
 import type { AgentRow } from "./snapshot";
 
@@ -83,6 +83,9 @@ describe("the mark and the badge (status-marks D-01, D-02, B19)", () => {
     expect(markWords(t, { mark: "unread", status_code: "stopped" })).toBe("읽을 것 · 멈춤");
     expect(markWords(t, { mark: "quiet", status_code: "idle" })).toBe("조용함");
     expect(markWords(t, { mark: "quiet", status_code: "unknown" })).toBe("조용함 · 상태 모름");
+    // A finished turn names the tasks it left (B27); a sleeping row says only its own words (B31).
+    expect(markWords(t, { mark: "done", status_code: "done", background_left: 2 })).toBe("읽을 것 · 끝남 · 백그라운드 2개 남음");
+    expect(markWords(t, { mark: "asleep", status_code: "sleeping" })).toBe("재움 · 열면 깨어남");
   });
 });
 
@@ -199,19 +202,45 @@ describe("the line's words (status-marks D-04, B7, B10, B13, B16)", () => {
     expect(lineText(t, blocked, sidebarLine(blocked)!)).toBe("막힘 · 디스크 여유가 없음");
   });
 
-  it("says an in-progress row's sentence alone, or with none the cause Hide proved", async () => {
+  it("leads a waiting row's sentence, or with none the cause Hide proved, with 대기 in every list (D-18, B10, B29)", async () => {
     const { t } = await createInterfaceI18n("ko");
     const said = row("w", { activity: "stopped", status_code: "waiting", wait: "background", detail: "빌드 끝나기를 기다림" });
-    expect(lineText(t, said, sidebarLine(said)!)).toBe("빌드 끝나기를 기다림");
+    expect(lineText(t, said, sidebarLine(said)!)).toBe("대기 · 빌드 끝나기를 기다림");
+    expect(treeLine(said)).toMatchObject({ mode: "waiting" });
+    // A working row says its sentence alone, and a tree row draws none of it.
+    const working = row("x", { detail: "파서 고치는 중", unread: true });
+    expect(lineText(t, working, sidebarLine(working)!)).toBe("파서 고치는 중");
+    expect(treeLine(working)).toBeNull();
     const waiting = (wait: AgentRow["wait"], pull_request?: number) => {
       const agent = row("w", { activity: "stopped", status_code: "waiting", wait, descendant_counts: { error: 0, approval: 0, question: 0, working: 2, done: 0 } });
       agent.state = { ...agent.state, line: { text: "", mode: "waiting", tone: { kind: "subtle", read: false }, pull_request } };
       return lineText(t, agent, sidebarLine(agent)!);
     };
-    expect(waiting("checks", 12)).toBe("CI 대기 · PR #12");
-    expect(waiting("children")).toBe("자식 2명 작업 중");
-    expect(waiting("background")).toBe("백그라운드 작업 대기");
-    expect(waiting("reply")).toBe("답장 대기");
+    expect(waiting("checks", 12)).toBe("대기 · CI · PR #12");
+    expect(waiting("children")).toBe("대기 · 자식 2명 작업 중");
+    expect(waiting("background")).toBe("대기 · 백그라운드 작업");
+    expect(waiting("reply")).toBe("대기 · 답장");
+  });
+
+  it("ends a finished turn's line with the tasks it left, kept apart from the sentence a narrow row cuts (D-19, B27)", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    const left = row("d", { activity: "stopped", mark: "done", status_code: "done", group: "done", unread: true, detail: "배포 시작함", background_left: 2 });
+    expect(lineParts(t, left, sidebarLine(left)!)).toEqual({ lead: "끝남", text: "배포 시작함", tail: "백그라운드 2" });
+    expect(lineText(t, left, sidebarLine(left)!)).toBe("끝남 · 배포 시작함 · 백그라운드 2");
+  });
+
+  it("draws a sleeping row with its moon and no line, and a waking or failed one with its words, none dimmed (D-21, B31)", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    const sleeping = row("z", { activity: "stopped", mark: "asleep", status_code: "sleeping", detail: "파서 고치는 중", unread: true });
+    expect(sidebarLine(sleeping)).toBeNull();
+    expect(rowDimmed(sleeping)).toBe(false);
+    for (const [status_code, words] of [["waking", "깨우는 중"], ["sleep_failed", "재움 · 다시 열지 못함"]] as const) {
+      const agent = row("z", { activity: "stopped", mark: "asleep", status_code });
+      expect(lineText(t, agent, sidebarLine(agent)!)).toBe(words);
+      expect(treeLine(agent)).not.toBeNull();
+      expect(rowDimmed(agent)).toBe(false);
+    }
+    expect(rowDimmed(row("u", { status_code: "unknown", mark: "quiet" }))).toBe(true);
   });
 
   it("names the pull request whose checks ended, in warning only when they failed", async () => {

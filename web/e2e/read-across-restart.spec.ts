@@ -21,7 +21,7 @@ async function expectRead(page: Page, pane: string) {
   await expect(sidebarRow(page, pane).locator('[data-agent-status-mark="quiet"]')).toBeVisible();
 }
 
-/** To read: an unread finished turn (a dot; green only on a label's finished verdict). */
+/** Unread: an unread finished turn (a dot; green only on a label's finished verdict). */
 async function expectDone(page: Page, pane: string) {
   await expect(sidebarRow(page, pane).locator('[data-agent-status-mark="unread"], [data-agent-status-mark="done"]').first()).toBeVisible({ timeout: 30_000 });
   await expect(sidebarRow(page, pane)).toHaveAttribute("data-attention", "true");

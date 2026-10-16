@@ -4,7 +4,8 @@ import type { Actions } from "./actions";
 import { AgentRowMark } from "./AgentRowMark";
 import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
-import { forkLabel, leadWord, markTone, markWords } from "./agentRow";
+import { backgroundTail, forkLabel, leadWord, lineParts, markTone, markWords, rowLine } from "./agentRow";
+import { RowLineText } from "./components/row-line-text";
 import { AgentForkMark } from "./components/fork-mark";
 import { hideAiWords, homeTurnLine } from "./hideAiOrigin";
 import { sessionsModel, type SessionsModel } from "./sessionPanel";
@@ -278,13 +279,20 @@ function SecondLine({ agent, owl }: { agent: AgentRow; owl: boolean }) {
   // What its home waits for, after the agent's own ask or block cause (PRD hide-ai-work-home D-14, D-16).
   const turn = session.group === "needs_you" && !(session.line && agent.status_code === "error") ? agent.hide_ai?.turn : undefined;
   if (turn) return <div className={cn(indent, "flex min-w-0 text-micro text-warning")} data-session-line="home-turn"><span className="min-w-0 truncate">{homeTurnLine(t, turn)}</span></div>;
+  // A row stopped on proven work leads with 대기 and its sentence or cause, as the sidebar's line does (status-marks B29).
+  const row = rowLine(agent);
+  if (row?.mode === "waiting") {
+    const parts = lineParts(t, agent, row);
+    return <div className={cn(indent, "flex min-w-0 text-micro text-subtle-foreground")} data-session-line="waiting">
+      <RowLineText parts={parts} title={[parts.lead, parts.text].filter(Boolean).join(" · ")} />
+    </div>;
+  }
   if (!session.line) return null;
   const blocked = agent.status_code === "error";
   // A stop leads with how it ended and a block with its word, as the sidebar's line does; work in progress says its sentence alone (status-marks D-04).
-  const word = agent.mark === "going" ? null : leadWord(t, agent);
-  const line = word ? `${word} · ${session.line}` : session.line;
+  const parts = { lead: agent.mark === "going" ? null : leadWord(t, agent), text: session.line, tail: backgroundTail(t, agent) };
   return <div className={cn(indent, "flex min-w-0 text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={blocked ? "blocked" : session.unfinished ? "unfinished" : "label"}>
-    <span className="min-w-0 truncate" title={line}>{line}</span>
+    <RowLineText parts={parts} title={[parts.lead, parts.text, parts.tail].filter(Boolean).join(" · ")} />
   </div>;
 }
 

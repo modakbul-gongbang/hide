@@ -37,10 +37,16 @@ pub enum RowMark {
     /// Nothing to do: no mark, its slot kept.
     #[default]
     Quiet,
+    /// Hide put the agent to sleep; opening it wakes it. A grey moon, the
+    /// one shape outside the four, counted on no badge (status-marks D-21).
+    Asleep,
 }
 
 impl RowMark {
     pub(crate) fn of(agent: &SidebarAgentSnapshot) -> Self {
+        if agent.sleep.is_some() {
+            return Self::Asleep;
+        }
         let ownership = ownership_of(agent);
         let (demand, activity, _) = axes_of(agent);
         // The group already holds every call on the operator: an own unread
@@ -73,7 +79,7 @@ impl RowMark {
             Self::Going => counts.going += 1,
             Self::Done => counts.done += 1,
             Self::Unread => counts.unread += 1,
-            Self::Quiet => {}
+            Self::Quiet | Self::Asleep => {}
         }
     }
 }
@@ -343,13 +349,17 @@ pub mod phone {
         /// The pane id of this agent's lineage root on the same device; itself for a root.
         pub root_pane_id: String,
         pub group: String,
-        /// The row's mark (`RowMark`): `turn`, `going`, `done`, `unread` or `quiet`.
+        /// The row's mark (`RowMark`): `turn`, `going`, `done`, `unread`, `quiet` or `asleep`.
         pub mark: String,
         /// What an in-progress row waits on (`AgentWait`), which its line
         /// words when it has no sentence.
         pub wait: Option<String>,
         /// How many of its descendants work, for a row waiting on them.
         pub descendants_working: u64,
+        /// The background tasks a finished turn left running, which its line
+        /// ends with (status-marks D-19); 0 otherwise.
+        #[serde(skip_serializing_if = "is_zero")]
+        pub background_left: u64,
         pub agent_kind: String,
         pub title: String,
         /// `project · branch`, or the project alone for a plain folder.
@@ -479,6 +489,10 @@ pub mod phone {
                 .flat_map(|group| &group.sleeping_sessions)
                 .find(|session| &session.sleep_id == id)
         }
+    }
+
+    fn is_zero(value: &u64) -> bool {
+        *value == 0
     }
 
     fn str_of<'a>(value: &'a Value, field: &str) -> &'a str {
@@ -628,6 +642,10 @@ pub mod phone {
                 wait: agent.get("wait").and_then(Value::as_str).map(str::to_owned),
                 descendants_working: agent
                     .pointer("/descendant_counts/working")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0),
+                background_left: agent
+                    .get("background_left")
                     .and_then(Value::as_u64)
                     .unwrap_or(0),
                 emphasized: matches!(str_of(agent, "group"), "needs_you" | "done"),

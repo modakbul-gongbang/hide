@@ -3,7 +3,7 @@ import type { Catalog, Catalogs } from "../schema";
 // Names, tasks, transcripts, terminal output and places are caller data.
 export const mobileEnglish = {
   "mobile.group.needs_you": "Needs You",
-  "mobile.group.done": "To read",
+  "mobile.group.done": "Unread",
   "mobile.group.working": "Working",
   "mobile.group.seen": "Seen",
   "mobile.pair.title": "Connect to {{name}}",

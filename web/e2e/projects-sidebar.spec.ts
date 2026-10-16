@@ -451,7 +451,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
   }
 });
 
-test("Needs You and To read are raised above Pinned and stay in their tree, whatever is folded", async ({ page }) => {
+test("Needs You and Unread are raised above Pinned and stay in their tree, whatever is folded", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -482,7 +482,7 @@ test("Needs You and To read are raised above Pinned and stay in their tree, what
     await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
     await expect(needsYou.locator('[data-section="needs_you"]')).toHaveText("Needs You · 1");
     await expect(done.locator(`[data-pane="${finished}"]`)).toBeVisible();
-    await expect(done.locator('[data-section="done"]')).toHaveText("To read · 1");
+    await expect(done.locator('[data-section="done"]')).toHaveText("Unread · 1");
     // Needs You, then Done, then Pinned, at the top of the list; neither is past its cap, so nothing folds.
     const top = async (locator: Locator) => (await locator.boundingBox())!.y;
     expect(await top(needsYou)).toBeLessThan(await top(done));
@@ -536,7 +536,7 @@ test("Done stands still above the scrolled projects, and opening its first row m
     await finishFixtureTurn(herdr, panes[3]!, elsewhere);
     await finishFixtureTurn(herdr, panes[4]!, elsewhere);
     const done = page.locator('[data-raised-group="done"]');
-    await expect(done.locator('[data-section="done"]')).toHaveText("To read · 2", { timeout: 20_000 });
+    await expect(done.locator('[data-section="done"]')).toHaveText("Unread · 2", { timeout: 20_000 });
     const list = page.locator("[data-project-list]");
     expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
@@ -555,7 +555,7 @@ test("Done stands still above the scrolled projects, and opening its first row m
     const slot = await top(rows.first());
     await rows.first().locator("[data-agent-open]").click();
     await expect(done.locator(`[data-pane="${first}"]`)).toHaveCount(0, { timeout: 20_000 });
-    await expect(done.locator('[data-section="done"]')).toHaveText("To read · 1");
+    await expect(done.locator('[data-section="done"]')).toHaveText("Unread · 1");
     expect(await top(done)).toBe(held);
     expect(await top(done.locator(`li[data-pane="${second}"]`))).toBe(slot);
     await screenshot(page, "projects-raised-held");

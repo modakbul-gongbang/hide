@@ -514,7 +514,7 @@ An unknown close or wake offers Check status, disables that action while a check
 The current Claude Code and Codex keep-pane behavior above is unchanged.
 Web owners: `web/src/components/sleeping-session-row.tsx`, `web/src/sleeping-session.ts` and `web/src/sidebar.tsx`.
 
-The sidebar is one list of operator-owned roots under projects and checkouts, with Needs You (`내 차례`) and To read (`읽을 것`) raised above it.
+The sidebar is one list of operator-owned roots under projects and checkouts, with Needs You (`내 차례`) and Unread (`읽을 것`) raised above it.
 A root whose descendant is raised enters Needs You itself, at any depth, and the raised descendant never appears there on its own row; its second line is the verb and what to do, with no name, count, PR or path.
 What to do is the core's `detail`: the label's reply, else the first line of a native question waiting now in the agent's own words (up to 40 characters, `…` when cut), else the label's line, else the verb's own words (`답을 기다림`); a native question therefore reads as itself with Hide AI off and while the label still describes the turn's work ([status-model.md](status-model.md#the-second-line)).
 An idle or done parent still owns its children, and a closed pane or ended parent agent makes them orphan roots.
@@ -768,7 +768,7 @@ It replaced the Project Overview, the Agents graph, the Issues board with its Li
 The Overview opens from the sidebar's Overview row, the top row's Overview button or ⌘⇧O, always on the device in front on the rail, and has no choice between all projects and one project (B1).
 It opens on the tab it was last left on, Tasks the first time.
 It opens as a centered modal over a mounted Workspace, as large as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side and at most `--size-overview-sheet-w` by `--size-overview-sheet-h`, preserving terminal geometry and output, and otherwise as a central page.
-Its head is the title `Overview` and the device switch: every connected device as its rail tile and name, the rail's front device marked `rail`, a device that does not answer marked `연결 안 됨`, and every other device's tooltip carrying `Needs You N` (B2).
+Its head is the title `Overview` and the device switch: every connected device as its rail tile and name, the rail's front device marked `rail`, a device that does not answer marked `연결 안 됨`, and every other device's tooltip carrying `내 차례 N` (B2).
 With This Mac alone there is no switch, since there is nothing to choose.
 Choosing a device changes only what the Overview shows; the rail, the sidebar and the Workspace in front stay, and a project chip that was set clears.
 The tab row is `Tasks · 백로그 · Projects` and, at its end, `Usage`: Tasks carries its task count, its Needs You count in the warning colour and a thin bar of the share that needs the operator, works, waits and rests; 백로그 carries its open items and Projects its project count (B3).
@@ -794,7 +794,7 @@ An agent Hide AI started for a home (PRD hide-ai-work-home) is a task only while
 The core derives the tasks from facts it already holds, stores none of them, and rebuilds them only when their inputs change, so a new agent, an ended one or a new pull request changes the card in place.
 A fork is a root of its own and so a task of its own.
 Tasks has one section per project of the device, the projects with something that needs the operator first (B6).
-A section's head is the project's name, `일감 N` with `일하는 중 N` and, in the warning colour, `Needs You N`, then `백로그 N ›` while the project has open backlog items, which opens 백로그 on that project, and `열기 ↗`.
+A section's head is the project's name, `일감 N` with `일하는 중 N` and, in the warning colour, `내 차례 N`, then `백로그 N ›` while the project has open backlog items, which opens 백로그 on that project, and `열기 ↗`.
 `열기 ↗` closes the Overview, opens the project's most recent checkout and puts the lane on Work's Sessions list (B12).
 A section's cards stand in the order Needs You, blocked, working, waiting and done but not yet seen; resting tasks fold into `쉬는 일감 N ›`, and tasks whose pull requests all merged with a worktree still on disk into `정리할 것 N ›`, each opening in place and closing with `접기` (B7); the Overview opened on a card in either (from a pane's tree or a started item) opens that fold too.
 A section with no task reads `진행 중인 일감 없음 · New agent`, and New agent opens the start panel.
@@ -805,14 +805,14 @@ A card leads with the status mark alone and draws no provider logo in either age
 A card whose root needs the operator is outlined in the warning colour.
 Its third line is the four-step bar `작업 → PR → 검토 → 머지` and one line of state (B9).
 The bar fills one step with no pull request, two while the open pull request is a draft, running checks or failing them, three when it can merge and four when every pull request merged; a task that is only a conversation, with no worktree and no pull request, has no bar.
-The line is the reason in the warning colour on Needs You (`질문 · Claude가 기다림`), the reason in the danger colour when blocked, `머지됨` once merged (`머지됨 · 정리 남음` while a worktree stays), the open pull request's own line, `일하는 중 · 에이전트 N` while it works, the root's own word for an unseen stop (`끝남 · 아직 안 봄`, `일 남음 · 아직 안 봄`, `대기 · 아직 안 봄`, or `아직 안 봄` for a stop no label judged) under the state `읽을 것` (status-marks B20), and `쉬는 중` otherwise.
+The line is the reason in the warning colour on Needs You (`질문 · Claude가 기다림`), the reason in the danger colour when blocked, `머지됨` once merged (`머지됨 · 정리 남음` while a worktree stays), the open pull request's own line, `일하는 중 · 에이전트 N` while it works, the root's own word for an unseen stop (`끝남 · 아직 안 봄`, `일 남음 · 아직 안 봄`, or `아직 안 봄` for a stop no label judged) under the state `읽을 것` (status-marks B20), and `쉬는 중` otherwise.
 A card is one button that opens its record in the panel, and its chips are buttons of their own: the PR mark opens the pull request's card, the issue chip that item in 백로그, `→ <project>` filters Tasks to that project, and `→ <device>` switches the Overview to that device with the dashed card selected (B13).
 
 A task belongs to the device its root agent runs on.
 On the device a child was started on, the project the child works in shows a dashed card `← <device>에서 맡긴 일` with the child's logo and title; it is not counted in that device's tasks or Needs You, and pressing it opens the root task's record with the line `<device>에서 도는 자식은 <root device>의 이 일감에 속한다` above it (B14).
 A child whose root's device the core cannot resolve (`parent_machine_unresolved`) is an ordinary card of its own device with no arrow chip, and becomes a dashed card in place once it resolves (B15).
 
-The head of Tasks carries `전체 · Needs You N · 일하는 중` and the search `일감, 브랜치, #PR, 이슈 검색`; both filter cards only and keep the sections' order, and with no card left the tab reads `맞는 일감 없음` with `거르기 풀기` (B11).
+The head of Tasks carries `전체 · 내 차례 N · 일하는 중`, the same name and count as the sidebar section (status-marks D-20, B30; `Needs You N` in English), and the search `일감, 브랜치, #PR, 이슈 검색`; both filter cards only and keep the sections' order, and with no card left the tab reads `맞는 일감 없음` with `거르기 풀기` (B11).
 
 ### A task's record beside the tabs
 
@@ -878,7 +878,7 @@ Pasted text with line breaks joins into one line and stops at 256 characters (B4
 
 Projects is one row per project of the device (B48).
 Its top line is `<device> 디스크 여유 X / 전체 Y · 프로젝트 합계 Z · 정리하면 W`, the free space in the warning colour below 10 GB (`LOW_FREE_BYTES`, the cleanup sheet's own threshold), and a small `재는 중` while the sweep runs, the sizes in mono and the words in the body font; a device the core dials has no top line (B47).
-A row reads the project's name with its GitHub mark (a Git project whose issues are not on GitHub has the folder-with-branch mark) or `폴더`, `지금` (a colour bar and the counts that are not zero among `Needs You N · 일하는 중 N · 기다림 N · 끝남 N`, `쉬는 중 N` when all four are zero, `일감 없음` with no task), the backlog's `N ›`, the disk, `챙길 것`, the last activity and `열기 ↗` (B48).
+A row reads the project's name with its GitHub mark (a Git project whose issues are not on GitHub has the folder-with-branch mark) or `폴더`, `지금` (a colour bar and the counts that are not zero among `내 차례 N · 일하는 중 N · 기다림 N · 끝남 N`, `쉬는 중 N` when all four are zero, `일감 없음` with no task), the backlog's `N ›`, the disk, `챙길 것`, the last activity and `열기 ↗` (B48).
 The backlog's `N ›` opens 백로그 on that project.
 `챙길 것` is `N merged → 정리` while the project holds merged checkouts and empty otherwise; pressing it opens the disk cleanup sheet on that project's finished checkouts (B49); a project of a device the core dials says `N merged` with nothing to press, since its cleanup is that device's.
 Projects that rest with nothing to clean fold at the bottom into `조용한 프로젝트 N · X GB ›`, which opens in place (B50).
@@ -1364,9 +1364,11 @@ At a 240px sidebar width, its 8px list inset puts the checkout's kind glyph at x
 Focused sidebar agent and checkout rows use the neutral `--secondary` fill.
 Root shortcuts follow the same physical grouping order and deduplicate raised occurrences, with no numbers for tab lines or children.
 A closed checkout draws its status badge and still shows questioning or blocked Needs You rows.
-An agent row draws one of five marks in one 12 px slot ([status-model.md](status-model.md#the-mark)): the operator's turn as a `!` in a warning badge, in progress as a static three-quarter ring in the working colour, to read as a 7 px dot that is green only when the label read the turn as finished, and quiet as the empty slot; a read turn keeps its badge dimmed.
-The mark's name and the word that leads its line are its hover text (`내 차례 · 질문`, `읽을 것 · 일 남음`); the line leads with that word (`질문 · …`, `끝남 · …`, `일 남음 · …`, `대기 · …`), an in-progress row says its sentence alone or the proven cause (`CI 대기 · PR #12`, `자식 2명 작업 중`), and the end of checks the row waited on is its news (`CI 통과 · PR #12`, `CI 실패 · PR #12` in warning).
-A sleeping, waking, unreachable or unknown row draws no mark and is dimmed whole, its line saying why.
+An agent row draws one of four marks in one 12 px slot ([status-model.md](status-model.md#the-mark)): the operator's turn as a `!` in a warning badge, in progress as a static three-quarter ring in the working colour, to read as a 7 px dot that is green only when the label read the turn as finished, and quiet as the empty slot; a read turn keeps its badge dimmed.
+The mark's name and the word that leads its line are its hover text (`내 차례 · 질문`, `읽을 것 · 일 남음`); the line leads with that word (`질문 · …`, `끝남 · …`, `일 남음 · …`), and the end of checks the row waited on is its news (`CI 통과 · PR #12`, `CI 실패 · PR #12` in warning).
+A working ring says its sentence alone or has no line; a waiting ring has a line in every list, the project tree included, led by `대기 · ` and its sentence or the proven cause (`대기 · CI · PR #12`, `대기 · 자식 2명 작업 중`, `대기 · 백그라운드 작업`, `대기 · 답장`), so the lead word tells working from waiting (status-marks B10, B29).
+A finished turn that left background tasks running draws the green dot and ends its line with `· 백그라운드 N`, and its hover with `백그라운드 N개 남음` (B27); at the narrowest sidebar the sentence is cut and the lead word and that tail stay.
+An unreachable or unknown row draws no mark and is dimmed whole, its line saying why; a sleeping, waking or failed row keeps a grey moon and is not dimmed, the sleeping one with no line and `재움 · 열면 깨어남` on hover, the others with `깨우는 중` or `재움 · 다시 열지 못함` on their line (B31).
 A status badge counts agents under the mark each agent's own row draws, one mark and count per mark in the order whose move is next (the turn, in progress, finished to read, to read), with quiet agents and zero counts left out (status-marks B19; docs/status-model.md, Workspace aggregation).
 A web project row opens its device's last focused usable checkout, falling back to the primary checkout and then the first usable checkout.
 It opens the Workspace and unfolds its checkouts in one admitted event; activating it while that target Workspace is in front and the project is unfolded folds the project while keeping the Workspace in front.
@@ -1460,7 +1462,7 @@ Search continues to index the complete project tree; choosing a folded result br
 ### Tools and Overview
 
 The rail's tools are Files (the View areas and the Explorer), Changes (History), Work (Sessions and PRs) and Memory; Work's project task list is described in [Sessions: the task list](#sessions-the-task-list).
-The top row's Overview button opens the device's [Overview](#overview), `Tasks · 백로그 · Projects` and Usage; there is no Overview of one project, since looking at one project closely is the lane's work.
+The top row's Overview button opens the device's [Overview](#overview), `Tasks · 백로그 · Projects` and Usage, and while agents need the operator it carries the sidebar section's name and count, `내 차례 N` (`Needs You N` in English; status-marks D-20, B30); there is no Overview of one project, since looking at one project closely is the lane's work.
 
 
 ### Disk allocation and cleanup
@@ -1576,7 +1578,7 @@ The desktop app's Help > Set up Hide opens the same steps from the first as this
 
 With Needs You on, the desktop app shows a notification when a root agent newly needs the operator (a question, an approval, a block or an error); Done independently enables new completions.
 Both are sent only while no Hide window has the keyboard: its title is the root's row title (the provider when no task or proven native title exists), and with a second-line sentence its body is `<translated row status> · <exact sentence> · <project>` (D-09 to D-11, B31, B39, operator-approved update 2026-10-13).
-The sentence stays in its original language; without one the body is the row's word and the project (`Approval · <project>`), a frame with no status code says its section (`Needs You · <project>`, `To read · <project>`), and an empty project omits its separator.
+The sentence stays in its original language; without one the body is the row's word and the project (`Approval · <project>`), a frame with no status code says its section (`Needs You · <project>`, `Unread · <project>`), and an empty project omits its separator.
 See [With and without Hide AI](status-model.md#with-and-without-hide-ai) for the title priorities, native and inferred questions, counts and both notification channels in each mode.
 hided judges the changes with the phone push's rules (status-model.md, Row presentation and phone notifications), so a child's raise arrives on its root, the same state never notifies twice, an agent back within ten minutes is not announced again, and nothing already waiting when the app opened is announced (B32, B33).
 A click brings Hide forward and opens that agent's pane, on a device too; an agent the operator has seen takes its notification back, and a newer one for the same agent replaces it (B34, B35).
