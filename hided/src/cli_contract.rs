@@ -232,6 +232,7 @@ pub const COMMANDS: &[Spec] = &[
             "intent_conflict",
             "shell_starting",
             "agent_not_started",
+            "worktree_unconfirmed",
         ],
     },
     spec(

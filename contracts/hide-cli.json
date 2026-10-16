@@ -1545,7 +1545,8 @@
                 "agent_not_installed",
                 "intent_conflict",
                 "shell_starting",
-                "agent_not_started"
+                "agent_not_started",
+                "worktree_unconfirmed"
             ],
             "repeats_at_most": null,
             "rest": "the agent's own arguments"
@@ -1850,7 +1851,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:303916961363f3bd60bb93ebea0832127465086e579fd464ac818e77ccf54dbe",
+    "digest": "sha256:99e6ba1aaa9ce80329b921a432fb3929d60ce83a805010ff8c470c771ebe5c1f",
     "envelopes": {
         "agent": {
             "answer": "value",
