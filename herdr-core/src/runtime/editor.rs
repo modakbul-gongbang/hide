@@ -870,6 +870,12 @@ impl Runtime {
                             }),
                         replacement_shell: self.primary_needs_shell(session_workspace_id, tab_id),
                         replacement_in_tab: false,
+                        tab_name: tab
+                            .naming
+                            .manual_name()
+                            .map_or(ClosedTabName::Unnamed, |name| {
+                                ClosedTabName::Named(name.to_owned())
+                            }),
                     })
             })
     }
@@ -1934,6 +1940,7 @@ impl Runtime {
                     agent_area: None,
                     replacement_shell: false,
                     replacement_in_tab: false,
+                    tab_name: ClosedTabName::Unnamed,
                 },
                 panes: Vec::new(),
                 target: request.target.clone(),

@@ -2108,7 +2108,7 @@ fn ensure_workspace_and_tab(
         wire::layout_apply_params(
             &workspace_id,
             seed_tab_id.as_deref(),
-            &context.tab_label,
+            context.herdr_tab_label(),
             &tagged_root,
         )?,
     )?;
@@ -2144,7 +2144,7 @@ fn repair_incomplete_tab_layout(
         wire::layout_apply_params(
             &layout.workspace_id,
             Some(&layout.tab_id),
-            &context.tab_label,
+            context.herdr_tab_label(),
             &tag_reopen_layout(root, key, ReopenIntentStage::Layout),
         )?,
     )?;
@@ -2237,7 +2237,7 @@ fn reopen_pane(
                 wire::layout_apply_params(
                     &current_layout.workspace_id,
                     Some(&context.tab_id),
-                    &context.tab_label,
+                    context.herdr_tab_label(),
                     &root,
                 )?,
             )?;
@@ -4715,6 +4715,9 @@ mod tests {
                         "second":{"type":"pane", "pane_id":"inner-right", "cwd":"/tmp", "env":{}}}}
             }}),
             "layout.apply" => {
+                // An unnamed tab keeps its own label: Herdr would keep any
+                // label sent as the tab's name.
+                assert!(params["tab_label"].is_null());
                 let root = &params["root"];
                 assert_eq!(root["direction"], "right");
                 assert!((root["ratio"].as_f64().unwrap() - 0.4).abs() < 0.000_001);
@@ -4761,11 +4764,12 @@ mod tests {
             checkout_id: "checkout".into(),
             checkout_path: "/tmp".into(),
             tab_id: "w1:t1".into(),
-            tab_label: "Tab".into(),
+            tab_label: "Agent one".into(),
             tab_index: 0,
             agent_area: None,
             replacement_shell: false,
             replacement_in_tab: false,
+            tab_name: crate::recent_closed::ClosedTabName::Unnamed,
         };
         let pane = ClosedPane {
             pane_id: "closed".into(),
@@ -4844,6 +4848,7 @@ mod tests {
             agent_area: None,
             replacement_shell: false,
             replacement_in_tab: false,
+            tab_name: Default::default(),
         };
         let error = repair_incomplete_tab_layout(
             &LocalSocketConnector::new("/tmp/hide-reopen-over-count-must-not-connect.sock"),
@@ -4953,6 +4958,7 @@ mod tests {
             agent_area: None,
             replacement_shell: false,
             replacement_in_tab: false,
+            tab_name: Default::default(),
         };
         let pane = ClosedPane {
             pane_id: "w1:p2".into(),
@@ -5085,6 +5091,7 @@ mod tests {
             agent_area: None,
             replacement_shell: false,
             replacement_in_tab: false,
+            tab_name: Default::default(),
         };
         let layout_root = ClosedLayoutNode::Split {
             direction: crate::recent_closed::ClosedSplitDirection::Right,
@@ -5201,6 +5208,7 @@ mod tests {
             agent_area: None,
             replacement_shell: false,
             replacement_in_tab: false,
+            tab_name: Default::default(),
         };
         let root = ClosedLayoutNode::Split {
             direction: crate::recent_closed::ClosedSplitDirection::Right,

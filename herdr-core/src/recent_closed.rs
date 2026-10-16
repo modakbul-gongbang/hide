@@ -37,6 +37,36 @@ pub struct ClosedContext {
     /// areas). Set only together with `replacement_shell`.
     #[serde(default)]
     pub replacement_in_tab: bool,
+    /// The name the operator gave the tab, the only label a reopen or a
+    /// wake sends Herdr: Herdr keeps any label it is sent as the tab's name,
+    /// so sending `tab_label`, the label Hide displays, would name a tab the
+    /// operator never named.
+    #[serde(default)]
+    pub tab_name: ClosedTabName,
+}
+
+/// What the operator called a closed tab (`ClosedContext::tab_name`).
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClosedTabName {
+    /// A record written before the name was kept, which sends `tab_label`
+    /// as it always did.
+    #[default]
+    Unrecorded,
+    Unnamed,
+    Named(String),
+}
+
+impl ClosedContext {
+    /// The label a reopen or a wake sends Herdr; none for a tab the operator
+    /// never named, so Herdr keeps or picks the tab's own.
+    pub(crate) fn herdr_tab_label(&self) -> Option<&str> {
+        match &self.tab_name {
+            ClosedTabName::Named(name) => Some(name),
+            ClosedTabName::Unnamed => None,
+            ClosedTabName::Unrecorded => Some(&self.tab_label),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -346,6 +376,35 @@ mod tests {
             checkout_path: "/tmp".into(),
             path: format!("/tmp/{key}"),
             label: key.into(),
+        }
+    }
+
+    /// Herdr keeps a label it is sent as the tab's name, so a reopen or a
+    /// wake sends only the operator's, and the choice survives being saved;
+    /// a record from before the name was kept sends what it always did.
+    #[test]
+    fn a_reopen_names_the_tab_only_with_the_operators_name() {
+        let saved_before = serde_json::json!({
+            "workspace_id": "w1", "workspace_label": "repo",
+            "workspace_ids_before_close": ["w1"], "tab_ids_before_close": ["w1:t1"],
+            "pane_ids_before_close": ["w1:p1"], "checkout_id": "c1", "checkout_path": "/repo",
+            "tab_id": "w1:t1", "tab_label": "Planning", "tab_index": 0,
+            "agent_area": null, "replacement_shell": false
+        });
+        let old: ClosedContext = serde_json::from_value(saved_before).unwrap();
+        assert_eq!(old.herdr_tab_label(), Some("Planning"));
+        for (tab_name, sent) in [
+            (ClosedTabName::Unnamed, None),
+            (ClosedTabName::Named("Planning".into()), Some("Planning")),
+        ] {
+            let context = ClosedContext {
+                tab_label: "Agent one".into(),
+                tab_name,
+                ..old.clone()
+            };
+            let saved: ClosedContext =
+                serde_json::from_value(serde_json::to_value(&context).unwrap()).unwrap();
+            assert_eq!(saved.herdr_tab_label(), sent);
         }
     }
 

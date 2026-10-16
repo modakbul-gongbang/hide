@@ -233,6 +233,7 @@ The tab stays in its place and holds the keyboard while the shell is made, and t
 The failure rules above hold: if the shell cannot be made, nothing closes; if the close is refused, the shell stays, and Retry close closes beside that same shell, making another only when the operator closed it meanwhile; a shell Herdr made whose answer was lost counts as that same shell.
 Closing that shell while it is the tab's only pane, or Close tab… at any time, closes the tab and its name as before.
 An unnamed tab, a delegated child's tab, a pane whose terminal Herdr could not restore and a sleep's own close behave as any other close.
+Reopen closed tab and a wake give a tab back only the name the operator gave it, so a tab never named comes back unnamed rather than named after the agent it showed.
 An agent that quits on its own leaves its shell in the pane, as Herdr starts agents inside the pane's shell, so its named tab stays without Hide doing anything.
 A provider whose sleep closes its pane (Pi, OpenCode, Cursor and omp; [ARCHITECTURE.md](ARCHITECTURE.md#agent-sleep)) still takes a named tab whose only pane it is while it sleeps, and its wake opens a new tab under the same name.
 

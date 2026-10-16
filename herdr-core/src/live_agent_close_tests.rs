@@ -284,6 +284,7 @@ fn context() -> ClosedContext {
         agent_area: Some(("a1".into(), 0)),
         replacement_shell: true,
         replacement_in_tab: false,
+        tab_name: Default::default(),
     }
 }
 fn closed_tab() -> CloseCaptureTarget {

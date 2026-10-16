@@ -1524,6 +1524,7 @@ fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
             agent_area: None,
             replacement_shell: false,
             replacement_in_tab: false,
+            tab_name: Default::default(),
         },
         panes: vec![],
         target: live::CloseCaptureTarget::Tab {

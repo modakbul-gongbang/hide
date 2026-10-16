@@ -1231,14 +1231,14 @@ pub(crate) fn layout_export_params(tab_id: &str) -> Result<Value, String> {
 pub(crate) fn layout_apply_params(
     workspace_id: &str,
     tab_id: Option<&str>,
-    tab_label: &str,
+    tab_label: Option<&str>,
     root: &ClosedLayoutNode,
 ) -> Result<Value, String> {
     params(req::LayoutApplyParams {
         focus: true,
         root: request_layout_node(root),
         tab_id: tab_id.map(str::to_owned),
-        tab_label: Some(tab_label.into()),
+        tab_label: tab_label.map(str::to_owned),
         // Herdr accepts either a concrete tab to replace or a workspace in
         // which to create a tab. Sending both makes the pinned server reject
         // an otherwise valid restore of workspace.create's seed tab.
