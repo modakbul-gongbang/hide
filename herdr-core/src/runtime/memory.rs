@@ -11,7 +11,7 @@ use std::collections::HashSet;
 
 /// One session call on the node that holds the Project's sessions; a
 /// listing walks at most `hide_session::SESSION_DISCOVERY_LIMIT` files.
-pub(super) const SESSION_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+pub(crate) const SESSION_CALL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// Writer opens run on Memory workers, never under the runtime lock.
 /// A failed one-time backup restore is retained by the existing log sink.
@@ -367,13 +367,10 @@ pub(crate) fn project_identity(
 pub(crate) fn project_sessions(
     sessions_node: &dyn NodeLink,
     identity: &hide_project::ProjectIdentity,
+    timeout: std::time::Duration,
 ) -> Result<Vec<ProjectSession>, String> {
-    let page = hide_node_link::readers::project_sessions(
-        sessions_node,
-        identity.clone(),
-        SESSION_CALL_TIMEOUT,
-    )
-    .map_err(|error| error.to_string())?;
+    let page = hide_node_link::readers::project_sessions(sessions_node, identity.clone(), timeout)
+        .map_err(|error| error.to_string())?;
     if page.refused > 0 {
         crate::diagnostic!(serde_json::json!({
             "component": "memory", "kind": "sessions.reader_refused",
@@ -392,6 +389,7 @@ pub(crate) fn project_sessions(
 pub(crate) fn session_stat(
     sessions_node: &dyn NodeLink,
     session: &ProjectSession,
+    timeout: std::time::Duration,
 ) -> Result<SessionStat, String> {
     hide_node_link::link::call_as_reader(
         sessions_node,
@@ -404,7 +402,7 @@ pub(crate) fn session_stat(
             }),
             path: session.locator.to_string_lossy().into_owned(),
         },
-        SESSION_CALL_TIMEOUT,
+        timeout,
     )
     .map_err(|error| error.to_string())
 }
@@ -480,7 +478,7 @@ pub(super) fn load_sessions(
     checkout_path: &str,
 ) -> Result<SessionsLoad, String> {
     let identity = project_identity(sessions_node, node, checkout_path)?;
-    let sessions = project_sessions(sessions_node, &identity)?;
+    let sessions = project_sessions(sessions_node, &identity, SESSION_CALL_TIMEOUT)?;
     let mut rows = sessions
         .into_iter()
         .map(project_session_row)

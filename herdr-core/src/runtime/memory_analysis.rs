@@ -1044,7 +1044,7 @@ fn walk_project(
             .is_some_and(|readers| readers.supports(session.agent.as_str(), feature))
     };
     let mut sessions = Vec::new();
-    for session in project_sessions(sessions_node, &identity)? {
+    for session in project_sessions(sessions_node, &identity, SESSION_CALL_TIMEOUT)? {
         if reads(&session, ReaderFeature::Memory) && reads(&session, ReaderFeature::Conversation) {
             sessions.push(session);
         } else if session.agent == hide_session::Agent::OpenCode
@@ -1117,7 +1117,7 @@ fn walk_project(
             }
             continue;
         }
-        let Ok(stat) = session_stat(sessions_node, &session) else {
+        let Ok(stat) = session_stat(sessions_node, &session, SESSION_CALL_TIMEOUT) else {
             continue;
         };
         let version = (stat.size, stat.modified_unix_ms);
@@ -2933,6 +2933,83 @@ mod tests {
         drop(file);
         assert!(fixture.pass(false, false).is_empty());
         assert_eq!(fixture.calls(), 1);
+    }
+
+    #[test]
+    fn a_reported_card_is_named_to_its_sessions_analysis_and_comes_back_after_it() {
+        // PRD memory-stale-cards B6-B8, B10, D-06, D-08, D-14.
+        let fixture = Fixture::new();
+        // The walk records the prompt's receipt for m1; Hide AI is off.
+        assert!(
+            fixture
+                .run(("claude", SESSION.to_owned()), false, false, &[], false)
+                .0
+                .is_empty()
+        );
+        let size = std::fs::metadata(&fixture.locator).unwrap().len();
+        let mut store = fixture.store();
+        let reason = "The operator said the hook may take 300 ms now";
+        assert!(matches!(
+            store
+                .report_stale(
+                    &fixture.project_id,
+                    1,
+                    &hide_memory::StaleReporter {
+                        runtime: "claude",
+                        session_id: SESSION,
+                        report_offset: Some(size),
+                    },
+                    reason,
+                    now_ms(),
+                )
+                .unwrap(),
+            hide_memory::StaleOutcome::Held(_)
+        ));
+        drop(store);
+        let mut lines = fixture.lines.clone();
+        lines.push(
+            json!({"type": "user", "sessionId": SESSION, "cwd": fixture.root,
+            "timestamp": "2026-10-11T00:02:00Z", "origin": {"kind": "human"},
+            "message": {"role": "user", "content": "Thanks"}}),
+        );
+        fixture.write(&lines);
+
+        fixture.answer(&[]);
+        assert_eq!(fixture.pass(false, true), ["analyzing", "learned one"]);
+        let inputs = fixture.backend.inputs.lock().unwrap().clone();
+        let sent: Value = serde_json::from_str(&inputs[0]).unwrap();
+        let reported = sent["similar_memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|card| card["id"] == "m1")
+            .expect("the reported card is compared");
+        assert_eq!(reported["reported"], true);
+        assert!(
+            !inputs[0].contains("300 ms"),
+            "the reason never leaves the machine"
+        );
+        let store = fixture.store();
+        assert_eq!(
+            store.hold(&fixture.project_id, 1, now_ms()).unwrap(),
+            None,
+            "the analysis read past the report and no reversal replaced m1"
+        );
+        let given = store
+            .retrieve(&hide_memory::RetrievalQuery::prompt(
+                &fixture.project_id,
+                "hook 100 ms",
+                vec![],
+            ))
+            .unwrap();
+        assert_eq!(
+            given
+                .items
+                .iter()
+                .map(|item| item.number)
+                .collect::<Vec<_>>(),
+            [1]
+        );
     }
 
     /// Runtime admission and the pass share one store for both directions;

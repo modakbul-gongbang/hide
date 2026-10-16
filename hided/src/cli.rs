@@ -2838,6 +2838,19 @@ mod tests {
                 reason: "no branch builds it".into()
             }))
         );
+        assert_eq!(
+            parse(&[
+                "hide", "memory", "stale", "m5", "commits", "are", "English", "now"
+            ]),
+            Ok(CommandKind::Memory(MemoryCommand::Stale {
+                number: 5,
+                reason: "commits are English now".into()
+            }))
+        );
+        assert_eq!(
+            parse(&["hide", "memory", "release", "m5"]),
+            Ok(CommandKind::Memory(MemoryCommand::Release { number: 5 }))
+        );
         for bad in [
             &["hide", "memory", "forget"][..],
             &["hide", "memory", "undo", "5x"],
@@ -2850,6 +2863,9 @@ mod tests {
             &["hide", "memory", "placed", "m1"],
             &["hide", "memory", "building", "m1", "feat/overview"],
             &["hide", "memory", "unbuilt", "m1"],
+            &["hide", "memory", "stale", "m1"],
+            &["hide", "memory", "release"],
+            &["hide", "memory", "release", "m1", "m2"],
         ] {
             assert_eq!(parse(bad), Err(MEMORY_USAGE.to_owned()), "{bad:?}");
         }
@@ -2940,6 +2956,36 @@ mod tests {
             ),
             "Removed m5.\n"
         );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Stale {
+                    number: 5,
+                    reason: "x".into()
+                },
+                &serde_json::json!({"card": "m5", "outcome": "held", "expires_at": "2026-10-24 09:00 UTC"})
+            ),
+            "Held m5: Hide stops giving it until this conversation is analyzed, at the latest 2026-10-24 09:00 UTC. Release: hide memory release m5\n"
+        );
+        assert_eq!(
+            memory_text(
+                &MemoryCommand::Release { number: 5 },
+                &serde_json::json!({"card": "m5", "outcome": "released"})
+            ),
+            "Released m5; Hide gives it again.\n"
+        );
+        let shown = memory_text(
+            &MemoryCommand::Show { number: 5 },
+            &serde_json::json!({
+                "card": "m5", "kind": "rule", "state": "active", "sources": 1,
+                "operator_sources": 1, "title": "Commits", "body": "Write commits in Korean",
+                "hold": {"reason": "English now", "reported_at": "2026-10-17 09:00 UTC", "expires_at": "2026-10-24 09:00 UTC"},
+            }),
+        );
+        assert!(
+            shown.contains("Held: an agent reported it stale at 2026-10-17 09:00 UTC"),
+            "{shown}"
+        );
+        assert!(shown.contains("Reported because: English now"), "{shown}");
     }
 
     #[test]

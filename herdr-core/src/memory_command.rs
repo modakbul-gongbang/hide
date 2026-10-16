@@ -33,6 +33,12 @@ pub const SEARCH_LIMIT_BYTES: usize = 1024;
 /// B8 gives the whole command so the store is never written after the caller
 /// stopped waiting.
 pub const ADD_PROVIDER_DEADLINE: Duration = Duration::from_secs(50);
+/// How long a `stale` waits for the node to say where the reporting
+/// session's conversation ends, listing then file size, so the whole report
+/// answers well inside the caller's ten seconds; past it the hold has no
+/// place and lasts to its deadline.
+const REPORT_OFFSET_BUDGET: Duration = Duration::from_secs(5);
+const REPORT_LISTING_TIMEOUT: Duration = Duration::from_secs(3);
 /// How long the caller waits for an `add` (B8).
 pub const ADD_TIMEOUT: Duration = Duration::from_secs(60);
 /// How long before the caller stops waiting an `add` stops writing, for its
@@ -587,16 +593,25 @@ impl PreparedMemory {
         runtime: &str,
         session_id: &str,
     ) -> Option<u64> {
-        let stat = crate::runtime::memory::project_sessions(self.sessions_node.as_ref(), identity)
-            .and_then(|sessions| {
-                sessions
-                    .into_iter()
-                    .find(|session| session.agent.as_str() == runtime && session.id == session_id)
-                    .ok_or_else(|| "session_not_listed".to_owned())
-            })
-            .and_then(|session| {
-                crate::runtime::memory::session_stat(self.sessions_node.as_ref(), &session)
-            });
+        let deadline = Instant::now() + REPORT_OFFSET_BUDGET;
+        let stat = crate::runtime::memory::project_sessions(
+            self.sessions_node.as_ref(),
+            identity,
+            REPORT_LISTING_TIMEOUT,
+        )
+        .and_then(|sessions| {
+            sessions
+                .into_iter()
+                .find(|session| session.agent.as_str() == runtime && session.id == session_id)
+                .ok_or_else(|| "session_not_listed".to_owned())
+        })
+        .and_then(|session| {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return Err("report_offset_budget_spent".to_owned());
+            }
+            crate::runtime::memory::session_stat(self.sessions_node.as_ref(), &session, remaining)
+        });
         match stat {
             Ok(stat) => Some(stat.size),
             Err(message) => {
@@ -606,6 +621,10 @@ impl PreparedMemory {
                     "project_id": identity.id,
                     "runtime": runtime,
                     "session_id": session_id,
+                    "reason": match message.as_str() {
+                        "session_not_listed" | "report_offset_budget_spent" => message.as_str(),
+                        _ => "node_call_failed",
+                    },
                     "message": message,
                 }));
                 None
@@ -986,6 +1005,25 @@ mod tests {
             branches: Option<Vec<String>>,
             branch_checkouts: Vec<(String, String)>,
         ) -> Result<Value, String> {
+            self.run_as(
+                command,
+                ai,
+                branches,
+                branch_checkouts,
+                Some(("claude".to_owned(), "caller-session".to_owned())),
+            )
+        }
+
+        /// Runs `command` for the agent session `reader`, or for a caller
+        /// Hide knows no session of.
+        fn run_as(
+            &self,
+            command: MemoryCommand,
+            ai: bool,
+            branches: Option<Vec<String>>,
+            branch_checkouts: Vec<(String, String)>,
+            reader: Option<(String, String)>,
+        ) -> Result<Value, String> {
             let backend: Arc<dyn AiBackend> = self.backend.clone();
             PreparedMemory {
                 command,
@@ -995,7 +1033,7 @@ mod tests {
                 ai_usage: crate::usage_ledger::ai_usage::AiUsageQueue::new(),
                 database: self.database.clone(),
                 checkout_path: self.root.clone(),
-                reader: Some(("claude".to_owned(), "caller-session".to_owned())),
+                reader,
                 settings: ai.then(AiSettings::default),
                 language: hide_ai::OutputLanguage::English,
                 caller_agents: vec!["agent-9".to_owned()],
@@ -1022,6 +1060,96 @@ mod tests {
 
         fn calls(&self) -> usize {
             self.backend.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[test]
+    fn a_card_a_prompt_gave_the_caller_is_held_shown_held_and_released_once() {
+        // PRD memory-stale-cards B1-B3, B5, B11.
+        let fixture = Fixture::new();
+        let stale = || {
+            fixture.run(
+                MemoryCommand::Stale {
+                    number: 1,
+                    reason: "The operator now says api_key=super-secret-value-123 is gone"
+                        .to_owned(),
+                },
+                false,
+            )
+        };
+        assert_eq!(stale(), Err("memory_stale_not_received".into()));
+        assert_eq!(
+            fixture.run_as(
+                MemoryCommand::Stale {
+                    number: 1,
+                    reason: "x".to_owned()
+                },
+                false,
+                None,
+                Vec::new(),
+                None,
+            ),
+            Err("memory_stale_session_required".into())
+        );
+        fixture
+            .store()
+            .record_receipt(
+                &fixture.project_id,
+                "claude",
+                "caller-session",
+                "event:40",
+                "m1@1",
+                crate::runtime::memory::now_ms(),
+            )
+            .unwrap();
+        let held = stale().unwrap();
+        assert_eq!(held["card"], "m1");
+        assert_eq!(held["outcome"], "held");
+        let shown = fixture
+            .run(MemoryCommand::Show { number: 1 }, false)
+            .unwrap();
+        let reason = shown["hold"]["reason"].as_str().unwrap();
+        assert!(reason.starts_with("The operator now says"));
+        assert!(!reason.contains("super-secret"), "{reason}");
+        assert_eq!(stale(), Err("memory_stale_already_reported".into()));
+
+        assert_eq!(
+            fixture
+                .run(MemoryCommand::Release { number: 1 }, false)
+                .unwrap()["outcome"],
+            "released"
+        );
+        assert_eq!(
+            fixture.run(MemoryCommand::Release { number: 1 }, false),
+            Err("memory_card_not_held".into())
+        );
+        assert_eq!(
+            fixture
+                .run(MemoryCommand::Show { number: 1 }, false)
+                .unwrap()["hold"],
+            Value::Null
+        );
+        assert_eq!(stale(), Err("memory_stale_already_reported".into()));
+        assert_eq!(
+            fixture.run(MemoryCommand::Release { number: 7 }, false),
+            Err("memory_card_not_found".into())
+        );
+        for code in [
+            "memory_stale_session_required",
+            "memory_stale_already_reported",
+            "memory_stale_not_received",
+            "memory_stale_shown_only",
+            "memory_stale_receipts_full",
+            "memory_stale_session_limit",
+            "memory_stale_project_limit",
+            "memory_stale_reason_invalid",
+            "memory_card_not_held",
+        ] {
+            assert_ne!(
+                next_action(code),
+                next_action("unknown"),
+                "{code} tells the agent what to do"
+            );
         }
     }
 
