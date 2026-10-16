@@ -260,7 +260,7 @@ impl BrowserControl {
         let mut hosts = self.hosts.lock().map_err(|_| unavailable())?;
         live(&mut hosts);
         let host = hosts.get(&pid).ok_or_else(unavailable)?;
-        Ok(herdr_core::workspace_control::checkout_caller_id(
+        Ok(herdr_core::workspace_control::gateway_caller_id(
             &host.caller_key,
             checkout_path,
         ))
@@ -359,7 +359,7 @@ impl BrowserControl {
             .find(|(name, _)| *name == node)
             .and_then(|(_, windows)| windows.owners.iter().find(|(owner, _)| *owner == pid))
             .ok_or_else(unavailable)?;
-        Ok(herdr_core::workspace_control::checkout_caller_id(
+        Ok(herdr_core::workspace_control::gateway_caller_id(
             key,
             checkout_path,
         ))
@@ -775,7 +775,6 @@ impl BrowserAction {
                 supported_address(&url)?;
                 Ok(Action::OpenBrowser {
                     url,
-                    reveal: false,
                     area_id: Some(self.area_id.clone()),
                     new_target: true,
                 })
@@ -793,7 +792,6 @@ impl BrowserAction {
                 } else {
                     Action::Select {
                         view_id: id.to_owned(),
-                        reveal: false,
                         expected_browser_area: Some(self.area_id.clone()),
                     }
                 })

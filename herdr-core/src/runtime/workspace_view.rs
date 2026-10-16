@@ -70,9 +70,9 @@ pub(super) struct WorkspaceViewStore {
     /// The last load stamp a browser display was given (`next_browser_load`).
     /// Runtime only.
     pub(super) browser_load: u64,
-    /// Numbers the intents that opened the lane, whichever page, CLI
-    /// `--reveal`, event or rail press asked, and remembers the number of
-    /// each Workspace's last call. A page shows an unpinned lane over the
+    /// Numbers the intents that opened the lane, whichever page, CLI open
+    /// from the operator's pane, event or rail press asked, and remembers
+    /// the number of each Workspace's last call. A page shows an unpinned lane over the
     /// agents when the front Workspace's number passes the last one it read
     /// (PRD right-lane D-02, B16, B17), so a call into another Workspace
     /// never opens the front one's lane, and hiding the lane again is the

@@ -143,12 +143,14 @@ Tabs close only from their own close control or menu; closing a tab's only pane 
 An unavailable or retired keyboard target never falls through to closing a different pane or a whole tab.
 When a connected pane selects, splits, moves, or closes a View through `hide view`, the same View layout rules apply to that pane's Workspace even while another Workspace is in front.
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
-`hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
-An explicit local `--reveal` brings that Workspace and the opened View forward and opens the lane on Files.
-Without it, an open or `hide view select` from the pane of the front Workspace's active tab opens the lane on Files as a click does, the tree staying on when it showed alone; from a background tab or another Workspace the lane stays as it is and the Files icon's badge counts the new view.
+`hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace and never select that Workspace or another tab.
+Only an agent in the pane the operator is in, the selected pane of the front Workspace, changes what the operator sees: its open or `hide view select` brings the View to the front and opens the lane on Files as a click does, the tree staying on when it showed alone.
+Another pane of that Workspace, of the same tab or another, adds its View to the checkout's list and leaves the selection, the active area, the keyboard, the lane and the tab on screen as they were, and the Files icon's badge counts the new view (see File Views per checkout).
+A Workspace not on screen is not what the operator sees: there, an agent in its active tab brings its View to that Workspace's front, so a page it opens loads and can be driven, and an agent in another tab adds its View behind.
+A shell bound only to the checkout, which no pane vouches for (a pane Hide has not connected yet, or a command run with its pane reference removed), counts as another pane on the Workspace on screen and as the active tab on one that is not.
+The desktop window's browser gateway, creating a page for a CDP client, brings its page forward, since a page loads only in front.
+No option brings a View forward from another pane; the operator does that.
 A browser page's own new target, bound to its area, does not open the lane.
-A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, adds its View to the checkout's list and leaves the selection, the active area, the keyboard and the lane as they were (see File Views per checkout).
-Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front in the lane, opened as any open opens it, and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
 `hide view split`, `move` and `close` apply to the checkout's list, from any tab, including a tab that is not on screen.
 
 ### Agent areas
@@ -263,7 +265,7 @@ When the last view closes, the lane stays on Files with the tree across it if th
 
 The checkout owns the Files View list, its split, its selected Views and its active area, whichever Agent tab is in front.
 Every tab sees the same list.
-Each Agent tab remembers one View, the one it last put in front, as its bookmark.
+Each Agent tab remembers one View, the one the operator last had in front on it, as its bookmark.
 The lane, its tool, pin, tree and widths, and document editing and saving remain shared by the Workspace.
 A tab with no bookmark changes nothing when it appears, and the files tool shows the list as it stands.
 
@@ -273,17 +275,18 @@ A bookmarked View that has closed is ignored, and a tab with no bookmark leaves 
 The tab strip, sidebar, palette, tab cycle and a confirmed Herdr or device switch follow this rule.
 Moving ordinary focus among tabs already shown in Agent areas changes nothing in the lane.
 
-A tab's bookmark follows the front View while that tab is on screen, whether the operator selected a View, an agent open brought one forward, or `--reveal` did.
-It also takes the View that tab's own agent opens, even when that View does not come to the front.
+A tab's bookmark follows the front View while that tab is on screen, whether the operator selected a View or the agent in the operator's pane brought one forward.
+A View another pane opens behind the front is no tab's bookmark, so going to that pane's tab later shows what the operator last had there.
 Closing a tab drops its bookmark and keeps its Views in the list.
 Putting the lane away or closing it preserves its documents, unsaved text and save state.
 Closing the last View leaves the files tool on the tree when the tree is on, and closes the lane otherwise.
 
-A pane caller's file, diff or browser open and View actions are made for its actual Agent tab.
-From a pane of the active tab, or from a caller with no pane (a checkout-bound caller, which has no tab), the View comes to the front, its area becomes the active one and the lane is called to Files.
-From a pane of any other tab, without `--reveal`, the View is added at the end of the area it lands in; the selection, the active area, the keyboard and the lane stay as they were, the Files icon's badge counts it, and that tab remembers it.
-Selecting that tab later brings the View to the front.
-`--reveal` brings the View to the front, opens the lane on Files and makes the calling tab the one on screen and the one that remembers it; a caller without a pane and a GUI action act for the active tab.
+From the pane the operator is in, a file, diff or browser open or a select brings the View to the front, its area becomes the active one and the lane is called to Files.
+From another pane of the Workspace on screen, of the same tab or another, the View is added at the end of the area it lands in; the selection, the active area, the keyboard, the lane and the tab on screen stay as they were, and the Files icon's badge counts it.
+On a Workspace not on screen, the agent in its active tab brings the View to that Workspace's front and an agent in another tab adds it behind; neither moves the screen or calls the lane.
+A shell bound only to the checkout counts as another pane there; the browser gateway's new page comes to the front of its area, where it loads.
+The operator brings it forward from the strip; selecting the caller's tab does not.
+A GUI action, such as a click on a terminal link, acts for the operator as before.
 A file read remains bound to the original tab and native session: a closed, moved or replaced caller is refused rather than falling back to the operator's tab.
 
 Matching checkout and path documents use one shared buffer, and the same address opened from two tabs is one page.
