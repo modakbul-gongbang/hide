@@ -11,7 +11,9 @@ use hide_session::Agent;
 use hide_session::label_transcript::{
     LabelEventKind, LabelTranscript, LabelTranscriptRequest, read,
 };
-use hide_session::turns::{TurnTracker, UserTurnContent, UserTurnFact, UserTurnKind, Waiting};
+use hide_session::turns::{
+    QUESTION_CALL_LIMIT, TurnTracker, UserTurnContent, UserTurnFact, UserTurnKind, Waiting,
+};
 use serde_json::{Value, json};
 
 struct Session {
@@ -390,28 +392,92 @@ fn native_content_limits_cut_utf8_and_report_omitted_questions_and_choices() {
 }
 
 #[test]
-fn native_call_and_id_capacity_is_a_reported_read_failure() {
+fn a_native_call_id_past_its_bound_is_a_reported_read_failure() {
     for agent in [Agent::Claude, Agent::Codex] {
-        for long_id in [false, true] {
-            let mut session = Session::question(agent);
-            let asked = session.read();
-            session.resume(&asked);
-            if long_id {
-                session.append(&session.native_question(&"x".repeat(257), question("Q", &["A"])));
-            } else {
-                // The fixture already holds one unanswered call.
-                for index in 1..9 {
-                    session.append(
-                        &session
-                            .native_question(&format!("capacity-{index}"), question("Q", &["A"])),
-                    );
-                }
-                // A later answer cannot hide a capacity failure in this read.
-                session.append(&session.human("미리보기"));
-            }
+        let mut session = Session::question(agent);
+        let asked = session.read();
+        session.resume(&asked);
+        session.append(&session.native_question(&"x".repeat(257), question("Q", &["A"])));
+        assert_eq!(
+            read(session.home.path(), &session.request).unwrap_err(),
+            "user_turn_capacity"
+        );
+    }
+}
+
+/// More questions waiting at once than the tracker keeps: what the turn
+/// waits for is not known, so no bell rings and no question is shown, and
+/// the read goes on, so the person's message or the new turn after them is
+/// read and settles it. A failed read here used to be read again from the
+/// same place every time and never reached that message.
+#[test]
+fn more_waiting_questions_than_kept_are_unknown_until_a_person_writes_or_a_turn_starts() {
+    for agent in [Agent::Claude, Agent::Codex] {
+        let mut session = Session::question(agent);
+        let asked = session.read();
+        session.resume(&asked);
+        // The fixture already holds one unanswered call.
+        for index in 1..=QUESTION_CALL_LIMIT {
+            session.append(
+                &session.native_question(&format!("capacity-{index}"), question("Q", &["A"])),
+            );
+        }
+        let crowded = read(session.home.path(), &session.request)
+            .unwrap_or_else(|reason| panic!("{agent:?}: the read stopped: {reason}"));
+        assert_eq!(
+            crowded.turns.as_ref().unwrap().waiting(),
+            None,
+            "{agent:?}: not known"
+        );
+        assert_eq!(fact(&crowded), None, "{agent:?}: no question is shown");
+        session.resume(&crowded);
+        if agent == Agent::Claude {
+            session.append(&session.human("미리보기"));
+        } else {
+            session.append(&json!({"type":"event_msg","timestamp":"2026-10-07T01:00:05Z",
+                "payload":{"type":"task_started","turn_id":"turn-2","collaboration_mode_kind":"default"}}));
+        }
+        let settled = session.read();
+        assert_eq!(
+            settled.turns.as_ref().unwrap().waiting(),
+            Some(Waiting::Nothing),
+            "{agent:?}"
+        );
+    }
+}
+
+/// An interview turn: one prompt, then more native questions than a turn
+/// keeps open at once, each answered before the next is asked. The bound is
+/// on questions that wait, so the read goes on and no question waits. Before
+/// this held, the ninth answered question failed every read of the session
+/// from the last saved position, and the doorbell held each letter to that
+/// pane as `session_unread` until it expired.
+#[test]
+fn questions_answered_one_after_another_never_fill_a_turn() {
+    for agent in [Agent::Claude, Agent::Codex] {
+        let mut session = Session::question(agent);
+        // The fixture's own question is the first of the turn.
+        session.append(&session.result("question-1"));
+        for index in 2..=QUESTION_CALL_LIMIT {
+            let call = format!("interview-{index}");
+            session.append(&session.native_question(&call, question("Q", &["A"])));
+            session.append(&session.result(&call));
+        }
+        let full = session.read();
+        assert_eq!(fact(&full), None, "{agent:?}: every question is answered");
+        session.resume(&full);
+        let call = "interview-next";
+        session.append(&session.native_question(call, question("Q", &["A"])));
+        session.append(&session.result(call));
+        let next = read(session.home.path(), &session.request)
+            .unwrap_or_else(|reason| panic!("{agent:?}: an answered question refused: {reason}"));
+        assert_eq!(fact(&next), None, "{agent:?}");
+        if agent == Agent::Claude {
+            // Claude's turn has no mode to settle: nothing waits, so a bell
+            // can ring. Codex's fixture turn runs in plan mode and is open.
             assert_eq!(
-                read(session.home.path(), &session.request).unwrap_err(),
-                "user_turn_capacity"
+                next.turns.as_ref().unwrap().waiting(),
+                Some(Waiting::Nothing)
             );
         }
     }

@@ -192,8 +192,11 @@ pub enum ToolTurnMark {
     },
 }
 
-/// A provider can ask several questions in a turn, but no unbounded call
-/// history is retained. A ninth distinct native question fails the read.
+/// A provider can ask any number of questions in a turn, one after another,
+/// but no unbounded call history is retained: at most this many calls are
+/// kept, and an answered call leaves to make room for a new one. A ninth call
+/// while eight still wait makes the turn unknown until a person writes or a
+/// new turn starts.
 pub const QUESTION_CALL_LIMIT: usize = 8;
 pub const NATIVE_ID_LIMIT_BYTES: usize = 256;
 
@@ -272,6 +275,8 @@ pub struct TurnTracker {
         deserialize_with = "deserialize_calls"
     )]
     questions: Vec<QuestionCall>,
+    /// More questions waited at once than the tracker keeps, since the last
+    /// turn start or person's message: what the turn waits for is not known.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     question_capacity: bool,
     /// An unreadable record was folded since the last turn start or
@@ -436,10 +441,6 @@ impl TurnTracker {
         self.plan_hold = hold.map(|content| PlanHold {
             content: Some(content),
         });
-    }
-
-    pub fn capacity_exceeded(&self) -> bool {
-        self.question_capacity
     }
 
     /// When each device proven alive will expire on its own (`None` for one
@@ -715,8 +716,10 @@ impl TurnTracker {
         }
     }
 
-    /// Opens a question call; `false` when the bound is crossed, which fails
-    /// the read instead of dropping a pending question.
+    /// Opens a question call. The oldest answered call leaves to make room,
+    /// so only calls that wait count against the bound; `false` when the
+    /// bound is crossed anyway, which makes the turn unknown instead of
+    /// dropping a waiting question.
     fn ask(
         &mut self,
         call: &str,
@@ -725,6 +728,11 @@ impl TurnTracker {
     ) -> bool {
         if self.questions.iter().any(|known| known.call == call) {
             return true;
+        }
+        if self.questions.len() == QUESTION_CALL_LIMIT
+            && let Some(oldest) = self.questions.iter().position(|known| known.answered)
+        {
+            self.questions.remove(oldest);
         }
         if self.questions.len() == QUESTION_CALL_LIMIT || call.len() > NATIVE_ID_LIMIT_BYTES {
             self.question_capacity = true;

@@ -453,20 +453,18 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
             (Some(_), None) => request.turns.clone().unwrap_or_default(),
             _ => TurnTracker::default(),
         };
+        // More questions waiting than the tracker keeps leave the turn
+        // unknown until a person writes or a new turn starts, and the read
+        // goes on: failing it would read the same records again every time
+        // and never reach the message that ends it.
         for (offset, mark) in &parsed.turn_marks {
             turns.fold(*offset, mark);
-            if turns.capacity_exceeded() {
-                break;
-            }
         }
         if request.agent == Agent::Grok {
             turns.set_plan_hold(parsed.plan_hold.clone());
         }
         turns
     });
-    if turns.as_ref().is_some_and(TurnTracker::capacity_exceeded) {
-        return Err("user_turn_capacity".to_owned());
-    }
     let mut pr_sightings = parsed.pr_sightings.clone();
     let mut subagents = BTreeMap::new();
     let mut subagents_pending = false;
