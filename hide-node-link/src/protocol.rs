@@ -137,7 +137,11 @@ use crate::error::HostError;
 /// language, which has no default (PRD ai-output-language D-02). A helper on
 /// 35 would refuse every request the core sends it, so it is refused at Hello
 /// and upgraded.
-pub const PROTOCOL_VERSION: u32 = 36;
+/// 37: `copy` and `import` make a copy of an Explorer item and write a drop
+/// from the file manager (PRD prelaunch explorer-actions). A helper on 36
+/// would refuse them as unknown, so a paste or a drop on a device checkout
+/// could never land; it is refused at Hello and upgraded.
+pub const PROTOCOL_VERSION: u32 = 37;
 
 /// How a pane's shell is started so that it marks its first prompt
 /// ([`Call::ShellIntegration`]): the command the pane runs, the shell and
@@ -253,6 +257,24 @@ pub enum Call {
         root: RootRef,
         path: String,
         destination: String,
+    },
+    /// `path` is copied into the folder `destination`, whole and recursively.
+    /// The copy takes the item's name, or `name copy.ext`, `name copy 2.ext`
+    /// when that is taken, and appears all at once or not at all
+    /// (`hide_host::copy::copy_into`); the answer is the name it took.
+    Copy {
+        root: RootRef,
+        path: String,
+        destination: String,
+    },
+    /// The files and folders of a drop from the operator's file manager,
+    /// written into the folder `destination` under the names the copy rule
+    /// gives (`hide_host::copy::import`). The bytes are the operator's and
+    /// came from the core's machine, so a device writes what it was sent.
+    Import {
+        root: RootRef,
+        destination: String,
+        entries: Vec<crate::mutate::ImportEntry>,
     },
     /// `path` goes to this machine's Trash; `inode` is the item the operator
     /// confirmed, and another item found at the path is refused.
@@ -470,6 +492,13 @@ pub enum Call {
     /// (`attachments::ReadFile`, in order), reporting before each file; a
     /// report answered with false ends the read as cancelled.
     ReadAttachments {
+        paths: Vec<String>,
+    },
+    /// Reads the files of a drop from the operator's file manager that hided
+    /// staged on the core's machine (`attachments::ReadFile`, in order), with
+    /// the caps of one drop (`mutate::IMPORT_MAX_ITEMS`). Devices refuse it:
+    /// the staging is the core machine's.
+    ReadDropped {
         paths: Vec<String>,
     },
     /// Removes the clipboard image a paste left at `path`
@@ -772,6 +801,8 @@ impl Call {
             | Self::Create { .. }
             | Self::Rename { .. }
             | Self::Move { .. }
+            | Self::Copy { .. }
+            | Self::Import { .. }
             | Self::Trash { .. }
             | Self::Changes { .. }
             | Self::Project { .. }
@@ -842,6 +873,7 @@ impl Call {
             | Self::UsagePriceFetch
             | Self::Gh { .. }
             | Self::ReadAttachments { .. }
+            | Self::ReadDropped { .. }
             | Self::RemoveClipboard { .. }
             | Self::Factory { .. } => false,
         }

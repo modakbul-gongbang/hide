@@ -1900,7 +1900,7 @@ enum ClientAction {
 /// finds the checkout and its device in its own catalog, and the helper
 /// confines the path to the checkout root it opened, or, for a registration,
 /// to that device's own home (`hide_host::register`).
-const DEVICE_FILE_EVENTS: [&str; 10] = [
+const DEVICE_FILE_EVENTS: [&str; 11] = [
     "create_workspace",
     "file_list",
     "file_open",
@@ -1910,6 +1910,7 @@ const DEVICE_FILE_EVENTS: [&str; 10] = [
     "dir_create",
     "path_rename",
     "path_move",
+    "path_copy",
     "path_trash",
 ];
 
@@ -1965,6 +1966,9 @@ fn handle_client_text(
             return Ok(ClientAction::Replies(handle_attachment_commit(
                 state, &event,
             )));
+        }
+        Some("path_import") => {
+            return Ok(ClientAction::Replies(handle_path_import(state, &event)));
         }
         Some("attachment_cancel") => {
             state
@@ -2843,6 +2847,120 @@ fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
     Vec::new()
 }
 
+/// A window's drop from the file manager: the window uploaded each file's
+/// bytes as an `attachment_stage`, and this event names where the items land
+/// and which upload is which file. hided is the only maker of the core's
+/// `path_import` event: it keeps the destination, the shape of each item and
+/// the staged path hided itself wrote for an upload, and forwards nothing the
+/// window sent as it came, so a window cannot name a file for the core to read.
+fn handle_path_import(state: &AppState, event: &Value) -> Vec<Message> {
+    /// Bytes of one item's path below the destination folder.
+    const IMPORT_PATH_MAX_BYTES: usize = 4096;
+    use hide_node_link::mutate::IMPORT_MAX_ITEMS;
+    let request_id = payload_str(event, "request_id");
+    let refuse = |reason: &str| {
+        vec![Message::Text(
+            attachment_refused(&request_id, reason).to_string().into(),
+        )]
+    };
+    let items: Vec<(String, bool, Option<String>)> = event
+        .pointer("/payload/items")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| {
+                    (
+                        item.get("path")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_owned(),
+                        item.get("directory")
+                            .and_then(Value::as_bool)
+                            .unwrap_or(false),
+                        item.get("stage").and_then(Value::as_str).map(str::to_owned),
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if items.is_empty() || items.len() > IMPORT_MAX_ITEMS {
+        return refuse("too_many_files");
+    }
+    // A name is one component of a path the page chose; the host judges it
+    // again against the system it writes on.
+    let shaped = items.iter().all(|(path, directory, stage)| {
+        !path.is_empty()
+            && path.len() <= IMPORT_PATH_MAX_BYTES
+            && path.split('/').all(boundary::valid_name)
+            && (*directory == stage.is_none())
+    });
+    if !shaped {
+        return refuse("invalid_item");
+    }
+    let stages: Vec<String> = items
+        .iter()
+        .filter_map(|(_, _, stage)| stage.clone())
+        .collect();
+    let mut core_event = json!({
+        "schema_version": 2,
+        "kind": "path_import",
+        "payload": {
+            "root": payload_str(event, "root"),
+            "destination": payload_str(event, "destination"),
+        },
+    });
+    if let Some(device) = event.pointer("/payload/device_id") {
+        core_event["payload"]["device_id"] = device.clone();
+    }
+    // This machine's checkout is judged against its registered roots; a
+    // device's paths are its helper's to confine.
+    if event_device(&state.boundary, &core_event).is_none() {
+        if let Some(refusal) =
+            explorer_rooted_path(&state.boundary, &mut core_event, "path_import", "destination")
+        {
+            for stage in &stages {
+                state.attachments.discard(stage);
+            }
+            return vec![Message::Text(refusal.to_string().into())];
+        }
+    }
+    let paths = if stages.is_empty() {
+        Vec::new()
+    } else {
+        match state.attachments.commit_dropped(&stages) {
+            Ok(paths) => paths,
+            Err(reason) => {
+                for stage in &stages {
+                    state.attachments.discard(stage);
+                }
+                return refuse(reason);
+            }
+        }
+    };
+    let mut staged = paths.into_iter();
+    core_event["payload"]["items"] = Value::Array(
+        items
+            .iter()
+            .map(|(path, directory, stage)| {
+                json!({
+                    "path": path,
+                    "directory": directory,
+                    "staged": stage.as_ref().and_then(|_| staged.next()),
+                })
+            })
+            .collect(),
+    );
+    if let Err(error) = state
+        .core
+        .dispatch(serde_json::to_vec(&core_event).unwrap_or_default())
+    {
+        log_snapshot_failure("path_import", &error);
+        return refuse("forward_failed");
+    }
+    Vec::new()
+}
+
 /// A `file_index` query: the root is checked against the registered checkouts
 /// and the daemon answers from its per-root index. The first query for a root
 /// starts the walk and answers `indexing: true`; the next one has the list.
@@ -3319,7 +3437,7 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
         "file_save" => explorer_save(boundary, event, &kind),
         "file_create" | "dir_create" => explorer_create(boundary, event, &kind),
         "path_rename" => explorer_rename(boundary, event, &kind),
-        "path_move" => explorer_move(boundary, event, &kind),
+        "path_move" | "path_copy" => explorer_move(boundary, event, &kind),
         "path_trash" => explorer_trash(boundary, event, &kind),
         "browser_open" | "browser_state" => browser_url(boundary, event, &kind),
         "view_layout"

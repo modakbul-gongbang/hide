@@ -4,6 +4,7 @@
 //! test binary per crate", owns the rule.
 
 mod clone;
+mod copy;
 mod document;
 mod git;
 mod item_identity;

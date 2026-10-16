@@ -437,7 +437,18 @@ impl Attachments {
             }
             return Ok(Vec::new());
         }
-        if stages.len() > MAX_FILES || stages.is_empty() {
+        self.commit_files(stages, MAX_FILES)
+    }
+
+    /// The staged paths of a drop from the file manager, in the order the
+    /// client names them: the same checks as a batch of attachments, with the
+    /// count cap of one drop (`hide_node_link::mutate::IMPORT_MAX_ITEMS`).
+    pub fn commit_dropped(&self, stages: &[String]) -> Result<Vec<String>, &'static str> {
+        self.commit_files(stages, hide_node_link::mutate::IMPORT_MAX_ITEMS)
+    }
+
+    fn commit_files(&self, stages: &[String], max_files: usize) -> Result<Vec<String>, &'static str> {
+        if stages.len() > max_files || stages.is_empty() {
             return Err("too_many_files");
         }
         let mut state = self
