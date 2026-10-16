@@ -792,7 +792,9 @@ fn finish_task(store: &mut LinkStore, offset: u64, name: &str) {
         store,
         offset,
         TurnJudgment {
-            task: TaskDecision::New { name: name.into() },
+            task: TaskDecision::New {
+                names: vec![name.into()],
+            },
             ..Default::default()
         },
     );
@@ -883,6 +885,69 @@ fn the_judgment_is_shown_only_the_three_newest_finished_tasks() {
         .map(|task| task.name)
         .collect::<Vec<_>>();
     assert_eq!(names, ["작업 5", "작업 4", "작업 3"]);
+}
+
+#[test]
+fn a_finished_split_request_is_one_candidate_and_asking_again_reopens_all_its_tasks() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+    chapter(&mut store);
+    finish_task(&mut store, 1, "작업 1");
+    finish_task(&mut store, 2, "작업 2");
+    request(&mut store, 3, "세 가지 고쳐줘");
+    end(
+        &mut store,
+        3,
+        TurnJudgment {
+            task: TaskDecision::New {
+                names: vec!["가".into(), "나".into(), "다".into()],
+            },
+            ..Default::default()
+        },
+    );
+    finish_task(&mut store, 4, "작업 4");
+    // Three groups, not three tasks: the split request counts once and
+    // shows whole, so the oldest single task is the one left out.
+    let ids = |store: &LinkStore| {
+        store
+            .ledger_context(&session())
+            .unwrap()
+            .finished_tasks
+            .into_iter()
+            .map(|task| task.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ids(&store),
+        ["task-4", "task-3", "task-3.2", "task-3.3", "task-2"]
+    );
+    request(&mut store, 5, "그 세 가지 다시 확인해줘");
+    store
+        .apply_ledger_update(&LedgerUpdate::TurnEnd {
+            session: session(),
+            offset: 5,
+            at_unix_ms: 5_500,
+            end: LabelEnd::Waiting,
+            work_author: true,
+            turn_witness: None,
+            judgment: TurnJudgment {
+                task: TaskDecision::Continue {
+                    ids: vec!["task-3.2".into()],
+                },
+                ..Default::default()
+            },
+        })
+        .unwrap();
+    let context = store.ledger_context(&session()).unwrap();
+    assert_eq!(
+        context
+            .open_tasks
+            .iter()
+            .map(|task| task.id.as_str())
+            .collect::<Vec<_>>(),
+        ["task-3", "task-3.2", "task-3.3"]
+    );
+    assert_eq!(ids(&store), ["task-4", "task-2", "task-1"]);
 }
 
 #[test]

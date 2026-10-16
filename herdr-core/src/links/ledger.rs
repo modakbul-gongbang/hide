@@ -12,8 +12,8 @@ pub const MISSED_CHARS: usize = 80;
 /// Task groups one END may continue: a request's tasks form one group, so a
 /// split request counts once.
 pub const CONTINUED_TASK_LIMIT: usize = 2;
-/// How many finished tasks the END judgment is shown beside the open ones, newest first, so
-/// a request that asks for one of them again can continue it.
+/// How many finished requests the END judgment is shown beside the open tasks, newest first,
+/// each with all its tasks, so a request that asks for one of them again can continue it.
 pub const FINISHED_TASKS_IN_CONTEXT: usize = 3;
 /// Tasks one request can make: one per independent deliverable, the extras
 /// bundled into the last name (PRD task-split-checklist D-01, D-02).
@@ -344,7 +344,7 @@ pub enum LedgerUpdate {
 pub struct LedgerContext {
     pub parent_name: Option<String>,
     pub open_tasks: Vec<WorkTask>,
-    /// The newest [`FINISHED_TASKS_IN_CONTEXT`] done tasks, last worked first.
+    /// The done tasks of the newest [`FINISHED_TASKS_IN_CONTEXT`] groups, last worked first.
     pub finished_tasks: Vec<WorkTask>,
     pub open_missed: Vec<MissedWork>,
 }

@@ -1500,8 +1500,21 @@ impl LinkStore {
         let record = self.record_tree(session, &mut BTreeSet::new(), 0, &mut 0, false)?;
         let (mut finished_tasks, open_tasks): (Vec<_>, Vec<_>) =
             record.tasks.into_iter().partition(|task| task.done);
+        // The newest finished requests, each with all its tasks: a split
+        // request is one candidate, and continuing any of its tasks reopens
+        // the whole group (PRD task-split-checklist D-03).
         finished_tasks.sort_by_key(|task| std::cmp::Reverse(task.last_at_unix_ms));
-        finished_tasks.truncate(FINISHED_TASKS_IN_CONTEXT);
+        let mut groups = Vec::new();
+        finished_tasks.retain(|task| {
+            let group = task_group(&task.id).to_owned();
+            if !groups.contains(&group) {
+                if groups.len() == FINISHED_TASKS_IN_CONTEXT {
+                    return false;
+                }
+                groups.push(group);
+            }
+            true
+        });
         Ok(LedgerContext {
             parent_name,
             open_tasks,
