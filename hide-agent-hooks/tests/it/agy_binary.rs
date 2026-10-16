@@ -105,6 +105,164 @@ fn the_real_agy_loads_hide_s_hook_block() {
     }
 }
 
+/// The stand-in `hide` beside the helper in a signed-in turn: it registers
+/// the checkout, hands the pane one letter and records every call beside the
+/// home it is run in.
+#[cfg(unix)]
+const TURN_HIDE: &str = r#"#!/bin/sh
+echo "$@" >> "${HOME%/*}/hide-calls"
+case "$1 $2" in
+  "workspace bootstrap") echo '{"ok":true,"reference":"/x"}' ;;
+  "inbox --hook") echo '{"ok":true,"result":{"context":"LETTER-CI-7731: the operator says hello.","ids":["letter-ci"]}}' ;;
+  "inbox --confirm") echo '{"ok":true,"result":{"confirmed":["letter-ci"]}}' ;;
+  *) exit 1 ;;
+esac
+"#;
+
+/// One real agy turn on the CI account's key (PRD antigravity-first-class
+/// B36, D-17): Hide's block in the throwaway home's `hooks.json`, the helper
+/// beside a stand-in `hide`, and a prompt asking for one direct
+/// `herdr agent start`. agy fires Hide's hooks, injects the pane's letter
+/// into the conversation (agy records it, and the helper confirms it only
+/// after agy took the answer), and the start is refused with Hide's reason
+/// before agy's own permission check. Unix only: the stand-in is a shell
+/// script.
+#[cfg(unix)]
+#[test]
+#[ignore = "runs one real agy turn on HIDE_AGY_API_KEY in a throwaway home; the os contract lane's signed-in job runs it"]
+fn a_signed_in_agy_turn_fires_hide_s_hooks() {
+    use std::io::Write;
+
+    use crate::{programs, stand_ins};
+
+    let agy = std::env::var_os("HIDE_AGY_BINARY")
+        .expect("HIDE_AGY_BINARY names the agy binary this test runs");
+    let key = std::env::var_os("HIDE_AGY_API_KEY")
+        .filter(|key| !key.is_empty())
+        .expect("HIDE_AGY_API_KEY holds the CI account's key");
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let home = root.join("home");
+    let bin = root.join("bin");
+    let workspace = root.join("repo");
+    for folder in [
+        home.join(".gemini/config"),
+        home.join(".gemini/antigravity-cli"),
+        bin.clone(),
+        workspace.join(".git"),
+    ] {
+        std::fs::create_dir_all(folder).unwrap();
+    }
+    std::fs::write(workspace.join(".git/HEAD"), "ref: refs/heads/topic\n").unwrap();
+    std::fs::write(
+        home.join(".gemini/antigravity-cli/settings.json"),
+        r#"{"modelProvider": "gemini"}"#,
+    )
+    .unwrap();
+    let helper = bin.join("hide-agent-hooks");
+    stand_ins::place(programs::hook(), &helper);
+    stand_ins::program(&bin.join("hide"), TURN_HIDE);
+    guidance::install(GuidanceAgent::Antigravity, &home, &helper).unwrap();
+    let log = root.join("agy.log");
+    let prompt = serde_json::json!({
+        "event": "user",
+        "message": { "content": "Run exactly one shell command with your shell tool, unchanged, and nothing else: herdr agent start probe --kind claude --pane w1:p1 . Do not read files or run any other command. Then report the exact error text the tool returned, word for word." },
+    });
+
+    let mut command = Command::new(&agy);
+    command
+        .env_clear()
+        .env("HOME", &home)
+        .env("TMPDIR", &root)
+        // The shell agy runs its tools and hooks in; no browser opener is
+        // needed, since the key signs agy in.
+        .env("PATH", "/usr/bin:/bin")
+        .env("AGY_CLI_DISABLE_AUTO_UPDATE", "1")
+        .env("GEMINI_API_KEY", &key)
+        .env("HERDR_PANE_ID", "ci-agy:p1")
+        .env("HERDR_SOCKET_PATH", root.join("no-herdr.sock"))
+        .args([
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+        ])
+        .args(["--print-timeout", "180s", "-p", "", "--log-file"])
+        .arg(&log)
+        .current_dir(&workspace)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = hide_platform::process::OwnedChild::spawn(&mut command).unwrap();
+    let mut stdin = child.take_stdin().unwrap();
+    writeln!(stdin, "{prompt}").unwrap();
+    drop(stdin);
+    let output = child
+        .capture_until(
+            std::time::Instant::now() + Duration::from_secs(240),
+            16 * 1024 * 1024,
+        )
+        .expect("agy ends its turn");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let calls = std::fs::read_to_string(root.join("hide-calls")).unwrap_or_default();
+    let report = format!(
+        "exit {:?}\nhide calls {calls}\nstderr {}\nlog {}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr),
+        std::fs::read_to_string(&log).unwrap_or_default(),
+    );
+    let events: Vec<serde_json::Value> = stdout
+        .lines()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect();
+    let conversation = events
+        .iter()
+        .find_map(|event| event["conversation_id"].as_str())
+        .unwrap_or_else(|| panic!("agy started no conversation:\n{report}"));
+
+    // The hooks fired: the guidance and Memory at the first prompt, the
+    // letter at its first model call.
+    for asked in [
+        format!(
+            "workspace memory --event SessionStart --runtime antigravity --session {conversation}"
+        ),
+        format!("inbox --hook --session {conversation}"),
+        "inbox --confirm letter-ci".to_owned(),
+    ] {
+        assert!(
+            calls.lines().any(|line| line == asked),
+            "{asked} was not asked:\n{report}"
+        );
+    }
+    // Injected: agy recorded the letter as a message of the conversation.
+    let transcript = std::fs::read_to_string(
+        home.join(".gemini/antigravity-cli/brain")
+            .join(conversation)
+            .join(".system_generated/logs/transcript_full.jsonl"),
+    )
+    .unwrap_or_default();
+    assert!(
+        transcript.contains("LETTER-CI-7731"),
+        "the letter is not in the conversation:\n{report}"
+    );
+    // Refused: the start ended as agy's tool error with Hide's reason.
+    let refused = events.iter().any(|event| {
+        let step = &event["step_update"];
+        step["tool_name"] == "run_command"
+            && step["state"] == "ERROR"
+            && step["tool_info"]["error"]["message"]
+                .as_str()
+                .is_some_and(|message| {
+                    message.contains("denied by pre-tool hook")
+                        && message.contains("hide agent spawn --parent here")
+                })
+    });
+    assert!(
+        refused,
+        "agy's start was not refused with Hide's reason:\n{stdout}\n{report}"
+    );
+}
+
 /// Writes the `hide` block this build installs into the `.agents/hooks.json`
 /// of the scratch workspace `HIDE_AGY_LIVE_WORKSPACE`, for the live check on
 /// a signed-in machine, which isolates by workspace and never by home (PRD
