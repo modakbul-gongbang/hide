@@ -109,9 +109,19 @@ jobs:
         with:
           node-version: 22
 
+      - name: Install cargo-nextest
+        if: steps.existing.outputs.proceed == 'true'
+        # The suite runs as every other Rust lane does: nextest's `ci`
+        # profile retries a failed test once (docs/TESTING.md, "Flaky tests").
+        # Under plain `cargo test` one timing-bound unit test failing on a
+        # loaded runner (2026-10-16, a_read_after_a_failure_ends_the_wait_as_a_timeout)
+        # stopped the proposal with nothing about Herdr in it.
+        timeout-minutes: 3
+        run: bash scripts/install-nextest.sh
+
       - name: Run the Rust suite against the candidate
         if: steps.existing.outputs.proceed == 'true'
-        run: bash scripts/verify-cargo.sh test
+        run: bash scripts/verify-cargo.sh nextest --profile ci --workspace
 
       - name: Open the pull request
         if: steps.existing.outputs.proceed == 'true'
