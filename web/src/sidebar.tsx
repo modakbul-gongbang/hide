@@ -164,15 +164,18 @@ export function Sidebar({ actions }: { actions: Actions }) {
           ) : null}
           <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-sidebar-content="true">
             {list}
-            <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center justify-end gap-xs border-t border-border px-sm py-xs">
+            <div data-sidebar-footer="true" className="flex shrink-0 flex-wrap items-center gap-xs border-t border-border px-sm py-xs">
               <Usage actions={actions} />
-              <ViewMenu actions={actions} />
-              <HelpMenu actions={actions} />
-              <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
-                <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
-                  <SettingsIcon />
-                </Button>
-              </Hint>
+              {/* Usage holds the left edge; the menus keep the right one, also on a wrapped line. */}
+              <div className="ml-auto flex items-center gap-xs">
+                <ViewMenu actions={actions} />
+                <HelpMenu actions={actions} />
+                <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
+                  <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
+                    <SettingsIcon />
+                  </Button>
+                </Hint>
+              </div>
             </div>
           </div>
         </div>
