@@ -7,9 +7,14 @@
 import type { ProjectTasksScope, TaskCardScope, TaskState } from "./agentScope";
 import type { AgentRow, TaskView, Workspace } from "./snapshot";
 
-/** The open groups of the 상태별 view, in the order they are drawn (B4). */
-export type TaskGroupState = "needs_you" | "blocked" | "working" | "done";
-export const TASK_GROUPS: readonly TaskGroupState[] = ["needs_you", "blocked", "working", "done"];
+/**
+ * The open groups of the 상태별 view and the bands of a 프로젝트별 group, in
+ * the order they are drawn (status-marks D-22, B32): 내 차례 (a question, an
+ * approval or a block), 읽을 것, whose tasks want the operator's look, above
+ * 일하는 중, whose agents work, and 대기 last, whose tasks wait on proven work.
+ */
+export type TaskGroupState = "needs_you" | "done" | "working" | "waiting";
+export const TASK_GROUPS: readonly TaskGroupState[] = ["needs_you", "done", "working", "waiting"];
 
 export type TaskEntry = { card: TaskCardScope; agent: AgentRow; project: Workspace | null };
 
@@ -18,8 +23,10 @@ export type TaskGroup = {
   key: string;
   state: TaskGroupState | null;
   project: Workspace | null;
-  /** The open rows, in the core's order with waiting rows after working ones (B9). */
+  /** The open rows, band by band, each band in the core's order (B9). */
   entries: TaskEntry[];
+  /** The open rows cut by state in `TASK_GROUPS` order; a 상태별 group has one band, a 프로젝트별 group labels each (B32). */
+  bands: { state: TaskGroupState; entries: TaskEntry[] }[];
   /** Per state, the open rows a project's head counts (B6). */
   counts: Partial<Record<TaskGroupState, number>>;
   resting: TaskEntry[];
@@ -35,9 +42,9 @@ export type TaskList = {
   cleanup: TaskEntry[];
 };
 
-/** Which open group a state stands in; waiting stands with working (B4, B9). */
+/** Which open group a state stands in: a block is the operator's turn (B32). */
 export function groupOf(state: TaskState): TaskGroupState | "resting" | "cleanup" {
-  return state === "waiting" ? "working" : state;
+  return state === "blocked" ? "needs_you" : state;
 }
 
 /**
@@ -56,8 +63,10 @@ export function taskList(tasks: ProjectTasksScope | null | undefined, rows: Read
   const resting = entries.filter(({ card }) => card.state === "resting");
   const cleanup = entries.filter(({ card }) => card.state === "cleanup");
   if (view === "status") {
-    const groups = TASK_GROUPS.map((state) => ({ key: `state:${state}`, state, project: null, entries: ordered(open.filter(({ card }) => groupOf(card.state) === state)), counts: {}, resting: [], cleanup: [] }))
-      .filter((group) => group.entries.length > 0);
+    const groups = TASK_GROUPS.map((state) => {
+      const entries = open.filter(({ card }) => groupOf(card.state) === state);
+      return { key: `state:${state}`, state, project: null, entries, bands: [{ state, entries }], counts: {}, resting: [], cleanup: [] };
+    }).filter((group) => group.entries.length > 0);
     return { total: open.length, groups, resting, cleanup };
   }
   // One group per project, the projects that ask first, then in the order their first task stands (B6).
@@ -68,20 +77,11 @@ export function taskList(tasks: ProjectTasksScope | null | undefined, rows: Read
   const groups = sorted.map((project) => {
     const mine = (list: TaskEntry[]) => list.filter((entry) => entry.project === project);
     const shown = mine(open);
-    const counts: Partial<Record<TaskGroupState, number>> = {};
-    for (const { card } of shown) {
-      const state = groupOf(card.state) as TaskGroupState;
-      counts[state] = (counts[state] ?? 0) + 1;
-    }
-    const byState = TASK_GROUPS.flatMap((state) => ordered(shown.filter(({ card }) => groupOf(card.state) === state)));
-    return { key: `project:${project?.id ?? ""}`, state: null, project, entries: byState, counts, resting: mine(resting), cleanup: mine(cleanup) };
+    const bands = TASK_GROUPS.map((state) => ({ state, entries: shown.filter(({ card }) => groupOf(card.state) === state) })).filter((band) => band.entries.length > 0);
+    const counts: Partial<Record<TaskGroupState, number>> = Object.fromEntries(bands.map((band) => [band.state, band.entries.length]));
+    return { key: `project:${project?.id ?? ""}`, state: null, project, entries: bands.flatMap((band) => band.entries), bands, counts, resting: mine(resting), cleanup: mine(cleanup) };
   });
   return { total: open.length, groups, resting: [], cleanup: [] };
-}
-
-/** Working tasks before the ones that wait on a descendant or an answer, each kept in the core's order (B9). */
-function ordered(entries: TaskEntry[]): TaskEntry[] {
-  return [...entries.filter(({ card }) => card.state !== "waiting"), ...entries.filter(({ card }) => card.state === "waiting")];
 }
 
 /** A fold's key in the page's open set (B5): `rest:` or `cleanup:` and the group it belongs to, the empty group being the 상태별 view's folds under every group. */

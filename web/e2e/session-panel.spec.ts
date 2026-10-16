@@ -90,7 +90,8 @@ test("the 태스크 list groups the device's tasks, folds children and resting o
     await expect(ask(question)).toContainText(QUESTION, { timeout: 30_000 });
     await expect(group("working").locator(`[data-task-row="${parent}"]`)).toBeVisible();
     await expect(row(child)).toHaveCount(0);
-    await expect(row(parent).locator("[data-task-children]")).toHaveAttribute("data-task-children", "1");
+    // A folded parent counts no children (status-marks B35).
+    await expect(row(parent).locator("[data-task-children]")).toHaveCount(0);
     await openTaskFolds(page);
     await expect(row(stopped)).toHaveAttribute("data-task-state", "resting");
     await expect(row(stopped)).toContainText("테스트 환경이 없어 멈췄어요");

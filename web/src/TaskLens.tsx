@@ -1,19 +1,18 @@
 import { ChevronDownIcon, ChevronRightIcon, EllipsisIcon, FileTextIcon, GitBranchIcon, PlusIcon, ServerIcon } from "lucide-react";
-import { memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, memo, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { deviceScope } from "./agentScope";
 import { AgentRowMark } from "./AgentRowMark";
 import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
-import { backgroundTail, badgeParts, badgeWords, forkLabel, leadWord, lineParts, markTone, rowDimmed, rowLine, stateLine, type BadgeCounts, type LineParts } from "./agentRow";
+import { backgroundTail, forkLabel, leadWord, lineParts, markTone, rowDimmed, rowLine, stateLine, type LineParts } from "./agentRow";
 import { statusText } from "./agentStatus";
 import { AgentForkMark } from "./components/fork-mark";
-import { askWhat, TreeChevron, TreeRails, type TreePlace } from "./components/agent-tree";
+import { askWhat, DescendantMark, TreeChevron, TreeRails, type TreePlace } from "./components/agent-tree";
 import { childrenOf } from "./components/agent-tree-popover";
 import { Elapsed } from "./components/elapsed";
 import { AgentPrMark, useAgentStaleness } from "./components/pr-mark";
 import { RowLineText } from "./components/row-line-text";
-import { BadgeMarks } from "./components/status-badge";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Keycap } from "./components/ui/keycap";
@@ -36,15 +35,14 @@ import { revealRow, sidebarFocusPane } from "./sidebarFocus";
 import type { SidebarTreeLine } from "./sidebarTree";
 import { catalogWorkspaces, localDeviceId, type AgentRow, type TaskView } from "./snapshot";
 import { useShellStore } from "./store";
-import { drawnTasks, taskFoldKey, taskList, taskSections, type TaskEntry, type TaskGroup, type TaskGroupState } from "./taskList";
+import { drawnTasks, TASK_GROUPS, taskFoldKey, taskList, taskSections, type TaskEntry, type TaskGroup, type TaskGroupState } from "./taskList";
 import { useUiStore } from "./ui";
 import type { TaskState } from "./agentScope";
 
 const NO_FOLDS: string[] = [];
 const NO_PANES: ReadonlySet<string> = new Set();
-/** The most child marks a folded row draws; the rest are in the row's name. */
-/** A row's second line by the task's state (B8): a question warns, a block is a danger. */
-const LINE_TONE: Partial<Record<TaskState, string>> = { needs_you: "text-warning", blocked: "text-destructive" };
+/** A row's second line by the task's state: a question and a block are the operator's turn, both in the warning colour (B8; status-marks B32). */
+const LINE_TONE: Partial<Record<TaskState, string>> = { needs_you: "text-warning", blocked: "text-warning" };
 
 /**
  * The sidebar's 프로젝트 | 태스크 switch (PRD sidebar-task-lens B1, B39):
@@ -173,6 +171,7 @@ function NoProject({ actions }: { actions: Actions }) {
 const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds, focusedPane, disabled, actions }: {
   list: ReturnType<typeof taskList>; view: TaskView; byPane: ReadonlyMap<string, AgentRow>; agents: readonly AgentRow[]; folds: string[]; focusedPane: string | null; disabled: boolean; actions: Actions;
 }) {
+  const { t } = useInterfaceTranslation();
   const [shownAll, setShownAll] = useState<ReadonlySet<string>>(NO_PANES);
   // The resting and cleanup folds open in place for this page only (B5); the
   // page keeps them, so the ⌥n numbers read the same drawn order.
@@ -185,10 +184,10 @@ const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds,
   const numbered = useUiStore((s) => s.hint === "agents");
   const numbers = numbered ? numberedPanes(drawnTasks(shown).map(({ agent }) => agent.pane_id)) : null;
   const treesOf = (entries: TaskEntry[]) => entries.map((entry) => ({ entry, lines: sessionTreeLines(entry.agent, byPane, opened, shownAll) }));
-  const sections = shown.sections.map(({ group, resting, cleanup }) => ({ group, trees: treesOf(group.entries), resting: treesOf(resting), cleanup: treesOf(cleanup) }));
+  const sections = shown.sections.map(({ group, resting, cleanup }) => ({ group, bands: group.bands.map((band) => ({ state: band.state, trees: treesOf(band.entries) })), resting: treesOf(resting), cleanup: treesOf(cleanup) }));
   const restingTrees = treesOf(shown.resting);
   const cleanupTrees = treesOf(shown.cleanup);
-  const drawn = new Set([...sections.flatMap(({ trees, resting, cleanup }) => [...trees, ...resting, ...cleanup]), ...restingTrees, ...cleanupTrees]
+  const drawn = new Set([...sections.flatMap(({ bands, resting, cleanup }) => [...bands.flatMap((band) => band.trees), ...resting, ...cleanup]), ...restingTrees, ...cleanupTrees]
     .flatMap(({ lines }) => lines.flatMap((line) => (line.kind === "agent" ? [line.row.agent.pane_id] : []))));
   const selected = sidebarFocusPane(focusedPane, agents, drawn);
   // The selected row comes into view when the row standing for the focus
@@ -208,10 +207,15 @@ const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds,
   ));
   return (
     <div ref={scroller} className={cn("min-h-0 flex-1 overflow-y-auto px-sm pb-md", disabled && "opacity-(--opacity-disabled)")} data-task-list="true" onKeyDown={moveFocus}>
-      {sections.map(({ group, trees, resting, cleanup }) => (
-        <section key={group.key} data-task-group={group.state ?? group.project?.id ?? ""} aria-label={groupName(group)}>
+      {sections.map(({ group, bands, resting, cleanup }) => (
+        <section key={group.key} data-task-group={group.state ?? group.project?.id ?? ""} aria-label={groupName(group, t)}>
           <GroupHead group={group} />
-          <ul className="flex min-w-0 flex-col">{rows(trees)}</ul>
+          {bands.map((band) => (
+            <Fragment key={band.state}>
+              {view === "project" ? <BandHead state={band.state} /> : null}
+              <ul className="flex min-w-0 flex-col" aria-label={view === "project" ? t(`taskLens.group.${band.state}`) : undefined} data-task-band-list={view === "project" ? band.state : undefined}>{rows(band.trees)}</ul>
+            </Fragment>
+          ))}
           {view === "project" ? <Folds group={group} resting={resting} cleanup={cleanup} open={openFolds} onToggle={toggleFold} rows={rows} /> : null}
         </section>
       ))}
@@ -220,8 +224,22 @@ const TaskGroups = memo(function TaskGroups({ list, view, byPane, agents, folds,
   );
 }, (before, after) => before.list === after.list && before.view === after.view && before.byPane === after.byPane && before.folds === after.folds && before.focusedPane === after.focusedPane && before.disabled === after.disabled && before.actions === after.actions);
 
-function groupName(group: TaskGroup): string {
-  return group.project?.label ?? group.state ?? "";
+function groupName(group: TaskGroup, t: ReturnType<typeof useInterfaceTranslation>["t"]): string {
+  return group.project?.label ?? (group.state ? t(`taskLens.group.${group.state}`) : "");
+}
+
+/**
+ * The small state label over each band of a 프로젝트별 group, where its rows
+ * change state (status-marks B32): grey like the folds, 내 차례 in the warning
+ * colour, out of the arrow keys' way; the band's list carries the name.
+ */
+function BandHead({ state }: { state: TaskGroupState }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <div aria-hidden="true" data-task-band={state} className={cn("px-xs pt-xs pb-xxs text-micro text-muted-foreground", state === "needs_you" && "text-warning")}>
+      {t(`taskLens.group.${state}`)}
+    </div>
+  );
 }
 
 /** A group's head: its state and count, or a project's name with its counts by state (B4, B6). */
@@ -229,18 +247,18 @@ function GroupHead({ group }: { group: TaskGroup }) {
   const { t } = useInterfaceTranslation();
   if (group.state) {
     return (
-      <h3 tabIndex={-1} data-task-focus="group" className={cn("flex items-center gap-xs rounded-xs px-xs pt-sm pb-xs text-micro font-medium text-subtle-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring", group.state === "needs_you" && "text-warning", group.state === "blocked" && "text-destructive")} data-task-group-head={group.state}>
+      <h3 tabIndex={-1} data-task-focus="group" className={cn("flex items-center gap-xs rounded-xs px-xs pt-sm pb-xs text-micro font-medium text-subtle-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring", group.state === "needs_you" && "text-warning")} data-task-group-head={group.state}>
         <span>{t(`taskLens.group.${group.state}`)}</span>
         <span className="tabular-nums">{group.entries.length}</span>
       </h3>
     );
   }
-  const counts = (["needs_you", "blocked", "working", "done"] as const).filter((state) => group.counts[state]);
+  const counts = TASK_GROUPS.filter((state) => group.counts[state]);
   return (
     <h3 tabIndex={-1} data-task-focus="group" className="flex min-w-0 items-center gap-sm rounded-xs px-xs pt-sm pb-xs text-caption font-semibold text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring" data-task-group-head="project">
       <span className="min-w-0 flex-1 truncate" title={group.project?.path}>{group.project?.label ?? ""}</span>
       {counts.map((state: TaskGroupState) => (
-        <span key={state} className={cn("shrink-0 text-micro font-normal", state === "needs_you" ? "text-warning" : state === "blocked" ? "text-destructive" : "text-muted-foreground")}>
+        <span key={state} className={cn("shrink-0 text-micro font-normal", state === "needs_you" ? "text-warning" : "text-muted-foreground")}>
           {t(`taskLens.group.${state}`)} {group.counts[state]}
         </span>
       ))}
@@ -285,18 +303,18 @@ function TaskTree({ entry, lines, byPane, opened, selected, number, showProject,
   const family = useMemo(() => (childrenOf(agent, byPane).length > 0 ? sessionPulls(agent, byPane) : undefined), [agent, byPane]);
   const openOf = (of: AgentRow) => (childrenOf(of, byPane).length > 0 ? opened.has(of.pane_id) : null);
   return <>
-    <TaskRow entry={entry} family={family} byPane={byPane} open={openOf(agent)} selected={selected === agent.pane_id} number={number} showProject={showProject} disabled={disabled} actions={actions} />
+    <TaskRow entry={entry} family={family} open={openOf(agent)} selected={selected === agent.pane_id} number={number} showProject={showProject} disabled={disabled} actions={actions} />
     {lines.slice(1).map((line) => {
       if (line.kind === "more") return <TreeMoreRow key={`more:${line.parent}`} line={line} onShowAll={onShowAll} />;
       const child = line.row.agent;
       const parent = (child.lineage_parent_pane_id ? byPane.get(child.lineage_parent_pane_id) : undefined) ?? agent;
-      return <ChildRow key={child.pane_id} parent={parent} child={child} depth={line.row.depth} place={line.place} open={openOf(child)} selected={selected === child.pane_id} disabled={disabled} actions={actions} workspace={entry.project?.id ?? null} byPane={byPane} />;
+      return <ChildRow key={child.pane_id} parent={parent} child={child} depth={line.row.depth} place={line.place} open={openOf(child)} selected={selected === child.pane_id} disabled={disabled} actions={actions} workspace={entry.project?.id ?? null} />;
     })}
   </>;
 }
 
 /** A task's row; `number` is the digit an ⌥ hold shows on it, floating at its top right over the time, moving nothing. */
-function TaskRow({ entry, family, byPane, open, selected, number, showProject, disabled, actions }: { entry: TaskEntry; family?: SessionPull[]; byPane: ReadonlyMap<string, AgentRow>; open: boolean | null; selected: boolean; number: number | null; showProject: boolean; disabled: boolean; actions: Actions }) {
+function TaskRow({ entry, family, open, selected, number, showProject, disabled, actions }: { entry: TaskEntry; family?: SessionPull[]; open: boolean | null; selected: boolean; number: number | null; showProject: boolean; disabled: boolean; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const { agent, card, project } = entry;
   const staleness = useAgentStaleness(agent, family);
@@ -323,7 +341,7 @@ function TaskRow({ entry, family, byPane, open, selected, number, showProject, d
             <span className="min-w-0 truncate text-caption font-medium">{agent.identity_label}</span>
             <AgentForkMark agent={agent} />
           </button>
-          {open ? null : <ChildMarks agent={agent} byPane={byPane} />}
+          {open ? null : <DescendantMark agent={agent} />}
           <AgentPrMark agent={agent} family={family} staleness={staleness} disabled={disabled} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: project?.id ?? null, url: pull.url, number: pull.number })} onExternal={(pull) => actions.openLink(pull.url, true)} />
           <TimeSlot agent={agent} record={record} onPane={go} resolvable={!agent.resolved} disabled={disabled} actions={actions} />
         </div>
@@ -373,30 +391,6 @@ function TimeSlot({ agent, record, onPane, resolvable, disabled, actions }: { ag
 }
 
 /**
- * A folded row's children as the folded parent's count badge (B10;
- * status-marks B19): `!` N, ring N, green dot N, plain dot N, each counted
- * from the marks the children draw; the `!` also counts what deeper
- * descendants raised, so a raise below a folded child is not lost.
- */
-function ChildMarks({ agent, byPane }: { agent: AgentRow; byPane: ReadonlyMap<string, AgentRow> }) {
-  const { t } = useInterfaceTranslation();
-  const children = childrenOf(agent, byPane);
-  if (children.length === 0) return null;
-  const counts: BadgeCounts = {};
-  for (const child of children) if (child.mark !== "quiet" && child.mark !== "asleep") counts[child.mark] = (counts[child.mark] ?? 0) + 1;
-  const raised = agent.descendant_mark?.kind === "raised" ? agent.descendant_mark.count : 0;
-  counts.turn = Math.max(counts.turn ?? 0, raised);
-  const parts = badgeParts(counts);
-  if (parts.length === 0) return null;
-  const label = t("taskLens.children", { states: badgeWords(counts, t) });
-  return (
-    <span role="img" aria-label={label} title={label} className="flex shrink-0 items-center gap-xs font-mono text-micro text-muted-foreground" data-task-children={children.length}>
-      <BadgeMarks parts={parts} />
-    </span>
-  );
-}
-
-/**
  * B8: the project's name in 상태별, then the question, the block's cause, the
  * label line or the unfinished work; none is drawn when there is nothing to say.
  */
@@ -429,7 +423,7 @@ function agentLineParts(t: ReturnType<typeof useInterfaceTranslation>["t"], agen
   if (own || row?.mode === "waiting") return lineParts(t, agent, row!);
   const text = agent.state.session.line;
   if (!text) return null;
-  return { lead: agent.mark === "going" ? null : leadWord(t, agent), text, tail: backgroundTail(t, agent) };
+  return { lead: agent.mark === "going" || agent.mark === "waiting" ? null : leadWord(t, agent), text, tail: backgroundTail(t, agent) };
 }
 
 const partsTitle = (parts: LineParts) => [parts.lead, parts.text, parts.tail].filter(Boolean).join(" · ");
@@ -439,7 +433,7 @@ const partsTitle = (parts: LineParts) => [parts.lead, parts.text, parts.tail].fi
  * and, while folded, its marks; another checkout's branch on its own line,
  * another device's chip; a finished child's title is quiet.
  */
-function ChildRow({ parent, child, depth, place, open, selected, disabled, actions, workspace, byPane }: { parent: AgentRow; child: AgentRow; depth: number; place: TreePlace; open: boolean | null; selected: boolean; disabled: boolean; actions: Actions; workspace: string | null; byPane: ReadonlyMap<string, AgentRow> }) {
+function ChildRow({ parent, child, depth, place, open, selected, disabled, actions, workspace }: { parent: AgentRow; child: AgentRow; depth: number; place: TreePlace; open: boolean | null; selected: boolean; disabled: boolean; actions: Actions; workspace: string | null }) {
   const { t } = useInterfaceTranslation();
   const staleness = useAgentStaleness(child);
   // A primitive, so a snapshot that moves nothing of this row leaves it alone.
@@ -471,7 +465,7 @@ function ChildRow({ parent, child, depth, place, open, selected, disabled, actio
             <AgentForkMark agent={child} />
           </button>
           {device ? <span className="flex shrink-0 items-center gap-xxs rounded-xs border border-border px-xxs text-micro text-muted-foreground" data-task-device={device}><ServerIcon aria-hidden="true" className="size-(--size-icon-sm)" />{device}</span> : null}
-          {open ? null : <ChildMarks agent={child} byPane={byPane} />}
+          {open ? null : <DescendantMark agent={child} />}
           <AgentPrMark agent={child} staleness={staleness} disabled={disabled} onOpen={(pull) => actions.openSessionPullRequest({ workspace_id: workspace, url: pull.url, number: pull.number })} onExternal={(pull) => actions.openLink(pull.url, true)} />
           <TimeSlot agent={child} record={record} onPane={go} resolvable={false} disabled={disabled} actions={actions} />
         </div>
