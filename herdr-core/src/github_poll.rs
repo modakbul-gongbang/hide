@@ -23,7 +23,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hide_node_link::gh::{GhAnswer, conditional_read_arguments};
+use hide_node_link::gh::{GhAnswer, conditional_read_arguments, pull_digest_arguments};
 use hide_node_link::protocol::Call;
 
 use crate::model::GithubFailureCategory;
@@ -185,6 +185,11 @@ pub(crate) struct PollState {
     /// endpoints of the last request: at most
     /// `POLL_PROJECT_LIMIT * (1 + 2 * POLL_PENDING_LIMIT)` of them.
     tags: HashMap<String, String>,
+    /// A digest of each watched project's open pull request list: number,
+    /// head commit and draft flag of every pull request, and nothing else, so
+    /// a comment, a label or a review that moves the list's tag asks nothing.
+    /// At most `POLL_PROJECT_LIMIT` entries, kept for the last request's projects.
+    digests: HashMap<String, u64>,
     /// The projects waiting out a failure, at most `POLL_PROJECT_LIMIT`.
     pauses: HashMap<String, Pause>,
     /// Polling is stopped until this unix second: the rate limit's floor.
@@ -208,9 +213,9 @@ pub(crate) fn pass(
 ) -> PollAnswer {
     let wanted: BTreeSet<String> = request.projects.iter().flat_map(endpoints).collect();
     state.tags.retain(|endpoint, _| wanted.contains(endpoint));
-    state
-        .pauses
-        .retain(|path, _| request.projects.iter().any(|project| &project.path == path));
+    let watched = |path: &String| request.projects.iter().any(|project| &project.path == path);
+    state.digests.retain(|path, _| watched(path));
+    state.pauses.retain(|path, _| watched(path));
     let mut answer = PollAnswer::default();
     if let Some(until) = state.rate_until {
         if clock.unix < until {
@@ -248,9 +253,23 @@ pub(crate) fn pass(
                         failure = Some("reply_without_tag");
                         break;
                     };
-                    if let Some(known) = &known
-                        && !same_tag(known, &tag)
-                    {
+                    let moved = known.as_ref().is_none_or(|known| !same_tag(known, &tag));
+                    if moved && is_list(&endpoint) {
+                        // The list's tag moves for a comment as well as a push.
+                        // Only a pull request opened, closed, pushed to or
+                        // flipped to or from draft is a change worth a read.
+                        let digest = match pull_digest(ask, &project.repository) {
+                            Ok(digest) => digest,
+                            Err(refused) => {
+                                failure = Some(failure_kind(refused.category));
+                                break;
+                            }
+                        };
+                        let before = state.digests.insert(project.path.clone(), digest);
+                        if known.is_some() && before != Some(digest) {
+                            changed = true;
+                        }
+                    } else if moved && known.is_some() {
                         changed = true;
                     }
                     state.tags.insert(endpoint, tag);
@@ -353,6 +372,29 @@ fn endpoints(project: &PollProject) -> Vec<String> {
     endpoints
 }
 
+fn is_list(endpoint: &str) -> bool {
+    endpoint.ends_with("/pulls?state=open&per_page=100")
+}
+
+/// The digest of a repository's open pull requests, from the one string `gh`
+/// prints for `PULL_DIGEST_JQ`.
+fn pull_digest(ask: Ask<'_>, repository: &str) -> Result<u64, AskFailure> {
+    let unreadable = |reason: &str| AskFailure {
+        category: GithubFailureCategory::NetworkOrRateLimit,
+        reason: reason.to_owned(),
+    };
+    let arguments =
+        pull_digest_arguments(repository).ok_or_else(|| unreadable("endpoint_refused"))?;
+    let text = ask(&arguments)?;
+    let text = text.trim();
+    if !text.starts_with('[') || !text.ends_with(']') {
+        return Err(unreadable("digest_unreadable"));
+    }
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::hash::Hash::hash(text, &mut hasher);
+    Ok(std::hash::Hasher::finish(&hasher))
+}
+
 /// A weak tag and the strong tag of the same content name one thing.
 fn same_tag(left: &str, right: &str) -> bool {
     left.trim_start_matches("W/") == right.trim_start_matches("W/")
@@ -431,6 +473,15 @@ mod tests {
         ))
     }
 
+    /// What `gh` prints for the digest filter over these pull requests.
+    fn digest_of(pulls: &[(u32, &str, bool)]) -> Result<String, AskFailure> {
+        let items: Vec<String> = pulls
+            .iter()
+            .map(|(number, sha, draft)| format!("[{number},\"{sha}\",{draft}]"))
+            .collect();
+        Ok(format!("[{}]\n", items.join(",")))
+    }
+
     fn not_modified() -> Result<String, AskFailure> {
         Err(AskFailure {
             category: GithubFailureCategory::NetworkOrRateLimit,
@@ -470,23 +521,41 @@ mod tests {
 
         fn ask(&self, arguments: &[String]) -> Result<String, AskFailure> {
             self.asked.borrow_mut().push(arguments.to_vec());
+            let digest = arguments.iter().any(|argument| argument == "--jq");
             let endpoint = arguments.last().cloned().unwrap_or_default();
             let mut answers = self.answers.borrow_mut();
             let queue = answers
                 .iter_mut()
-                .find(|(part, _)| endpoint.contains(part.as_str()))
+                .find(|(part, _)| match part.strip_prefix("digest:") {
+                    Some(part) => digest && endpoint.contains(part),
+                    None => !digest && endpoint.contains(part.as_str()),
+                })
                 .map(|(_, queue)| queue);
-            queue
-                .and_then(VecDeque::pop_front)
-                .unwrap_or_else(not_modified)
+            queue.and_then(VecDeque::pop_front).unwrap_or_else(|| {
+                if digest {
+                    digest_of(&[(1, "aaaa", false)])
+                } else {
+                    not_modified()
+                }
+            })
         }
 
+        /// The conditional reads asked, by endpoint; digest reads are counted apart.
         fn asked_endpoints(&self) -> Vec<String> {
             self.asked
                 .borrow()
                 .iter()
+                .filter(|arguments| !arguments.iter().any(|argument| argument == "--jq"))
                 .filter_map(|arguments| arguments.last().cloned())
                 .collect()
+        }
+
+        fn digest_reads(&self) -> usize {
+            self.asked
+                .borrow()
+                .iter()
+                .filter(|arguments| arguments.iter().any(|argument| argument == "--jq"))
+                .count()
         }
 
         fn take_asked(&self) -> Vec<Vec<String>> {
@@ -523,7 +592,7 @@ mod tests {
                 .is_empty()
         );
         let first = script.take_asked();
-        assert_eq!(first.len(), 1);
+        assert_eq!(first.len(), 2, "the list, then its digest as the baseline");
         assert!(
             !first[0]
                 .iter()
@@ -543,17 +612,105 @@ mod tests {
     }
 
     #[test]
-    fn a_changed_tag_names_its_project_and_no_other() {
+    fn a_changed_list_names_its_project_and_no_other() {
         let script = Script::new();
         script.will("/app/pulls", ok("one"));
         script.will("/app/pulls", ok("two"));
         script.will("/other/pulls", ok("same"));
+        script.will("/other/pulls", ok("same2"));
+        script.will("digest:/app/pulls", digest_of(&[(1, "aaaa", false)]));
+        script.will("digest:/app/pulls", digest_of(&[(1, "bbbb", false)]));
+        script.will("digest:/other/pulls", digest_of(&[(2, "cccc", false)]));
+        script.will("digest:/other/pulls", digest_of(&[(2, "cccc", false)]));
         let mut state = PollState::default();
         let now = Instant::now();
         let request = request(vec![project("/app", &[]), project("/other", &[])]);
         run(&mut state, &script, &request, now, 1000);
         let answer = run(&mut state, &script, &request, now, 1060);
         assert_eq!(answer.changed, vec!["/app".to_owned()]);
+    }
+
+    #[test]
+    fn a_comment_that_moves_the_tag_but_not_the_digest_asks_nothing_and_keeps_the_new_tag() {
+        let script = Script::new();
+        script.will("/app/pulls", ok("one"));
+        script.will("/app/pulls", ok("two"));
+        script.will(
+            "digest:/app/pulls",
+            digest_of(&[(1, "aaaa", false), (2, "bbbb", true)]),
+        );
+        script.will(
+            "digest:/app/pulls",
+            digest_of(&[(1, "aaaa", false), (2, "bbbb", true)]),
+        );
+        let mut state = PollState::default();
+        let now = Instant::now();
+        let request = request(vec![project("/app", &[])]);
+        run(&mut state, &script, &request, now, 1000);
+        let answer = run(&mut state, &script, &request, now, 1060);
+        assert!(
+            answer.changed.is_empty(),
+            "same pull requests, same heads, same drafts"
+        );
+        assert_eq!(
+            script.digest_reads(),
+            2,
+            "the digest is read when the tag moves, not on a 304"
+        );
+        script.take_asked();
+        run(&mut state, &script, &request, now, 1120);
+        assert!(
+            script.take_asked()[0].contains(&"If-None-Match: W/\"two\"".to_owned()),
+            "the next minute sends the tag the comment moved it to"
+        );
+        assert_eq!(script.digest_reads(), 0, "a 304 reads no digest");
+    }
+
+    #[test]
+    fn a_new_push_a_draft_flip_an_opened_and_a_closed_pull_request_each_ask() {
+        let base = [(1, "aaaa", false), (2, "bbbb", false)];
+        for (what, next) in [
+            ("a push", vec![(1, "zzzz", false), (2, "bbbb", false)]),
+            ("a draft flip", vec![(1, "aaaa", true), (2, "bbbb", false)]),
+            (
+                "an opened pull request",
+                vec![(3, "cccc", false), (1, "aaaa", false), (2, "bbbb", false)],
+            ),
+            ("a pull request leaving the list", vec![(1, "aaaa", false)]),
+        ] {
+            let script = Script::new();
+            script.will("/app/pulls", ok("one"));
+            script.will("/app/pulls", ok("two"));
+            script.will("digest:/app/pulls", digest_of(&base));
+            script.will("digest:/app/pulls", digest_of(&next));
+            let mut state = PollState::default();
+            let now = Instant::now();
+            let request = request(vec![project("/app", &[])]);
+            run(&mut state, &script, &request, now, 1000);
+            let answer = run(&mut state, &script, &request, now, 1060);
+            assert_eq!(answer.changed, vec!["/app".to_owned()], "{what}");
+        }
+    }
+
+    #[test]
+    fn a_digest_that_cannot_be_read_is_a_failure_and_the_tag_is_not_kept() {
+        let script = Script::new();
+        script.will("/app/pulls", ok("one"));
+        script.will("digest:/app/pulls", Ok("not a list".to_owned()));
+        let mut state = PollState::default();
+        let answer = run(
+            &mut state,
+            &script,
+            &request(vec![project("/app", &[])]),
+            Instant::now(),
+            1000,
+        );
+        assert!(answer.changed.is_empty());
+        assert_eq!(state.pauses["/app"].kind, "network_or_rate_limit");
+        assert!(
+            state.tags.is_empty(),
+            "a baseline that was not completed is not kept"
+        );
     }
 
     #[test]

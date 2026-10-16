@@ -366,6 +366,7 @@ pub const REPOSITORY_FIELDS: &str = "nameWithOwner,id,visibility";
 pub fn allowed(arguments: &[&str]) -> bool {
     arguments == ["auth", "status"]
         || is_conditional_read(arguments)
+        || is_pull_digest_read(arguments)
         || matches!(
             arguments,
             ["pr", "list", "--state", "open", "--limit", PULL_REQUEST_LIMIT, "--json", OPEN_CHECK_FIELDS]
@@ -445,6 +446,33 @@ pub fn conditional_read_arguments(endpoint: &str, etag: Option<&str>) -> Option<
     }
     arguments.extend([CONDITIONAL_READ_BODY.to_owned(), endpoint.to_owned()]);
     Some(arguments)
+}
+
+/// What the poll keeps of the open pull request list: each pull request's
+/// number, head commit and draft flag, so a comment, a label, a review or a
+/// new `updated_at` does not look like a change. `gh` prints the one string.
+pub const PULL_DIGEST_JQ: &str = "map([.number,.head.sha,.draft])|tostring";
+
+/// `gh api --jq PULL_DIGEST_JQ repos/OWNER/NAME/pulls?state=open&per_page=100`:
+/// asked after the list's entity tag moved, to learn whether the pull
+/// requests themselves did.
+pub fn pull_digest_arguments(repository: &str) -> Option<Vec<String>> {
+    if !is_repository(repository) {
+        return None;
+    }
+    Some(vec![
+        "api".to_owned(),
+        "--jq".to_owned(),
+        PULL_DIGEST_JQ.to_owned(),
+        format!("repos/{repository}/pulls?state=open&per_page=100"),
+    ])
+}
+
+fn is_pull_digest_read(arguments: &[&str]) -> bool {
+    matches!(arguments, ["api", "--jq", PULL_DIGEST_JQ, endpoint]
+        if endpoint.strip_prefix("repos/")
+            .and_then(|rest| rest.strip_suffix("/pulls?state=open&per_page=100"))
+            .is_some_and(is_repository))
 }
 
 fn is_conditional_read(arguments: &[&str]) -> bool {
@@ -1086,6 +1114,36 @@ mod tests {
             "-H",
             "X-Other: 1",
             "--silent",
+            pulls
+        ]));
+    }
+
+    #[test]
+    fn the_pull_digest_read_is_the_open_list_of_one_repository_with_the_fixed_filter() {
+        let arguments = pull_digest_arguments("acme/app").expect("a repository");
+        let borrowed: Vec<&str> = arguments.iter().map(String::as_str).collect();
+        assert!(allowed(&borrowed), "{borrowed:?}");
+        assert!(pull_digest_arguments("../app").is_none());
+        assert!(pull_digest_arguments("ghe.example.com/acme/app").is_none());
+        let pulls = "repos/acme/app/pulls?state=open&per_page=100";
+        assert!(!allowed(&["api", "--jq", ".[]", pulls]));
+        assert!(!allowed(&[
+            "api",
+            "--jq",
+            PULL_DIGEST_JQ,
+            "repos/acme/app/pulls?state=all"
+        ]));
+        assert!(!allowed(&[
+            "api",
+            "--jq",
+            PULL_DIGEST_JQ,
+            "repos/../x/pulls?state=open&per_page=100"
+        ]));
+        assert!(!allowed(&[
+            "api",
+            "--paginate",
+            "--jq",
+            PULL_DIGEST_JQ,
             pulls
         ]));
     }
