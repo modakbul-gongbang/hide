@@ -2290,7 +2290,12 @@ fn a_childs_progress_counts_its_own_tasks_or_its_last_end_and_hides_while_one_is
     assert_eq!(states[3], ChildWork::Other);
     assert_eq!(fraction, Some(2));
     // Handed a new request, the finished child works again before any END
-    // judges it, so it no longer counts done.
+    // judges it, so it no longer counts done, though a read of its file has
+    // stamped the session's last record time.
+    store
+        .connection
+        .execute("UPDATE sessions SET ended_at=9000 WHERE id='done'", [])
+        .unwrap();
     store
         .apply_ledger_update(&LedgerUpdate::Title {
             session: done.clone(),
@@ -2302,6 +2307,27 @@ fn a_childs_progress_counts_its_own_tasks_or_its_last_end_and_hides_while_one_is
     let (states, fraction) = progress(&store);
     assert_eq!(states[0], ChildWork::Working);
     assert_eq!(fraction, Some(1));
+    // A new child at work before its first END is still unjudged: the head
+    // keeps the plain count rather than a fraction.
+    let fresh = child("fresh");
+    add(&mut store, &fresh, &session());
+    store
+        .apply_ledger_update(&LedgerUpdate::Title {
+            session: fresh.clone(),
+            native_title: None,
+            manual_title: None,
+            state: "working".into(),
+        })
+        .unwrap();
+    let record = store.ledger_record(&session()).unwrap();
+    let index = record
+        .children
+        .iter()
+        .position(|row| row.session == fresh)
+        .unwrap();
+    let progress = record.child_progress.unwrap();
+    assert_eq!(progress.children[index], ChildWork::Unjudged);
+    assert_eq!(progress.done, None);
 }
 
 #[test]

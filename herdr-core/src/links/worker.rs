@@ -1409,7 +1409,7 @@ fn publish_progress(store: &LinkStore, state: &mut State, sink: &impl Sink) {
             }
         }
     }
-    // A failed read is tried again on the next pass rather than taken as read.
+    // A failed read is not taken as read: the next summary pass reads again.
     state.progress_read = revision
         .filter(|_| !failed)
         .map(|revision| (revision, sessions));
@@ -1990,11 +1990,12 @@ mod tests {
         publish_progress(&store, &mut state, &sink);
         assert_eq!(seen.lock().unwrap().len(), 1);
         assert_eq!(seen.lock().unwrap()[0][0].total, 2);
-        // Nothing moved: no read, no publish.
-        let read = state.progress_read.clone();
+        // Nothing moved: no read, so a held answer the store would not give
+        // stays, and nothing is published.
+        state.progress = Vec::new();
         publish_progress(&store, &mut state, &sink);
         assert_eq!(seen.lock().unwrap().len(), 1);
-        assert_eq!(state.progress_read, read);
+        assert!(state.progress.is_empty());
         // A judged turn changes the store, so the pane is read and published again.
         ask(&mut store, 2, &["HTML 댓글"]);
         publish_progress(&store, &mut state, &sink);
