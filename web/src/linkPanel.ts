@@ -48,7 +48,7 @@ export const FOLD_SHOWN = 5;
  */
 export function foldTimeline<T>(entries: readonly T[], isSession: (entry: T) => boolean, isLive: (entry: T) => boolean, unfolded: boolean): { shown: readonly T[]; earlier: number } {
   const sessions = entries.filter(isSession);
-  if (unfolded || sessions.length < FOLD_AT) return { shown: entries, earlier: 0 };
+  if (sessions.length < FOLD_AT) return { shown: entries, earlier: 0 };
   let toHide = sessions.length - FOLD_SHOWN;
   const hidden = new Set<T>();
   for (const entry of sessions) {
@@ -57,7 +57,8 @@ export function foldTimeline<T>(entries: readonly T[], isSession: (entry: T) => 
     hidden.add(entry);
     toHide -= 1;
   }
-  return { shown: entries.filter((entry) => !hidden.has(entry)), earlier: hidden.size };
+  // Unfolded, the count stays so the button can fold the timeline again.
+  return { shown: unfolded ? entries : entries.filter((entry) => !hidden.has(entry)), earlier: hidden.size };
 }
 
 export type Blocked = { key: "links.why.worktree" | "links.why.agent" | "links.why.file" } | { key: "links.why.deviceOffline" | "links.why.deviceView"; device: string } | null;

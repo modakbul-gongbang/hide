@@ -5,7 +5,6 @@ import type { Catalog, Catalogs } from "../schema";
 // the Sessions tab. The core sends codes; these are the words for them.
 
 export const linksEnglish = {
-  "links.connections": "Links",
   "links.noIssue": "No linked issue",
   "links.source.closes": "Closes",
   "links.source.hide": "Hide link",
@@ -19,10 +18,7 @@ export const linksEnglish = {
   "links.failed.full": "The link record reached its size limit",
   "links.failed.newer": "A newer Hide wrote the link record",
   "links.failed.busy": "The link record is busy",
-  "links.working": "Working",
-  "links.now": "now",
   "links.goToPane": "Go to pane",
-  "links.waiting": "Waiting for your answer",
   "links.answer": "Answer",
   "links.created": "Created PR",
   "links.createdNumber": "#{{number}} created",
@@ -48,7 +44,6 @@ export const linksEnglish = {
 } as const;
 
 const ko = {
-  "links.connections": "연결",
   "links.noIssue": "연결된 이슈 없음",
   "links.source.closes": "Closes",
   "links.source.hide": "Hide 링크",
@@ -62,10 +57,7 @@ const ko = {
   "links.failed.full": "연결 기록이 용량 상한에 닿았어요",
   "links.failed.newer": "더 새 Hide가 쓴 연결 기록이에요",
   "links.failed.busy": "연결 기록이 사용 중이에요",
-  "links.working": "작업 중",
-  "links.now": "지금",
   "links.goToPane": "pane으로 가기",
-  "links.waiting": "답을 기다림",
   "links.answer": "답하러 가기",
   "links.created": "PR 만듦",
   "links.createdNumber": "#{{number}} 만듦",
@@ -91,7 +83,6 @@ const ko = {
 } satisfies Catalog<typeof linksEnglish>;
 
 const zhCN = {
-  "links.connections": "关联",
   "links.noIssue": "没有关联的议题",
   "links.source.closes": "Closes",
   "links.source.hide": "Hide 关联",
@@ -105,10 +96,7 @@ const zhCN = {
   "links.failed.full": "关联记录已达到容量上限",
   "links.failed.newer": "关联记录由更新版本的 Hide 写入",
   "links.failed.busy": "关联记录正被占用",
-  "links.working": "工作中",
-  "links.now": "现在",
   "links.goToPane": "前往窗格",
-  "links.waiting": "等待你的回答",
   "links.answer": "去回答",
   "links.created": "创建了 PR",
   "links.createdNumber": "创建了 #{{number}}",
@@ -134,7 +122,6 @@ const zhCN = {
 } satisfies Catalog<typeof linksEnglish>;
 
 const ja = {
-  "links.connections": "つながり",
   "links.noIssue": "つながったイシューなし",
   "links.source.closes": "Closes",
   "links.source.hide": "Hide リンク",
@@ -148,10 +135,7 @@ const ja = {
   "links.failed.full": "つながりの記録が容量の上限に達しました",
   "links.failed.newer": "新しい Hide が書いたつながりの記録です",
   "links.failed.busy": "つながりの記録が使用中です",
-  "links.working": "作業中",
-  "links.now": "今",
   "links.goToPane": "ペインへ移動",
-  "links.waiting": "回答待ち",
   "links.answer": "回答する",
   "links.created": "PR を作成",
   "links.createdNumber": "#{{number}} を作成",

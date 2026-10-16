@@ -165,7 +165,7 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     // then the timeless check row right after it), then the sessions oldest
     // first by their start, each keeping the request it was given in its
     // tooltip; the maker's row carries `Created PR` (B6, B7; PRD
-    // pr-card-and-session-record-redesign B4, B7).
+    // pr-card-and-session-record-redesign B4, B7). The maker session started before the PR was opened, so it stands first.
     const panel = await openCard(page, 31);
     await expect(panel).toBeVisible();
     const lines = panel.locator("[data-link-session]");
@@ -173,7 +173,7 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     expect(await lines.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session")))).toEqual(["s-maker", "s-review", "s-gone"]);
     await expect(panel.locator("[data-link-sessions]")).toHaveAttribute("data-link-sessions", "3");
     const rows = panel.locator("[data-link-session], [data-timeline-milestone]");
-    expect((await rows.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session") ?? item.getAttribute("data-timeline-milestone")))).slice(0, 3)).toEqual(["opened", "checks_passed", "s-maker"]);
+    expect((await rows.evaluateAll((items) => items.map((item) => item.getAttribute("data-link-session") ?? item.getAttribute("data-timeline-milestone")))).slice(0, 3)).toEqual(["s-maker", "opened", "checks_passed"]);
     const maker = panel.locator('[data-link-session="s-maker"]');
     await expect(maker).toHaveAttribute("data-link-role", "created");
     await expect(maker).toHaveAttribute("data-link-request", "검증 끝났으면 PR 올려 줘");

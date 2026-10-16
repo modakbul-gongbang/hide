@@ -4924,9 +4924,10 @@ impl PullRequestSnapshot {
 impl Serialize for PullRequestSnapshot {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeStruct;
-        // The head commit, the repository and the created and closed times
-        // stay off the wire: only the core compares them.
-        let mut out = serializer.serialize_struct("PullRequestSnapshot", 14)?;
+        // The head commit, the repository and the closed time stay off the
+        // wire: only the core compares them. The created time is the card's
+        // `PR 열림` milestone (PRD pr-card-and-session-record-redesign B9).
+        let mut out = serializer.serialize_struct("PullRequestSnapshot", 15)?;
         out.serialize_field("closing_issues", &self.closing_issues)?;
         out.serialize_field("title", &self.title)?;
         out.serialize_field("checks", &self.checks)?;
@@ -4938,6 +4939,7 @@ impl Serialize for PullRequestSnapshot {
         out.serialize_field("review", &self.review)?;
         out.serialize_field("is_draft", &self.is_draft)?;
         out.serialize_field("merged_at_unix_ms", &self.merged_at_unix_ms)?;
+        out.serialize_field("created_at_unix_ms", &self.created_at_unix_ms)?;
         out.serialize_field("updated_at_unix_ms", &self.updated_at_unix_ms)?;
         out.serialize_field("state", &self.state())?;
         out.serialize_field("work", &self.work)?;

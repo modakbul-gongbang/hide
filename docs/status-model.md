@@ -715,7 +715,7 @@ A project with no GitHub remote has no board, and `gh` missing or signed out is 
 
 ### A task's stage
 
-The session record's four-step stage (`작업 → PR → 검토 → 머지`) reuses this cached PR answer through the agents' PR summaries (`agent_state/tally/tasks.rs::stage`): with any pull request the bar stands at the least advanced one that is not merged, a draft, pending, failing or closed one at two steps and a mergeable one at three, and at four once every one merged; with none it is one step while a member works in a linked worktree, and a task that is only a conversation has no bar.
+A task's four-step stage (`작업 → PR → 검토 → 머지`), which feeds the task's state and which no screen draws since the session record's `지금` box replaced its bar (PRD pr-card-and-session-record-redesign B14), reuses this cached PR answer through the agents' PR summaries (`agent_state/tally/tasks.rs::stage`): with any pull request the bar stands at the least advanced one that is not merged, a draft, pending, failing or closed one at two steps and a mergeable one at three, and at four once every one merged; with none it is one step while a member works in a linked worktree, and a task that is only a conversation has no bar.
 A failed or unrequested lookup never becomes a merged or empty stage: a member whose PR state is unread adds nothing.
 The workspace inspector uses the canonical representative agent and disconnected override; inspection itself never acknowledges an agent.
 

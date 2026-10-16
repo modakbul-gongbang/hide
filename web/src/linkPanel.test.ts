@@ -38,7 +38,7 @@ describe("the sessions section", () => {
     expect(foldTimeline(five, isSession, isLive, false)).toEqual({ shown: five, earlier: 0 });
     const seven = [session(1), milestone, session(2, true), session(3), session(4), session(5), session(6), session(7)];
     expect(foldTimeline(seven, isSession, isLive, false)).toEqual({ shown: [milestone, session(2, true), session(4), session(5), session(6), session(7)], earlier: 2 });
-    expect(foldTimeline(seven, isSession, isLive, true).shown).toHaveLength(8);
+    expect(foldTimeline(seven, isSession, isLive, true)).toEqual({ shown: seven, earlier: 2 });
   });
 
   it("says why a line cannot resume, the agent first and the worktree last", () => {
