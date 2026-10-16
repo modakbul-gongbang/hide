@@ -5,6 +5,9 @@ import { viewRefusal } from "./viewLayout";
 
 type Shell = { rest: SnapshotRest | null };
 
+/** The failures of an open the keyboard may be waiting on. */
+const OPEN_FAILURES: ReadonlySet<string> = new Set(["file.open_failed", "browser.open_refused"]);
+
 /** The core's `last_error` when it is new in `state` (a different occurrence than `previous` carried), else null. */
 export function freshError(state: Shell, previous: Shell) {
   const error = state.rest?.status?.last_error;
@@ -41,8 +44,8 @@ export function watchErrorNotices(): () => void {
     const fresh = freshError(state, previous);
     const notice = errorNotice(fresh);
     if (notice) useUiStore.getState().setNotice(notice);
-    // A refused View action, or a file whose read failed, showed nothing, so the keyboard stays where it is
-    // rather than waiting for a move that will not land and taking a later, unrelated one.
-    if (viewRefusal(fresh) || fresh?.kind === "file.open_failed") useUiStore.getState().setViewFocusRequest(null);
+    // A refused View action, a file whose read failed or a refused page showed nothing, so the keyboard stays
+    // where it is rather than waiting for a move that will not land and taking a later, unrelated one.
+    if (viewRefusal(fresh) || OPEN_FAILURES.has(fresh?.kind ?? "")) useUiStore.getState().setViewFocusRequest(null);
   });
 }
