@@ -4,7 +4,7 @@ import type { Actions } from "./actions";
 import { AgentRowMark } from "./AgentRowMark";
 import { useAgentLogosShown } from "./agentLogoMode";
 import { agentProductName } from "./agentAdapters";
-import { forkLabel, markTone, markWords } from "./agentRow";
+import { forkLabel, leadWord, markTone, markWords } from "./agentRow";
 import { AgentForkMark } from "./components/fork-mark";
 import { hideAiWords, homeTurnLine } from "./hideAiOrigin";
 import { sessionsModel, type SessionsModel } from "./sessionPanel";
@@ -280,8 +280,11 @@ function SecondLine({ agent, owl }: { agent: AgentRow; owl: boolean }) {
   if (turn) return <div className={cn(indent, "flex min-w-0 text-micro text-warning")} data-session-line="home-turn"><span className="min-w-0 truncate">{homeTurnLine(t, turn)}</span></div>;
   if (!session.line) return null;
   const blocked = agent.status_code === "error";
+  // A stop leads with how it ended and a block with its word, as the sidebar's line does; work in progress says its sentence alone (status-marks D-04).
+  const word = agent.mark === "going" ? null : leadWord(t, agent);
+  const line = word ? `${word} · ${session.line}` : session.line;
   return <div className={cn(indent, "flex min-w-0 text-micro", blocked ? "text-warning" : "text-subtle-foreground")} data-session-line={blocked ? "blocked" : session.unfinished ? "unfinished" : "label"}>
-    <span className="min-w-0 truncate" title={session.line}>{session.line}</span>
+    <span className="min-w-0 truncate" title={line}>{line}</span>
   </div>;
 }
 

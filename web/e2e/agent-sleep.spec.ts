@@ -63,7 +63,7 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
 
     // B10: the row keeps its name with the moon.
     const row = page.locator(`nav[data-sidebar] [data-pane="${sleeper}"]`);
-    await expect(row.locator('[data-mark="☾"]')).toBeVisible({ timeout: 20_000 });
+    await expect(row.locator('[data-agent-status="sleeping"]')).toBeVisible({ timeout: 20_000 });
     await expect(row).toContainText("Agent two");
     // The row names its agent by product and draws no provider logo (agent-mark-quiet B1, B7).
     await expect(row.locator("[data-agent-mark]")).toHaveCount(0);
@@ -94,7 +94,7 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
       `claude --resume ${SESSION}`,
     );
     await expect(pane.locator("[data-pane-sleep]")).toHaveCount(0, { timeout: 30_000 });
-    await expect(row.locator('[data-mark="☾"]')).toHaveCount(0);
+    await expect(row.locator('[data-agent-status="sleeping"]')).toHaveCount(0);
     await screenshot(page, "agent-sleep-awake");
   } finally {
     daemon?.stop();

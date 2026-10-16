@@ -72,20 +72,20 @@ test(`${kind} ${kind === "cursor" ? "generated goal" : "native title"} and durab
       const question = { kind: "question", content: { text: "배포 대상을 골라주세요", choices: ["미리보기", "운영"], truncated: false } };
       appendOmpQuestion(session);
       await expect.poll(() => observed()?.user_turn, { timeout: 30_000 }).toEqual(question);
-      await expect(row.locator('[data-agent-status-mark="question"]')).toBeVisible();
+      await expect(row.locator('[data-agent-status="question"]')).toBeVisible();
       await row.click();
       await expect(page.locator(`[data-pane-view="${sourcePane}"] [data-pane-header-band]`)).toHaveAttribute("data-pane-header-band", "answer");
       await screenshot(page, "omp-current-title-question");
       appendOmpQuestion(session, true);
       await expect.poll(() => observed()?.user_turn, { timeout: 30_000 }).toBeUndefined();
-      await expect(row.locator('[data-agent-status-mark="question"]')).toHaveCount(0);
+      await expect(row.locator('[data-agent-status="question"]')).toHaveCount(0);
     }
     if (kind === "grok") {
       // Herdr reads Grok's plan approval as working; Grok's own state is the wait.
       const observed = () => agents.find((agent) => agent.pane_id === sourcePane);
       setGrokPlanApproval(session, true);
       await expect.poll(() => observed()?.user_turn, { timeout: 30_000 }).toEqual({ kind: "plan_approval", content: { text: GROK_PLAN, choices: [], truncated: false } });
-      await expect(row.locator('[data-agent-status-mark="approval"]')).toBeVisible();
+      await expect(row.locator('[data-agent-status="approval"]')).toBeVisible();
       await screenshot(page, "grok-plan-approval");
       setGrokPlanApproval(session, false);
       await expect.poll(() => observed()?.user_turn, { timeout: 30_000 }).toBeUndefined();
@@ -272,7 +272,7 @@ test("OpenCode's root session titles its row, waits on its question and wakes by
     await dumpOnFailure("OpenCode question native read", nativeReadState, () =>
       expect.poll(question, { message: "the native question reached the row", timeout: 30_000 })
         .toEqual({ kind: "question", content: { text: "어느 브랜치에 올릴까요?", choices: ["main", "release"], truncated: false } }));
-    await expect(page.locator(`[data-pane="${sourcePane}"] [data-agent-status-mark="question"]`).first()).toBeVisible();
+    await expect(page.locator(`[data-pane="${sourcePane}"] [data-agent-status="question"]`).first()).toBeVisible();
     await screenshot(page, "opencode-native-question");
     await reportOpenCodeState(herdr, sourcePane, "working");
     writeOpenCodeQuestion(database, "completed");

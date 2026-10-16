@@ -304,7 +304,7 @@ describe("checkoutCard", () => {
       { key: "path", label: "Path", value: "/h/repo.worktrees/feature" },
     ]);
     const folder = workspace("notes", { is_git: false });
-    expect(keys(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes", agent_summary: summary({}, { seen: 1 }) }), now, t))).toEqual(["agents", "path"]);
+    expect(keys(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes", agent_summary: summary({ going: 1 }, { working: 1 }) }), now, t))).toEqual(["agents", "path"]);
   });
 
   it("words the detached HEAD row and the commit age in the interface language", () => {

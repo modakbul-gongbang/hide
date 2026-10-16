@@ -132,15 +132,15 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(feature.locator("[data-checkout-age]")).toHaveText("now");
 
     // Session UI B5: checkout agents start open; the operator can fold them, and its
-    // status badge counts its one agent under the mark that agent's row draws,
-    // idle here. Line two is the purpose with the age ending it. The project's
+    // status badge counts its agents under the mark each row draws, and its one
+    // quiet agent draws none (status-marks B19). Line two is the purpose with the age ending it. The project's
     // badge counts both checkouts' agents.
     const featureToggle = feature.locator("[data-checkout-toggle]");
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await featureToggle.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "false");
     await expect(feature.locator("[data-checkout-agents-open]")).toHaveCount(0);
-    await expect(feature.locator('[data-checkout-status] [data-badge-part="idle"]')).toHaveText("1");
+    await expect(feature.locator("[data-checkout-status]")).toHaveCount(0);
     await expect(feature.locator("[data-purpose]")).toHaveText("Projects 탭 행 다시 그리기");
     const lineOf = async (part: Locator) => Math.round((await part.boundingBox())!.y);
     expect(await lineOf(feature.locator("[data-checkout-age]"))).toBeGreaterThan(await lineOf(feature.getByText("feature/sidebar-rows", { exact: true })));
@@ -451,7 +451,7 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
   }
 });
 
-test("Needs You and Done are raised above Pinned and stay in their tree, whatever is folded", async ({ page }) => {
+test("Needs You and To read are raised above Pinned and stay in their tree, whatever is folded", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -482,7 +482,7 @@ test("Needs You and Done are raised above Pinned and stay in their tree, whateve
     await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
     await expect(needsYou.locator('[data-section="needs_you"]')).toHaveText("Needs You · 1");
     await expect(done.locator(`[data-pane="${finished}"]`)).toBeVisible();
-    await expect(done.locator('[data-section="done"]')).toHaveText("Done · 1");
+    await expect(done.locator('[data-section="done"]')).toHaveText("To read · 1");
     // Needs You, then Done, then Pinned, at the top of the list; neither is past its cap, so nothing folds.
     const top = async (locator: Locator) => (await locator.boundingBox())!.y;
     expect(await top(needsYou)).toBeLessThan(await top(done));
@@ -536,7 +536,7 @@ test("Done stands still above the scrolled projects, and opening its first row m
     await finishFixtureTurn(herdr, panes[3]!, elsewhere);
     await finishFixtureTurn(herdr, panes[4]!, elsewhere);
     const done = page.locator('[data-raised-group="done"]');
-    await expect(done.locator('[data-section="done"]')).toHaveText("Done · 2", { timeout: 20_000 });
+    await expect(done.locator('[data-section="done"]')).toHaveText("To read · 2", { timeout: 20_000 });
     const list = page.locator("[data-project-list]");
     expect(await list.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
 
@@ -555,7 +555,7 @@ test("Done stands still above the scrolled projects, and opening its first row m
     const slot = await top(rows.first());
     await rows.first().locator("[data-agent-open]").click();
     await expect(done.locator(`[data-pane="${first}"]`)).toHaveCount(0, { timeout: 20_000 });
-    await expect(done.locator('[data-section="done"]')).toHaveText("Done · 1");
+    await expect(done.locator('[data-section="done"]')).toHaveText("To read · 1");
     expect(await top(done)).toBe(held);
     expect(await top(done.locator(`li[data-pane="${second}"]`))).toBe(slot);
     await screenshot(page, "projects-raised-held");
@@ -658,7 +658,7 @@ test("a project whose agents all sleep folds, and stays open once opened", async
     // B4, B5: opened, the checkout and its sleeping row show, and the opening survives a reload.
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect(project.locator(`[data-pane="${napPane}"] [data-mark="☾"]`)).toBeVisible();
+    await expect(project.locator(`[data-pane="${napPane}"] [data-agent-status="sleeping"]`)).toBeVisible();
     await page.reload();
     await expect(project.locator("[data-project-toggle]")).toHaveAttribute("aria-expanded", "true", { timeout: 20_000 });
   } finally {

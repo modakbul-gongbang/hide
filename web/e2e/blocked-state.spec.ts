@@ -25,16 +25,16 @@ async function finishTwoTurns(herdr: HerdrFixture, [blocked, unfinished]: [strin
  */
 async function afterNextHerdrChange(herdr: HerdrFixture, page: Page, pane: string) {
   await setFixtureLifecycle(herdr, pane, "working");
-  await expect(sidebarRow(page, pane).locator('[data-agent-status-mark="working"]')).toBeVisible({ timeout: 30_000 });
+  await expect(sidebarRow(page, pane).locator('[data-agent-status="working"]')).toBeVisible({ timeout: 30_000 });
 }
 
 /** The row is read: its mark dimmed and it is not among the Needs You rows. */
 async function expectRead(page: Page, pane: string, mark: string) {
-  await expect(sidebarRow(page, pane).locator(`[data-agent-status-mark="${mark}"]`)).toHaveClass(/opacity-\(--opacity-read-status\)/);
+  await expect(sidebarRow(page, pane).locator(`[data-agent-status="${mark}"]`)).toHaveClass(/opacity-\(--opacity-read-status\)/);
   await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${pane}"]`)).toHaveCount(0);
 }
 
-test("a blocked turn draws a triangle in Needs You that dims once read, and an unfinished turn a half-disc outside it", async ({ page }) => {
+test("a blocked turn draws the turn mark in Needs You that dims once read, and an unfinished turn a plain dot to read outside it", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -44,15 +44,16 @@ test("a blocked turn draws a triangle in Needs You that dims once read, and an u
     daemon = await startHided(herdr, "blocked-state");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     const row = (pane: string) => sidebarRow(page, pane);
-    await expect(row(blocked).locator('[data-agent-status-mark="error"]')).toBeVisible({ timeout: 30_000 });
+    await expect(row(blocked).locator('[data-agent-status="error"]')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${blocked}"]`)).toBeVisible();
-    await expect(row(unfinished).locator('[data-agent-status-mark="stopped"]')).toBeVisible();
+    // Work left is a plain dot to read with its own word, never the green finish (status-marks D-03, D-04).
+    await expect(row(unfinished).locator('[data-agent-status="unfinished"]')).toHaveAttribute("data-agent-status-mark", "unread");
     await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${unfinished}"]`)).toHaveCount(0);
-    await expect(row(unfinished)).toContainText("Stopped");
+    await expect(row(unfinished)).toContainText("Unfinished");
     await row(blocked).locator("[data-agent-open]").first().click();
     await expect(page.locator(`[data-pane-view="${blocked}"]`)).toHaveAttribute("data-focused", "true");
-    // Read (B2): the block leaves Needs You for Seen, its triangle dims and its cause stays.
-    const mark = row(blocked).locator('[data-agent-status-mark="error"]');
+    // Read (B2): the block leaves Needs You for Seen, its turn mark dims and its cause stays.
+    const mark = row(blocked).locator('[data-agent-status="error"]');
     await expect(mark).toHaveClass(/opacity-\(--opacity-read-status\)/);
     await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${blocked}"]`)).toHaveCount(0);
     await expect(row(blocked)).toContainText("디스크가 가득 차 멈췄어요");
@@ -84,7 +85,7 @@ test("a read block stays read when Herdr marks its tab seen after the operator m
     gate = await herdrGate(herdr);
     daemon = await startHided({ ...herdr, socket: gate.socket }, "blocked-state-seen-late");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(sidebarRow(page, blocked).locator('[data-agent-status-mark="error"]')).toBeVisible({ timeout: 30_000 });
+    await expect(sidebarRow(page, blocked).locator('[data-agent-status="error"]')).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(`[data-raised-group="needs_you"] [data-pane="${blocked}"]`)).toBeVisible();
 
     const held = gate.arm("pane.focus");

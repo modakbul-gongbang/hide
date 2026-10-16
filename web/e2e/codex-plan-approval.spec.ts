@@ -114,14 +114,14 @@ test("a Codex plan waiting for approval holds its row in Needs You until the nex
     await moveState(herdr, pane, "unknown");
     const waiting = page.locator(`[data-raised-group="needs_you"] [data-pane="${pane}"]`);
     await expect(waiting).toBeVisible({ timeout: 20_000 });
-    await expect(waiting.locator('[data-mark="!"]')).toBeVisible();
+    await expect(waiting.locator('[data-mark="turn"]')).toBeVisible();
     await screenshot(page, "codex-plan-approval-waiting");
 
     // B4: approving starts the next turn; once Herdr's state moves, the row
     // leaves Needs You.
     fs.appendFileSync(rollout, event("task_started", "turn-2", { collaboration_mode_kind: "default" }) + person("Implement the plan."));
     await moveState(herdr, pane, "working");
-    await expect(row.locator('[data-mark="●"]')).toBeVisible({ timeout: 20_000 });
+    await expect(row.locator('[data-mark="going"]')).toBeVisible({ timeout: 20_000 });
     await moveState(herdr, pane, "unknown");
     // A state not read yet shows no wait either, so the row's absence counts
     // only once the read for this state has folded the approving turn.

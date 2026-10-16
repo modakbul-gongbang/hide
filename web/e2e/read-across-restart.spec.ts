@@ -15,15 +15,15 @@ type PaneRow = { result: { pane: { tokens?: Record<string, string> } } };
 /** The mark naming the server the core read `pane` on, as Herdr holds it (`wire::SERVER_MARK_TOKEN`). */
 const serverMark = (herdr: HerdrFixture, pane: string) => (herdr.run(["pane", "get", pane]) as PaneRow).result.pane.tokens?.hide_server;
 
-/** Read: the row asks for nothing (`data-attention`), and its finished turn draws as idle. */
+/** Read: the row asks for nothing (`data-attention`), and its finished turn is quiet. */
 async function expectRead(page: Page, pane: string) {
   await expect(sidebarRow(page, pane)).toHaveAttribute("data-attention", "false");
-  await expect(sidebarRow(page, pane).locator('[data-agent-status-mark="idle"]')).toBeVisible();
+  await expect(sidebarRow(page, pane).locator('[data-agent-status-mark="quiet"]')).toBeVisible();
 }
 
-/** Done: an unread finished turn. */
+/** To read: an unread finished turn (a dot; green only on a label's finished verdict). */
 async function expectDone(page: Page, pane: string) {
-  await expect(sidebarRow(page, pane).locator('[data-agent-status-mark="done"]')).toBeVisible({ timeout: 30_000 });
+  await expect(sidebarRow(page, pane).locator('[data-agent-status-mark="unread"], [data-agent-status-mark="done"]').first()).toBeVisible({ timeout: 30_000 });
   await expect(sidebarRow(page, pane)).toHaveAttribute("data-attention", "true");
 }
 

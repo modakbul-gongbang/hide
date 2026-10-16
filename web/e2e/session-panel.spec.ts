@@ -92,11 +92,11 @@ test("Sessions groups, read rules, child navigation and durable resolution share
     const row = (pane: string) => panel.locator(`[data-session-row="${pane}"]`);
     const group = (name: string) => panel.locator(`[data-session-group="${name}"]`);
     const head = (name: string) => group(name).locator('[data-session-focus="group"]');
-    // B26 to B32: Needs You asks with the verb; unfinished work is Idle with ◐, a read question rests in Idle unfolded; a
+    // B26 to B32: Needs You asks with the verb; unfinished work is Idle with its line led by its word, a read question rests in Idle unfolded; a
     // chevron opens children, whose Resolve slot keeps the root's time column; Resolved holds a resolved row, folded.
     await expect(group("needs_you").locator(`[data-session-row="${asking}"]`)).toContainText("Approve", { timeout: 30_000 });
     await expect(group("needs_you").locator(`[data-session-row="${question}"]`)).toContainText("Answer", { timeout: 30_000 });
-    await expect(group("idle").locator(`[data-session-row="${stopped}"] [data-session-unfinished]`)).toBeVisible({ timeout: 30_000 });
+    await expect(group("idle").locator(`[data-session-row="${stopped}"] [data-session-line="unfinished"]`)).toBeVisible({ timeout: 30_000 });
     await expect(row(stopped)).toContainText("테스트 환경이 없어 멈췄어요");
     await expect(group("working").locator(`[data-session-row="${parent}"]`)).toBeVisible();
     await expect(row(child)).toHaveCount(0);

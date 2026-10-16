@@ -162,7 +162,8 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(card.locator('[data-checkout-card-row="review"]')).toHaveText("Approved");
     await expect(card.locator('[data-checkout-card-row="checks"]')).toHaveText("Passing");
     await expect(card.locator('[data-checkout-card-row="branch"]')).toHaveText(BRANCH);
-    await expect(card.locator('[data-checkout-card-row="agents"] [data-badge-part="idle"]')).toHaveText("1");
+    // Its one agent is quiet, which no mark counts (status-marks B19).
+    await expect(card.locator('[data-checkout-card-row="agents"]')).toHaveCount(0);
     await expect(card.locator('[data-checkout-card-row="commit"]')).toHaveText("now");
     await expect(card.locator("[data-checkout-card-open]")).toHaveText("Open PR");
     expect(await rowGeometry(featureRow, project.locator("[data-inactive-checkouts]").or(project.locator("[data-checkout-row]").last()), parts)).toEqual(atRest);

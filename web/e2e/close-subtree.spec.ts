@@ -129,8 +129,14 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     // The root's chevron opens its children in place (agent-hierarchy-screens B10), each with its own mark.
     const chevron = page.locator(`nav[data-sidebar] [data-pane="${target}"] [data-tree-chevron="${target}"]`).first();
     await chevron.click();
-    for (const [pane, status] of [[working, "working"], [asking, "question"], [finished, "done"], [quiet, "idle"]]) {
-      await expect(page.locator(`nav[data-sidebar] [data-pane="${pane}"] [data-mark]`).first()).toHaveAttribute("data-mark", { working: "●", question: "?", done: "✓", idle: "○" }[status]!, { timeout: 30_000 });
+    // A delegated child draws only in progress or quiet (status-marks B24); its state word is on the mark.
+    for (const [pane, status] of [[working, "working"], [asking, "question"]]) {
+      await expect(page.locator(`nav[data-sidebar] [data-pane="${pane}"] [data-agent-status]`).first()).toHaveAttribute("data-agent-status", status, { timeout: 30_000 });
+    }
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${working}"] [data-mark]`).first()).toHaveAttribute("data-mark", "going");
+    await expect(page.locator(`nav[data-sidebar] [data-pane="${asking}"] [data-mark]`).first()).toHaveAttribute("data-mark", "quiet");
+    for (const pane of [finished, quiet]) {
+      await expect(page.locator(`nav[data-sidebar] [data-pane="${pane}"] [data-agent-status]`).first()).not.toHaveAttribute("data-agent-status", "unknown", { timeout: 30_000 });
     }
     await expect(page.locator(`[data-agent-open="${target}"]`).first()).not.toHaveAccessibleName(/\bUnknown\b/);
     await chevron.click();
@@ -274,7 +280,7 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     const row = confirm.locator(`[data-stop-work-row="${target}"]`);
     const opacity = () => row.evaluate((node) => Number(getComputedStyle(node).opacity));
     // The working state has to be in before the close asks: a quiet pane would close at once.
-    await expect(page.locator(`[data-pane="${target}"] [data-agent-status-mark="working"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`[data-pane="${target}"] [data-agent-status="working"]`)).toBeVisible({ timeout: 30_000 });
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press(chord("close_tab"));
     await expect(row).toHaveAttribute("data-stop-work-state", "active");
