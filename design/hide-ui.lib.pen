@@ -21813,7 +21813,7 @@
                   "textGrowth": "fixed-width-height",
                   "width": "fill_container(0)",
                   "height": 16,
-                  "content": "프로젝트 전체에 적용할까요?",
+                  "content": "질문 · 프로젝트 전체에 적용할까요?",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-caption",
                   "fontWeight": "normal"
@@ -22073,7 +22073,7 @@
                 },
                 "sar-line": {
                   "enabled": true,
-                  "content": "hide 앱을 다시 열었고 정상 실행 중",
+                  "content": "끝남 · hide 앱을 다시 열었고 정상 실행 중",
                   "fill": "$--foreground"
                 },
                 "sar-turn": {
@@ -22129,7 +22129,7 @@
                 },
                 "sar-line": {
                   "enabled": true,
-                  "content": "hide 앱을 다시 열었고 정상 실행 중",
+                  "content": "끝남 · hide 앱을 다시 열었고 정상 실행 중",
                   "fill": "$--foreground"
                 },
                 "sar-letters": {
@@ -22295,7 +22295,7 @@
                 },
                 "sar-line": {
                   "enabled": true,
-                  "content": "디스크 여유가 부족해 검증을 못 함",
+                  "content": "막힘 · 디스크 여유가 부족해 검증을 못 함",
                   "fill": "$--warning"
                 },
                 "sar-turn": {
@@ -22351,7 +22351,7 @@
                 },
                 "sar-line": {
                   "enabled": true,
-                  "content": "디스크 여유가 부족해 검증을 못 함",
+                  "content": "막힘 · 디스크 여유가 부족해 검증을 못 함",
                   "fill": "$--warning",
                   "opacity": 0.55
                 },
@@ -22745,7 +22745,7 @@
                 },
                 "sar-line": {
                   "enabled": true,
-                  "content": "프로덕션 배포를 승인해 주세요"
+                  "content": "승인 · 프로덕션 배포를 승인해 주세요"
                 },
                 "sar-place": {
                   "enabled": true
