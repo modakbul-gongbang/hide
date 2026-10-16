@@ -392,9 +392,11 @@ pub enum FindDialect {
 pub enum SkillLocation {
     Shared,
     Claude,
-    /// The agent's own global skill folder, which it alone reads: agy reads
-    /// neither `~/.agents/skills` nor `~/.claude/skills`, only
-    /// `~/.gemini/antigravity-cli/skills`.
+    /// The agent's own global skill folder, which it alone reads: agy's model
+    /// gets neither `~/.agents/skills` nor `~/.claude/skills`, and of agy's
+    /// own folders only `~/.gemini/config/skills` (agy 1.4.0, measured: its
+    /// documented `~/.gemini/antigravity-cli/skills` is listed by `/skills`
+    /// but not given to the model).
     Antigravity,
 }
 

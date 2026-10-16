@@ -37,7 +37,9 @@ pub enum SkillDir {
     Shared,
     /// `~/.claude/skills`: Claude Code does not read the shared folder.
     Claude,
-    /// `~/.gemini/antigravity-cli/skills`: agy reads neither of the others.
+    /// `~/.gemini/config/skills`: the one global folder whose skills agy's
+    /// model is given (agy 1.4.0), beside Hide's hook block in that folder.
+    /// `~/.gemini/antigravity-cli/skills` is the operator's and never written.
     Antigravity,
 }
 
@@ -59,7 +61,7 @@ impl SkillDir {
         match self {
             Self::Shared => (&[".agents"], "skills"),
             Self::Claude => (&[".claude"], "skills"),
-            Self::Antigravity => (&[".gemini", "antigravity-cli"], "skills"),
+            Self::Antigravity => (&[".gemini", "config"], "skills"),
         }
     }
 
