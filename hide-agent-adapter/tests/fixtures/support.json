@@ -274,5 +274,34 @@
       "session": "no_such_data",
       "project": "no_such_data"
     }
+  },
+  {
+    "id": "antigravity",
+    "hook": {
+      "sample": "hide-agent-hooks/tests/fixtures/antigravity-pre-tool-use.json"
+    },
+    "session": {
+      "sample": "hide-session/tests/fixtures/adapters/antigravity-1.3.6/transcript_full.jsonl"
+    },
+    "features": [],
+    "factory": {
+      "direct_ask": "available",
+      "user_turn": "available",
+      "turn_end_and_answer": "available",
+      "startup_guidance": "available",
+      "resume": "available",
+      "next_prompt_letters": "available"
+    },
+    "usage": {
+      "five_hour": "no_such_data",
+      "weekly": "antigravity_usage",
+      "scoped": "antigravity_usage",
+      "monthly": "no_such_data",
+      "tokens": "antigravity_transcript",
+      "cost": "no_such_data",
+      "models": "no_such_data",
+      "session": "usage_record",
+      "project": "usage_record"
+    }
   }
 ]
