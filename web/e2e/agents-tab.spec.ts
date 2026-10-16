@@ -1,5 +1,5 @@
 // Settings > Agents on an isolated pinned Herdr and a hided that runs the install kit (PRD settings-cleanup
-// B8 to B20): the seven supported agents of this Mac, the ones whose program the private HOME holds under
+// B8 to B20): the eight supported agents of this Mac, the ones whose program the private HOME holds under
 // Installed and the rest folded under Not installed, a switch that writes and removes Hide's own entries,
 // the Partial popover from its chip by keyboard, and a hook the operator removed shown on its row with
 // Reinstall.
@@ -50,11 +50,11 @@ test("lists the installed agents with a status and a switch, and folds the other
     const sent = countSent(page);
     const list = await openAgents(page, daemon);
     // B8, B9: the programs the home holds are Installed, in the fixed order; the rest are folded.
-    await expect(list.locator("[data-agent-row]")).toHaveCount(7, { timeout: 60_000 });
+    await expect(list.locator("[data-agent-row]")).toHaveCount(8, { timeout: 60_000 });
     await expect(list).toContainText("Installed 5");
-    await expect(list).toContainText("Not installed 2");
+    await expect(list).toContainText("Not installed 3");
     const rows = await list.locator("[data-agent-row]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-agent-row")));
-    expect(rows).toEqual([`${daemon.node}:claude-code:on`, `${daemon.node}:codex:on`, `${daemon.node}:opencode:off`, `${daemon.node}:omp:off`, `${daemon.node}:cursor:off`, "grok:not-installed", "pi:not-installed"]);
+    expect(rows).toEqual([`${daemon.node}:claude-code:on`, `${daemon.node}:codex:on`, `${daemon.node}:opencode:off`, `${daemon.node}:omp:off`, `${daemon.node}:cursor:off`, "grok:not-installed", "pi:not-installed", "antigravity:not-installed"]);
     // One machine: no switch at the top, and no 'Skill and session hook' line on any row (B11, B12).
     await expect(page.locator("[data-agents-machines]")).toHaveCount(0);
     await expect(list).not.toContainText("Skill and session hook");
@@ -71,7 +71,7 @@ test("lists the installed agents with a status and a switch, and folds the other
     const fold = list.locator("[data-agents-not-installed]");
     await expect(fold).not.toHaveAttribute("open", "");
     await fold.locator("summary").click();
-    await expect(fold.locator("[data-agent-install]")).toHaveCount(2);
+    await expect(fold.locator("[data-agent-install]")).toHaveCount(3);
     await expect(fold.locator('[data-agent-install="pi"]')).toHaveAttribute("href", "https://pi.dev/");
     await screenshot(page, "agents-list");
 
@@ -82,7 +82,7 @@ test("lists the installed agents with a status and a switch, and folds the other
     await list.locator("[data-agents-check]").click();
     await expect.poll(() => sent.get("kit_check") ?? 0).toBe(opened + 1);
     await expect(list.locator("[data-agents-check]")).toHaveAttribute("data-agents-check", "idle");
-    await expect(list.locator("[data-agent-row]")).toHaveCount(7);
+    await expect(list.locator("[data-agent-row]")).toHaveCount(8);
   } finally {
     daemon.stop();
     herdr.stop();
@@ -158,7 +158,7 @@ test("reads without sideways scrolling in Korean and English, light and dark, on
   const { herdr, daemon } = await start("agents-narrow");
   try {
     const list = await openAgents(page, daemon);
-    await expect(list.locator("[data-agent-row]")).toHaveCount(7, { timeout: 60_000 });
+    await expect(list.locator("[data-agent-row]")).toHaveCount(8, { timeout: 60_000 });
     // The smallest window (PRD settings-left-nav B13): the list keeps its width beside the page.
     await page.setViewportSize({ width: 720, height: 1000 });
     await list.locator("[data-agents-not-installed] summary").click();
