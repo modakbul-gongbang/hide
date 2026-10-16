@@ -284,6 +284,12 @@ struct CatalogState {
     /// to publish even when it changes no cwd; a publish that ran clears it
     /// (PRD grid-ahead-of-herdr D-12).
     held_for_cwd: bool,
+    /// The cwd the last publish showed for each pane whose own cwd Herdr
+    /// had not confirmed, a sibling's standing in. An answer that leaves the
+    /// pane at a different cwd than the screen shows has to publish even
+    /// when it changes nothing in the replica. At most
+    /// `UNCONFIRMED_CWD_LIMIT` panes wait, so at most that many are kept.
+    stand_ins: Vec<(String, String)>,
 }
 
 impl CatalogState {

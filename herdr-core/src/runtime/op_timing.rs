@@ -251,9 +251,11 @@ impl OpTimings {
         }
     }
 
-    /// A resize of `pane_id` went out: every drawn record waiting for its
-    /// frame after a resize now counts the next one. A record not drawn yet
-    /// is one the shell has not been given, so the resize is another's.
+    /// A resize of `pane_id` went out: every record waiting for its frame
+    /// after a resize now counts the next one, once the shell has been
+    /// given its layout, drawn ahead or applied from Herdr (an operation
+    /// with no prediction is never drawn). A record given neither yet is
+    /// one the shell cannot have fitted to, so the resize is another's.
     /// Says whether any record started waiting, so the caller asks the
     /// pane's node for that frame.
     pub(super) fn resize_sent(&mut self, pane_id: &str) -> bool {
@@ -262,7 +264,7 @@ impl OpTimings {
             if let Some((pane, true)) = &record.frame_pane
                 && pane == pane_id
                 && !record.resize_sent
-                && record.has(Stage::Drawn)
+                && (record.has(Stage::Drawn) || record.has(Stage::Applied))
             {
                 record.resize_sent = true;
                 started = true;
