@@ -412,7 +412,7 @@ function MissedLine({ missed, session, cwd, owner, actions }: { missed: MissedWo
   </div>;
 }
 
-/** The Sessions panel's group: an open missed item with its session's name and kind, where it was found. */
+/** The Overview backlog's missed group (D-52): an open missed item with its session's name and kind, where it was found. */
 export function MissedRow({ missed, record, actions }: { missed: MissedWork; record: Pick<RecordValue, "session" | "title" | "cwd">; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   return <li className="min-w-0 py-xs">

@@ -7,6 +7,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { FIRST_GOAL, MISSED, NEXT_GOAL, nextWork, seedFirstWork, workFixture, workRepositoryReady } from "./session-work-fixture";
 import { enterWorkspace, showProjectRow, taskRow } from "./wire";
 import { chord } from "./chords";
+import { openOverview } from "./overview-entry";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -85,6 +86,21 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await missed.hover();
     await missed.getByRole("button", { name: "Undo", exact: true }).click();
     await expect(missed).toHaveAttribute("data-missed-status", "open");
+    // The device's open missed work also folds above the Overview backlog,
+    // newest first, and 무시 there closes the same item (PRD sidebar-task-lens B52).
+    await openOverview(page, "backlog");
+    const group = page.locator("[data-open-missed]");
+    await expect(group.locator("[data-missed-work]")).toHaveCount(0);
+    await group.locator("[data-open-missed-toggle]").click();
+    const rows = group.locator("[data-missed-work]");
+    await expect(rows).toHaveCount(2);
+    await expect(rows.last()).toContainText(MISSED);
+    await rows.last().getByRole("button", { name: "Dismiss", exact: true }).click();
+    await expect(rows).toHaveCount(1);
+    // Closing the Overview shows the Workspace again, its slot still holding the record.
+    await page.getByRole("button", { name: "Close Overview", exact: true }).click();
+    await expect(page.locator("[data-overview-page]")).toHaveCount(0);
+    await expect(missed).toHaveAttribute("data-missed-status", "dismissed");
     await page.keyboard.press(chord("search"));
     await page.locator("[data-palette-input]").fill(NEXT_GOAL);
     const hits = page.locator('[data-palette-group="sessions"]');
@@ -105,6 +121,10 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await expect(record.locator('[data-record-child]')).toContainText('Claude');
     // Only the child's pull request names its maker; the session's own say nothing.
     await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
+    // With summaries off the backlog draws no missed line, though one is still open (B52).
+    await openOverview(page, "backlog");
+    await expect(page.locator("[data-backlog-section]").first()).toBeVisible();
+    await expect(page.locator("[data-open-missed]")).toHaveCount(0);
   } finally { daemon?.stop(); herdr.stop(); }
 });
 

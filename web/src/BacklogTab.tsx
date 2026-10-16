@@ -10,12 +10,15 @@ import { Hint } from "./components/ui/tooltip";
 import { readsHere } from "./devices";
 import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
+import { summariesEnabled } from "./hideAi";
 import { cn } from "./lib/utils";
 import { ageWords } from "./overviewLens";
 import { originOf, useBacklogOrigin } from "./backlogOrigin";
 import { backlogLabels, backlogOf, BACKLOG_SHOWN, backlogTitle, destinationOf, filterRows, pendingItems, startedKeys, titleLeft, undoRetryable, type BacklogRow } from "./overviewBacklog";
 import { isMemoKey, itemToken, projectOrder } from "./overviewTasks";
 import { issueDate, type BoardProject } from "./projectBoard";
+import { MissedRow } from "./SessionRecord";
+import { openMissedWork, workKey } from "./sessionWork";
 import { issueSourceChoices } from "./settings";
 import { projectIssueSource, settingsTarget } from "./projectSettings";
 import type { BacklogItem, Workspace } from "./snapshot";
@@ -40,8 +43,33 @@ export function OverviewBacklog({ projects, actions }: { projects: readonly Boar
     // One grid for every project: each input row takes the shared hint
     // column, so the inputs end at the same x whatever their hint says.
     <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-sm gap-y-lg px-lg py-md" data-overview-backlog="true">
+      <MissedGroup projects={projects} actions={actions} />
       {order.map((project) => (readsHere(project, devices) ? <BacklogSection key={project.id} project={project} actions={actions} /> : <DialedSection key={project.id} project={project} />))}
     </div>
+  );
+}
+
+/**
+ * The device's open missed work above the projects (PRD sidebar-task-lens
+ * D-52, B52): folded to `놓친 일 N ›`, newest first when opened, each row with
+ * its `백로그로` and `무시`; no line while none is open or Hide AI is off.
+ */
+function MissedGroup({ projects, actions }: { projects: readonly BoardProject[]; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const [open, setOpen] = useState(false);
+  const enabled = useShellStore((s) => summariesEnabled(s.rest?.status?.background_ai));
+  const links = useShellStore((s) => s.linkSummaries);
+  const missed = useMemo(() => (enabled ? openMissedWork(projects.flatMap((project) => links?.projects[project.workspace.id]?.work ?? [])) : []), [enabled, projects, links]);
+  if (!missed.length) return null;
+  return (
+    <section className="col-span-full" aria-label={t("sessionWork.count", { count: missed.length })} data-open-missed="true">
+      <button type="button" className="flex items-center gap-xs rounded-xs px-xs py-xs text-caption text-warning outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" aria-expanded={open} onClick={() => setOpen(!open)} data-open-missed-toggle="true">
+        <FlagIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+        {t("sessionWork.count", { count: missed.length })}
+        {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
+      </button>
+      {open ? <ul className="px-xs">{missed.map(({ owner, item }) => <MissedRow key={`${workKey(owner.session)}:${item.id}`} missed={item} record={owner} actions={actions} />)}</ul> : null}
+    </section>
   );
 }
 
