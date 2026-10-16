@@ -1,3 +1,5 @@
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import { appScheme, browserPartition, isLocalNetworkHost, localPageRequest, isPopup, loadable, popupBounds, MAX_AUTHORIZED_SCOPES, MAX_SYNCED_DISPLAYS, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
 
@@ -190,7 +192,10 @@ describe("keeping pages alive", () => {
 });
 
 describe("what a local HTML page may load", () => {
-  const inside = (file: string) => file.startsWith("/checkout/");
+  // Paths are built for the system the test runs on: `file:///checkout/...` is no absolute path on Windows.
+  const root = path.resolve("/checkout");
+  const inside = (file: string) => file.startsWith(root + path.sep);
+  const fileUrl = (...parts: string[]) => pathToFileURL(path.resolve(...parts)).href;
   const decide = (url: string, type = "image") => localPageRequest(url, type, inside);
 
   it("names this machine and private networks, in every spelling a URL normalizes to", () => {
@@ -206,14 +211,14 @@ describe("what a local HTML page may load", () => {
   });
 
   it("loads the page's own address, and files, styles, scripts, images and frames of its checkout", () => {
-    expect(decide("file:///elsewhere/page.html", "mainFrame")).toEqual({ cancel: false });
-    for (const type of ["image", "stylesheet", "script", "font", "media", "subFrame"]) expect(decide("file:///checkout/a/b.png", type), type).toEqual({ cancel: false });
+    expect(decide(fileUrl("/elsewhere/page.html"), "mainFrame")).toEqual({ cancel: false });
+    for (const type of ["image", "stylesheet", "script", "font", "media", "subFrame"]) expect(decide(fileUrl(root, "a", "b.png"), type), type).toEqual({ cancel: false });
   });
 
   it("refuses a file outside its checkout, and any read of a file by a script", () => {
-    for (const type of ["image", "script", "subFrame", "stylesheet"]) expect(decide("file:///etc/hosts", type), type).toEqual({ cancel: true, boundary: "file" });
-    expect(decide("file:///checkout/../etc/hosts")).toEqual({ cancel: true, boundary: "file" });
-    for (const type of ["xhr", "webSocket", "ping", "other"]) expect(decide("file:///checkout/a.json", type), type).toEqual({ cancel: true, boundary: "file" });
+    for (const type of ["image", "script", "subFrame", "stylesheet"]) expect(decide(fileUrl("/etc/hosts"), type), type).toEqual({ cancel: true, boundary: "file" });
+    expect(decide(`${pathToFileURL(root).href}/../etc/hosts`)).toEqual({ cancel: true, boundary: "file" });
+    for (const type of ["xhr", "webSocket", "ping", "other"]) expect(decide(fileUrl(root, "a.json"), type), type).toEqual({ cancel: true, boundary: "file" });
     expect(decide("file://server/share/a.png")).toEqual({ cancel: true, boundary: "file" });
   });
 
