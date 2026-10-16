@@ -865,11 +865,15 @@ fn run_coordinator(
                         let confirmed =
                             result.and_then(|cwds| apply_pane_cwds(&context, current, cwds));
                         match confirmed {
-                            Ok(_) => {
+                            Ok(changed) => {
                                 let awaiting = current.panes_awaiting_cwd();
                                 if !awaiting.is_empty() {
                                     // A pane announced while this read was out.
                                     sync_reader.ask(generation, SyncRead::PaneCwds(awaiting));
+                                } else if !pane_cwds_answer_publishes(changed, &catalog_cache) {
+                                    // The stand-in already published what
+                                    // this answer confirms (PRD
+                                    // grid-ahead-of-herdr D-12).
                                 } else if !publish_replica(
                                     &context,
                                     current,
@@ -1050,6 +1054,15 @@ fn sweep_subagent_counters(home: &std::path::Path, replica: &SessionReplica) {
             "message": error.to_string(),
         })),
     }
+}
+
+/// Whether the worker's cwd answer has to publish: it changed a published
+/// cwd, or the publish before it was held for the pane it answers. An
+/// answer that confirms the stand-in a split or a new tab already published
+/// with would otherwise repeat that whole publish (PRD grid-ahead-of-herdr
+/// D-12: 21 of 21 answers at operator scale changed nothing).
+fn pane_cwds_answer_publishes(changed: bool, catalog_cache: &CatalogState) -> bool {
+    changed || catalog_cache.held_for_cwd
 }
 
 /// Applies the `pane.get` answers the worker read for panes waiting for
@@ -1245,9 +1258,11 @@ fn publish_replica(
                 HashSet::new()
             };
             if !stand_in_unconfirmed_cwds(&mut payload, &awaiting, &clamped_tabs) {
+                catalog_cache.held_for_cwd = true;
                 return true;
             }
         }
+        catalog_cache.held_for_cwd = false;
         if !arrivals.is_empty() {
             guard.observe_herdr_arrivals(&std::mem::take(arrivals));
         }
@@ -2876,6 +2891,141 @@ mod focus_readback_order_tests {
             other => panic!("unexpected {other}"),
         });
         (herdr, asked, release)
+    }
+
+    /// One Herdr event as the subscription delivers it.
+    fn event(kind: &str, data: Value) -> ReplicaEvent {
+        let line = json!({"event": kind, "data": data}).to_string();
+        match parse_subscription_line(&line).expect("event parses") {
+            SubscriptionLine::Event(event) => event,
+            SubscriptionLine::EventsLost { .. } | SubscriptionLine::Error { .. } => unreachable!(),
+        }
+    }
+
+    /// Herdr announcing `pane` in `tab` at a cwd it has not confirmed, then
+    /// laying the tab out with `panes` side by side.
+    fn announce(replica: &mut SessionReplica, tab: &str, pane: &str, panes: &[&str]) {
+        let width = 120 / panes.len() as u32;
+        for next in [
+            event(
+                "pane_created",
+                json!({"type": "pane_created", "pane": {
+                    "workspace_id": "w1", "tab_id": tab, "pane_id": format!("w1:{pane}"),
+                    "terminal_id": "fixture-terminal", "focused": false, "revision": 0,
+                    "agent_status": "idle", "cwd": "/unverified/birth"
+                }}),
+            ),
+            event(
+                "layout_updated",
+                json!({"type": "layout_updated", "layout": {
+                    "workspace_id": "w1", "tab_id": tab, "zoomed": false,
+                    "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                    "focused_pane_id": format!("w1:{}", panes[0]),
+                    "panes": panes.iter().enumerate().map(|(index, pane)| json!({
+                        "pane_id": format!("w1:{pane}"), "focused": index == 0,
+                        "rect": {"x": index as u32 * width, "y": 0, "width": width, "height": 60}
+                    })).collect::<Vec<_>>(),
+                    "splits": (1..panes.len()).map(|index| {
+                        let x = (index as u32 - 1) * width;
+                        json!({
+                            "id": format!("split_{index}"), "direction": "right",
+                            "ratio": width as f32 / (120 - x) as f32,
+                            "rect": {"x": x, "y": 0, "width": 120 - x, "height": 60}
+                        })
+                    }).collect::<Vec<_>>()
+                }}),
+            ),
+        ] {
+            replica
+                .apply(next, ApplyMode::Strict)
+                .expect("the event applies");
+        }
+    }
+
+    /// PRD grid-ahead-of-herdr D-12: the worker's cwd answer republishes
+    /// only when it changed a cwd or the publish before it was held for the
+    /// pane. A pane split beside a confirmed one publishes with its
+    /// sibling's cwd standing in, so the answer that confirms it publishes
+    /// nothing; a pane alone in a new tab holds its publish, so the same
+    /// answer publishes once and the screen gets the tab then.
+    #[test]
+    fn a_cwd_answer_that_changes_nothing_publishes_only_after_a_held_publish() {
+        let first =
+            SessionReplica::from_snapshot(&snapshot(&["p1"], "p1", false)).expect("first snapshot");
+        let runtime = runtime_with(&first);
+        let herdr = FakeHerdr::start("cwd-answer-publish", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let context = context_for(&runtime, &herdr);
+        let mut cache = CatalogState::default();
+        let publish = |replica: &mut SessionReplica, cache: &mut CatalogState| {
+            assert!(publish_replica(
+                &context,
+                replica,
+                cache,
+                &mut None,
+                &mut None,
+                &mut Vec::new()
+            ));
+        };
+
+        // p2 split beside p1: the layout places it next to a confirmed pane,
+        // so the publish runs with p1's cwd standing in.
+        let mut replica = first.clone();
+        announce(&mut replica, "w1:t1", "p2", &["p1", "p2"]);
+        assert_eq!(replica.panes_awaiting_cwd(), ["w1:p2"]);
+        publish(&mut replica, &mut cache);
+        assert_eq!(
+            view(&runtime).0,
+            ["w1:p1", "w1:p2"],
+            "published with the stand-in"
+        );
+        assert!(!cache.held_for_cwd);
+        assert!(
+            !pane_cwds_answer_publishes(false, &cache),
+            "the answer confirming the stand-in publishes nothing"
+        );
+        assert!(
+            pane_cwds_answer_publishes(true, &cache),
+            "an answer that moved a cwd publishes"
+        );
+
+        // p3 alone in a new tab: nothing stands in, so the publish is held
+        // until the worker's answer, which then publishes once.
+        replica
+            .apply(
+                event(
+                    "tab_created",
+                    json!({"type": "tab_created", "tab": {
+                        "workspace_id": "w1", "tab_id": "w1:t2", "agent_status": "idle",
+                        "focused": false, "number": 2, "pane_count": 1, "label": "2"
+                    }}),
+                ),
+                ApplyMode::Strict,
+            )
+            .expect("the tab applies");
+        announce(&mut replica, "w1:t2", "p3", &["p3"]);
+        replica.confirm_pane_cwd("w1:p2", Some("/tmp/fixture".to_owned()));
+        assert_eq!(replica.panes_awaiting_cwd(), ["w1:p3"]);
+        publish(&mut replica, &mut cache);
+        assert!(cache.held_for_cwd, "nothing stands in for p3");
+        assert!(
+            !view(&runtime).0.contains(&"w1:p3".to_owned()),
+            "the held publish showed nothing"
+        );
+        assert!(
+            pane_cwds_answer_publishes(false, &cache),
+            "the answer after a held publish publishes"
+        );
+        // Herdr confirms the cwd the pane was announced with: nothing changed.
+        assert!(!replica.confirm_pane_cwd("w1:p3", Some("/unverified/birth".to_owned())));
+        assert!(replica.panes_awaiting_cwd().is_empty());
+        publish(&mut replica, &mut cache);
+        assert!(!cache.held_for_cwd);
+        assert!(
+            view(&runtime).0.contains(&"w1:p3".to_owned()),
+            "the tab reached the screen"
+        );
     }
 
     fn view(runtime: &Arc<Mutex<Runtime>>) -> (Vec<String>, Option<String>, Option<String>) {

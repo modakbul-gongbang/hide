@@ -279,6 +279,11 @@ struct CatalogState {
     reader: Option<path_facts::PathReader>,
     connection: u64,
     wake: Option<RepublishWaker>,
+    /// The last publish was held for a pane whose cwd Herdr had not
+    /// confirmed and nothing could stand in for, so the worker's answer has
+    /// to publish even when it changes no cwd; a publish that ran clears it
+    /// (PRD grid-ahead-of-herdr D-12).
+    held_for_cwd: bool,
 }
 
 impl CatalogState {
