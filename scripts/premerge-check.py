@@ -19,7 +19,6 @@ Exit status: 0 the pull request may merge now, and the merge command is
 printed; 1 it may not, and the output says what to do instead; 2 the check
 could not decide, and the output says why.
 """
-import json
 import os
 import signal
 import subprocess
@@ -27,8 +26,8 @@ import sys
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
-BASE = "main"
+from pull_requests import BASE, MERGE_IDENTITY, ROOT, Undecided, git, gh_json, latest_verify, verify_runs
+from pull_requests import merge_tree as merged_tree
 
 # The checks where two changes that each passed can fail together without a
 # conflict, and that finish in minutes: the type and compile checks, the
@@ -58,37 +57,8 @@ CHECK_TIMEOUT_SECONDS = 20 * 60
 # Lines of a failed check's output shown; the rest is the command's to rerun.
 FAILURE_TAIL_LINES = 60
 
-# The merge commit exists only so a worktree can check it out; it is never
-# pushed, and a reserved domain keeps it from naming anyone.
-MERGE_IDENTITY = {
-    "GIT_AUTHOR_NAME": "premerge check",
-    "GIT_AUTHOR_EMAIL": "premerge-check@example.invalid",
-    "GIT_COMMITTER_NAME": "premerge check",
-    "GIT_COMMITTER_EMAIL": "premerge-check@example.invalid",
-}
-
-
 class Refused(Exception):
     """The pull request may not merge now; the message says what to do instead."""
-
-
-class Undecided(Exception):
-    """The check could not reach an answer; the message says why."""
-
-
-def git(*args, cwd=ROOT, check=True, env=None):
-    result = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True,
-                            env=None if env is None else {**os.environ, **env})
-    if check and result.returncode != 0:
-        raise Undecided(f"`git {' '.join(args)}` failed: {result.stderr.strip()}")
-    return result
-
-
-def gh_json(*args):
-    result = subprocess.run(["gh", *args], cwd=ROOT, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise Undecided(f"`gh {' '.join(args)}` failed: {result.stderr.strip()}")
-    return json.loads(result.stdout)
 
 
 def open_pull(number):
@@ -114,10 +84,9 @@ def issue_note(number, closing):
 
 def require_verify_passed(runs):
     """Raise unless the latest `verify` run on the head passed; return its link."""
-    runs = [run for run in runs if run["name"] == "verify"]
-    if not runs:
+    latest = latest_verify(runs)
+    if latest is None:
         raise Refused("No `verify` run exists for the head yet; push it, or wait for the run to start.")
-    latest = max(runs, key=lambda run: (run["created_at"], run["id"]))
     if latest["status"] != "completed":
         raise Refused(f"`verify` is still running on the head: {latest['html_url']}")
     if latest["conclusion"] != "success":
@@ -127,15 +96,11 @@ def require_verify_passed(runs):
 
 def merge_tree(main, head, repo):
     """The tree of main merged with head; a conflict refuses the merge."""
-    result = git("merge-tree", "--write-tree", "--name-only", "--no-messages", main, head,
-                 cwd=repo, check=False)
-    lines = [line for line in result.stdout.splitlines() if line]
-    if result.returncode == 1:
-        raise Refused("The branch conflicts with main in " + ", ".join(lines[1:]) +
+    tree, conflicts = merged_tree(main, head, repo)
+    if conflicts:
+        raise Refused("The branch conflicts with main in " + ", ".join(conflicts) +
                       ". Merge main into the branch, resolve it, push, and wait for `verify`.")
-    if result.returncode != 0:
-        raise Undecided(f"`git merge-tree` failed: {result.stderr.strip()}")
-    return lines[0]
+    return tree
 
 
 def run_check(name, directory, command, out):
@@ -216,9 +181,7 @@ def main(argv):
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(2))
     try:
         head, closing = open_pull(number)
-        verify = require_verify_passed(gh_json(
-            "api", f"repos/{{owner}}/{{repo}}/actions/runs?head_sha={head}&event=pull_request&per_page=100",
-            "--jq", ".workflow_runs"))
+        verify = require_verify_passed(verify_runs(head))
         print(f"`verify` passed on {head[:12]}: {verify}")
         git("fetch", "--quiet", "--no-tags", "origin", BASE, f"pull/{number}/head")
         if git("cat-file", "-e", f"{head}^{{commit}}", check=False).returncode != 0:

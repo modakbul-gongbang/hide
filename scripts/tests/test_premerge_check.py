@@ -10,10 +10,12 @@ import io
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
+sys.path.insert(0, str(Path(__file__).parents[1]))
 SPEC = importlib.util.spec_from_file_location("premerge", Path(__file__).parents[1] / "premerge-check.py")
 premerge = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(premerge)
