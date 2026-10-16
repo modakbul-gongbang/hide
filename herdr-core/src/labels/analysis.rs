@@ -346,7 +346,12 @@ pub(crate) fn rolling_analysis_context(
     bounded_context(
         &format!(
             "<previous-goal>{}</previous-goal>\n<new-operator-requests>\n",
-            mask(previous_goal)
+            // A goal stored by an earlier build is not bounded by this one's
+            // limits; it may not crowd the new requests out.
+            head(
+                &mask(&strip_code_fences(previous_goal)),
+                MAX_REQUEST_SECTION_CHARS / 4
+            )
         ),
         &delta,
         "\n</new-operator-requests>",
@@ -394,6 +399,9 @@ fn head(text: &str, max: usize) -> String {
     if chars(text) <= max {
         return text.to_owned();
     }
+    if max == 0 {
+        return String::new();
+    }
     let mut kept = text.chars().take(max.saturating_sub(1)).collect::<String>();
     kept.push(CUT_MARK);
     kept
@@ -404,6 +412,9 @@ fn head(text: &str, max: usize) -> String {
 fn tail(text: &str, max: usize) -> String {
     if chars(text) <= max {
         return text.to_owned();
+    }
+    if max <= 1 {
+        return head(&CUT_MARK.to_string(), max);
     }
     let start = text
         .char_indices()
@@ -575,9 +586,10 @@ pub(crate) fn work_context(
     ))
 }
 
-/// [`mask`], then the last [`MAX_ANALYSIS_CONTEXT_CHARS`] characters, for a
-/// caller that sends one text whole (a pull request summary, the ledger's
-/// side of a request).
+/// [`mask`], then its tail of the last [`MAX_ANALYSIS_CONTEXT_CHARS`] + 1
+/// characters, for a caller that sends one text whole (a pull
+/// request summary, the ledger's side of a request); the label context cuts
+/// its sections itself (`bounded_context`).
 pub(crate) fn redact(text: &str) -> String {
     let masked = mask(text);
     let start = masked
@@ -830,6 +842,16 @@ mod tests {
             );
             assert!(exchange.contains("assistant: 마지막 답"));
         }
+    }
+
+    #[test]
+    fn a_long_stored_goal_cannot_break_the_bound() {
+        let goal = "이전 빌드가 남긴 긴 목표 ".repeat(400);
+        let answer = "긴 답 ".repeat(2_000);
+        let events = vec![human("새 요청", 1), assistant(&answer, 2)];
+        let context = rolling_analysis_context(&goal, &events[..1], &events);
+        assert!(context.chars().count() <= MAX_ANALYSIS_CONTEXT_CHARS);
+        assert!(sections(&context).0.contains("user: 새 요청"));
     }
 
     #[test]

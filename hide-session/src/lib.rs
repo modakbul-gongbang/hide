@@ -1854,15 +1854,12 @@ fn parse_codex_line(item: &Value) -> LineResult {
             );
         }
         Some(CodexInternal::UserGoal(objective)) => {
-            return LineResult::Event(
-                ConversationEvent::new(
-                    role,
-                    EventKind::Human,
-                    timestamp,
-                    objective.unwrap_or(text),
-                )
-                .with_images(images),
-            );
+            return LineResult::Event(ConversationEvent::new(
+                role,
+                EventKind::Human,
+                timestamp,
+                objective.unwrap_or(text),
+            ));
         }
         None => {}
     }
@@ -1884,12 +1881,13 @@ fn parse_codex_line(item: &Value) -> LineResult {
 /// What a Codex user message wrapped in `<codex_internal_context>` is.
 #[derive(Debug, PartialEq, Eq)]
 enum CodexInternal {
-    /// `source="user_goal"`: the operator set a goal with `/goal`. The
+    /// `source="user_goal"` setting a goal: the operator's `/goal`. The
     /// objective is their words; `None` when Codex wrote none to read (it
     /// omits a long one), and the message is then kept as written.
     UserGoal(Option<String>),
-    /// Any other source: Codex's own text for the turn, such as the
-    /// `source="goal"` reminder it adds to every turn while a goal is active.
+    /// Any other source, or a `user_goal` that sets no goal (one cleared):
+    /// Codex's own text, such as the `source="goal"` reminder it adds to
+    /// every turn while a goal is active.
     Own,
 }
 
@@ -1907,15 +1905,15 @@ fn codex_internal_context(text: &str) -> Option<CodexInternal> {
     {
         return Some(CodexInternal::Own);
     }
-    let objective = body
-        .trim_start()
-        .strip_prefix("User set the goal: ")
-        .and_then(|quoted| {
-            serde_json::Deserializer::from_str(quoted)
-                .into_iter::<String>()
-                .next()
-                .and_then(std::result::Result::ok)
-        })
+    // Only a goal being set carries the operator's words; a goal cleared or
+    // paused (`User cleared the goal.`) is Codex reporting a state.
+    let Some(quoted) = body.trim_start().strip_prefix("User set the goal: ") else {
+        return Some(CodexInternal::Own);
+    };
+    let objective = serde_json::Deserializer::from_str(quoted)
+        .into_iter::<String>()
+        .next()
+        .and_then(std::result::Result::ok)
         .map(|objective| objective.trim().to_owned())
         .filter(|objective| !objective.is_empty());
     Some(CodexInternal::UserGoal(objective))
@@ -2400,10 +2398,16 @@ mod tests {
         assert_eq!(parsed.events.len(), 1);
         assert_eq!(parsed.events[0].kind, EventKind::Human);
         assert_eq!(parsed.events[0].text, omitted);
-        assert_eq!(
-            codex_internal_context("<codex_internal_context source=\"budget\">\nBudget reached."),
-            Some(CodexInternal::Own)
-        );
+        for own in [
+            "<codex_internal_context source=\"budget\">\nBudget reached.",
+            "<codex_internal_context source=\"user_goal\">\nUser cleared the goal.\n</codex_internal_context>",
+        ] {
+            assert_eq!(
+                codex_internal_context(own),
+                Some(CodexInternal::Own),
+                "{own}"
+            );
+        }
     }
 
     #[test]

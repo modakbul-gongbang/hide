@@ -4289,8 +4289,9 @@ fn original_turn_rejects_a_same_id_file_replacement_before_preview_and_accepts_a
 
 /// A Codex 0.163.0 session started with `/goal` (PRD
 /// label-goal-command-context D-04-D-06): Codex records the operator's
-/// objective in a `user_goal` message and adds its own `goal` reminder to
-/// every turn while the goal is active.
+/// objective in a `user_goal` message, adds its own `goal` reminder to
+/// every turn while the goal is active, and reports a cleared goal in another
+/// `user_goal` message that carries no words of the operator's.
 #[test]
 fn a_codex_goal_is_the_operators_request_and_its_turn_reminder_is_not() {
     let home = tempfile::tempdir().unwrap();
