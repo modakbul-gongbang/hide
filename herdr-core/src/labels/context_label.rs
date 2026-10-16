@@ -382,7 +382,8 @@ mod tests {
     #[test]
     fn a_split_answer_keeps_its_names_in_order_trimmed() {
         let analysis =
-            end_with(json!({"kind": "new", "names": [" README 태그 ", "댓글 위치", "HTML 댓글"]})).unwrap();
+            end_with(json!({"kind": "new", "names": [" README 태그 ", "댓글 위치", "HTML 댓글"]}))
+                .unwrap();
         assert_eq!(names(analysis), ["README 태그", "댓글 위치", "HTML 댓글"]);
     }
 

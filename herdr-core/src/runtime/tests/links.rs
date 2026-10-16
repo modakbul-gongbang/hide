@@ -1461,12 +1461,24 @@ fn a_panes_task_progress_reaches_the_wire_once_and_an_equal_answer_publishes_not
         }),
     }];
     assert!(runtime.ingest_work_progress(progress.clone()));
-    assert!(!runtime.ingest_work_progress(progress), "an equal answer redraws nothing");
+    assert!(
+        !runtime.ingest_work_progress(progress),
+        "an equal answer redraws nothing"
+    );
     let wire = serde_json::to_value(runtime.snapshot()).unwrap();
     let row = &wire["link_summaries"]["progress"][0];
-    assert_eq!((row["done"].as_u64(), row["total"].as_u64()), (Some(0), Some(2)));
-    assert_eq!(row["children"]["children"], serde_json::json!(["done", "unjudged"]));
-    assert!(row["children"]["done"].is_null(), "an unjudged child hides the fraction");
+    assert_eq!(
+        (row["done"].as_u64(), row["total"].as_u64()),
+        (Some(0), Some(2))
+    );
+    assert_eq!(
+        row["children"]["children"],
+        serde_json::json!(["done", "unjudged"])
+    );
+    assert!(
+        row["children"]["done"].is_null(),
+        "an unjudged child hides the fraction"
+    );
     assert!(runtime.ingest_work_progress(Vec::new()));
     let wire = serde_json::to_value(runtime.snapshot()).unwrap();
     assert_eq!(wire["link_summaries"]["progress"], serde_json::json!([]));
