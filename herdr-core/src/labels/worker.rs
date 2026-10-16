@@ -864,11 +864,16 @@ impl LabelWorker {
             record.is_some_and(|record| record.read_reference.as_ref() == Some(&reference));
         // An in-memory reader appends after the checkpoint; a reader that
         // lost its events (a restart) starts at the last human record, and a
-        // new file starts at its beginning.
+        // new file starts at its beginning. While labels are made, a pane
+        // with no goal yet starts at the beginning too: its context is the
+        // operator's requests from the first one on, and the first lies
+        // before the last human record.
         let checkpoint = if !same_file {
             None
         } else if pane.events_loaded {
             record.and_then(|record| record.checkpoint.clone())
+        } else if self.summaries && record.is_some_and(PaneRecord::needs_initial_context) {
+            None
         } else {
             record.and_then(|record| record.anchor.clone())
         };
@@ -1375,7 +1380,7 @@ impl LabelWorker {
         let Some(turn) = turn_key(events) else {
             return false;
         };
-        let initial_context = record.goal.is_none() || record.task_input_cursor.is_none();
+        let initial_context = record.needs_initial_context();
         let Some(phase) = analysis_phase(
             newest_user_is_last(events),
             working,
@@ -1446,6 +1451,22 @@ impl LabelWorker {
             )
         };
         if context.is_empty() {
+            // Nothing the operator asked is in view: the turn is settled
+            // unanalyzed and said once, never skipped in silence.
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "analysis.skipped_no_context",
+                "target": self.target,
+                "pane_id": pane_id,
+                "generation": pane.generation,
+                "phase": phase.label(),
+                "initial_context": initial_context,
+            }));
+            record.analysis_turn_start = Some(turn);
+            if phase == AnalysisPhase::TurnEnd {
+                record.analysis_turn_end = Some(turn);
+            }
+            self.dirty = true;
             return false;
         }
         let ledger_session = record.native_session_id.as_ref().map(|id| SessionIdentity {
