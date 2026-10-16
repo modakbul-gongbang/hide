@@ -227,10 +227,11 @@ impl MemoryStore {
             "INSERT INTO stale_reports(item_id,revision,project_id,runtime,session_id,reported_at_ms) VALUES(?1,?2,?3,?4,?5,?6)",
             params![item_id, revision, project_id, hold.runtime, hold.session_id, now_unix_ms],
         )?;
-        // An expired hold of an earlier revision may still sit here unswept;
-        // the new one takes its place.
+        // No hold can be here: the trigger dropped any of an earlier revision
+        // and this revision was never reported, so a conflict is a broken
+        // invariant and fails the report.
         transaction.execute(
-            "INSERT OR REPLACE INTO card_holds(item_id,revision,project_id,runtime,session_id,report_offset,reason,reported_at_ms,expires_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+            "INSERT INTO card_holds(item_id,revision,project_id,runtime,session_id,report_offset,reason,reported_at_ms,expires_at_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
             params![
                 item_id,
                 revision,
@@ -359,10 +360,12 @@ fn stored_reason(reason: &str) -> String {
         .filter(|word| !word.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
-    escape_markup(&line)
-        .chars()
-        .take(crate::STALE_REASON_LIMIT_CHARS)
-        .collect()
+    escape_markup(
+        &line
+            .chars()
+            .take(crate::STALE_REASON_LIMIT_CHARS)
+            .collect::<String>(),
+    )
 }
 
 /// Ends the holds the analysis cursor at `byte_offset` passed: every group
@@ -406,6 +409,9 @@ fn end_holds(
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?
     };
+    if ended.is_empty() {
+        return Ok(ended);
+    }
     transaction.execute(
         &format!(
             "DELETE FROM card_holds WHERE item_id IN (SELECT h.item_id FROM card_holds h JOIN memory_items i ON i.id=h.item_id WHERE {filter})"

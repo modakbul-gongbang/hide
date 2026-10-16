@@ -2172,21 +2172,36 @@ pub(crate) fn write_cards(
 /// this session reported stale, so the analysis checks each for the reversal
 /// (PRD memory-stale-cards D-06), then the cards most like the group's words,
 /// within the same card and byte bounds.
-fn comparison_set(
+pub(super) fn comparison_set(
     store: &MemoryStore,
     source: &BatchSource<'_>,
     group: &[Value],
 ) -> Result<Vec<hide_memory::ComparisonCard>, hide_memory::MemoryError> {
-    let mut set = store.reported_cards(
+    // A reported card is charged like any other, so the set and one event
+    // group still fit one request; one that does not fit is left out and its
+    // hold ends by its deadline or a release instead.
+    let mut set = Vec::new();
+    let mut bytes = 0;
+    for card in store.reported_cards(
         source.project_id,
         source.provider,
         source.session_id,
         now_ms(),
-    )?;
-    let bytes = set
-        .iter()
-        .map(|card| card.body.len() + card.title.len() + 64)
-        .sum::<usize>();
+    )? {
+        let card_bytes = card.body.len() + card.title.len() + 64;
+        if bytes + card_bytes > COMPARISON_INPUT_LIMIT_BYTES {
+            crate::diagnostic!(json!({
+                "component": "memory",
+                "kind": "stale.hint_left_out",
+                "project_id": source.project_id,
+                "card": card.number,
+                "session_id": source.session_id,
+            }));
+            continue;
+        }
+        bytes += card_bytes;
+        set.push(card);
+    }
     let similar = store.similar(
         source.project_id,
         &comparison_text(group),
