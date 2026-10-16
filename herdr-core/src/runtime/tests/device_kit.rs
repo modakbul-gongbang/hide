@@ -1319,7 +1319,7 @@ fn a_first_pass_that_did_not_run_does_not_decide_the_first_run_choice() {
 }
 
 /// An existing Mac is never asked, and a device added later gets what the Mac
-/// has on today (Claude Code and Codex by default), as it did before the
+/// has on today (Claude Code, Codex and agy by default), as it did before the
 /// first-run choice existed.
 #[test]
 fn an_existing_macs_agents_become_the_saved_choice_a_later_device_receives() {
