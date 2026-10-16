@@ -35,11 +35,21 @@ A gap is allowed only as a cell in `docs/INSTALL.md`, What each system supports,
 When you tell the operator about a problem and its fix, in a reply, a letter or a pull request's `Summary`, say in plain words what is wrong and what changes, core first and short.
 Leave out the technical detail and the comparison of alternatives unless the operator asks for them; a pull request keeps the files to watch and the proof in `Review` and `Evidence`.
 
+## Working Beside Open Pull Requests
+
+Other agents' pull requests are open while you work, and a green pull request that a merge then breaks waits through `verify` again; `CONTRIBUTING.md`, Starting work beside open pull requests, owns the rule and the measurements.
+Do these three things, at these three moments, on every task; `python3 scripts/merge-order.py` reads git and GitHub as they are now and answers each with one `Do:` line, and the `merge-order` skill (`skills/merge-order/SKILL.md`) says how to act on it.
+
+1. Before the first line of code: start on an open pull request's branch, and open yours with `--base <that branch>`, only when the work needs what that pull request adds (an API, state, schema or contract); work that only might touch the same files starts from main, like work that does not.
+2. After the first push: run `python3 scripts/merge-order.py <number>` (or `--branch <name>` before the pull request exists) and act on its `Do:` line and nothing else; `Stay as you are` is the usual answer, and a stack is only ever joined by merging the layer below, never by rebasing and never by merging main into an upper layer.
+3. Before a merge, the lead only: run `python3 scripts/merge-order.py` with no argument and take the green pull requests in the order it prints, each through `python3 scripts/premerge-check.py <number>` and the merge command that prints; a delegated session never merges.
+
+A documents-only overlap (`*.md`, `*.pen`, `site/`) never stacks; it is resolved once, by merging main right before the merge.
+
 ## Before Opening A Pull Request
 
 `main` takes pull-request merges only, and the `verify` workflow has to pass; this repository currently uses merge commits, and no one, maintainer included, can push around branch protection.
 A green pull request does not need the latest main to merge: `python3 scripts/premerge-check.py <number>` decides against main as it is now and prints the merge command, and while main's push run is red nothing merges but the revert or the fix; `CONTRIBUTING.md`, Merging into main, owns the rule and its reasons.
-Where work starts beside open pull requests, when it stacks on one, and which green pull request merges first belong to `CONTRIBUTING.md`, Starting work beside open pull requests and Merging into main; `python3 scripts/merge-order.py` computes them.
 `CONTRIBUTING.md` lists every gate with its local command; run the lanes the diff touches before opening the pull request, and change a gate that is wrong in the same pull request with the reason in the description.
 Commit subjects and pull request titles take the form `<type>: <imperative sentence>` in English, such as `fix: keep a named tab when its last agent closes`, even when the operator writes in Korean; `CONTRIBUTING.md`, Commit messages and attribution, owns the types and the rule.
 Write the template in the order a reviewer reads it: `Summary` with screenshots, `Review` (what needs judgment, which files to watch and why, questions), `Evidence` (what was and was not confirmed), then `Breaking change` only when something breaks; answer from the diff, not from intent, and delete the lines that do not apply rather than filling them with "N/A".
