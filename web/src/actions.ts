@@ -36,7 +36,7 @@ import { registeredName } from "./screenMachine";
 import { allAgents, boardProjects, type OpenTarget } from "./navigation";
 import { cardOfItem } from "./overviewTasks";
 import { backlogIntent } from "./overviewBacklog";
-import { sessionOfAgent, workKey } from "./sessionWork";
+import { paneProgress, sessionOfAgent, workKey } from "./sessionWork";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
@@ -76,6 +76,7 @@ import { FACTORY_OPEN } from "./factory/launch";
 import { SECRETARY_PROMPT, paneListed } from "./factory/secretary";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
+import { focusTerminal } from "./terminals";
 import { zoomViewer } from "./viewers/viewerZoom";
 import { submitDrop, type CapturedDrop } from "./explorerDrop";
 import {
@@ -1740,6 +1741,12 @@ export function createActions(send: DispatchFn) {
         return dispatch(forward ? withDeviceForward(event) : event);
       }
       dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator", focus_device: forward } });
+      // The core's answer moves the keys only when it moves the focus, so a
+      // pane already focused would leave them on the row, link or mark that
+      // was pressed. The operator asked for the pane, so the open takes the
+      // keys itself while the pane is on screen; the terminal reports no
+      // click for a focus it is given (`focusTerminal`).
+      if (ui().screen?.kind === "workspace" && useShellStore.getState().focusedPaneId === paneId) focusTerminal(paneId);
     },
 
     /**
@@ -1965,7 +1972,9 @@ export function createActions(send: DispatchFn) {
         workspace: ui().screen?.kind === "workspace" ? checkout?.id ?? null : null,
         displayId: ui().drawnLane.tool === "files" && ui().drawnLane.mode !== "closed" && ui().drawnLane.mode !== "hidden" ? area?.active ?? null : null,
         paneIds: tab?.panes.map((pane) => pane.id) ?? [],
+        detailShown: ui().screen?.kind === "workspace" && !ui().overviewOpen && laneUpWith("detail"),
       });
+      if (target.kind === "detail") return this.detailClose();
       if (target.kind === "view") return closeView(target.id);
       if (target.kind === "pane") return this.closePane(target.id);
       diagnostic(`close_shortcut: ${target.reason}`);
@@ -2333,6 +2342,18 @@ export function createActions(send: DispatchFn) {
     /** A child's record from the one shown (B16): it takes the slot, and ← comes back to the parent. */
     openChildRecord(session: import("./snapshot").WorkSession) {
       dispatch({ schema_version: 2, kind: "detail_open", payload: { item: { kind: "record", session } } });
+    },
+    /**
+     * ⇧⌘U: pins the focused pane's task checklist open, or closes it when it
+     * is pinned there. A pane without tasks draws no chip and pins nothing, so
+     * a list never opens by itself once that pane later has tasks.
+     */
+    toggleTaskList(target?: string) {
+      const state = useShellStore.getState();
+      const paneId = target ?? state.focusedPaneId;
+      if (!paneId) return;
+      if (ui().taskListPane === paneId) return ui().setTaskListPane(null);
+      if (paneProgress(state, paneId)) ui().setTaskListPane(paneId);
     },
     /**
      * A pane head's title (B15): the slot shows that session's record, or,

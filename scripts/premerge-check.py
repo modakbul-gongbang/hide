@@ -79,7 +79,7 @@ def issue_note(number, closing):
     if closing:
         return None
     return (f"note: #{number} closes no issue. If it finishes one, put `Closes #<issue>` on the body's Closes line "
-            "before merging (editing the body does not rerun `verify`); with no issue, merge as it is.")
+            "before merging (a body edit reruns `verify` as `policy` alone, so the merge waits for that run); with no issue, merge as it is.")
 
 
 def require_verify_passed(runs):

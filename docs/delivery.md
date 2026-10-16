@@ -31,8 +31,12 @@ hide inbox
 hide watch start child-name
 hide watch list
 hide watch stop watch-2
+hide request send parent-name --kind progress --intent task-plan-1 --body 'Plan: core first, then web.'
 hide request send parent-name --kind report --intent task-complete-1 --body 'The check passed.'
 ```
+
+A `request` or `block` letter waits for an answer; a `progress` letter is an interim report, such as a plan or a checkpoint, and a `report` letter says the work is finished.
+Only a `report` ends the parent's watch on its sender ([Watch activity and completion](#watch-activity-and-completion)), so a child that has more to do after what it writes sends `progress`.
 
 The recipient can acknowledge or reply; the sender can cancel.
 A `request` or `block` letter waits for its answer until one of four things ends the wait: the recipient replies, the sender cancels, either side's registration ends, or 24 hours pass since it was sent ([Persistence, clocks and limits](#persistence-clocks-and-limits)).
@@ -40,7 +44,7 @@ When the last two end it, the letter keeps its `state`, `waiting_answer` turns `
 The sender reads it in the answer of `hide request show` (and in every other answer that carries the letter); `hide inbox` lists the same letters as before and does not announce a wait that ended.
 A letter that ended its wait without an answer no longer counts against the open-letter limit, and the recipient can still reply to it by the same rules.
 It is still a retained letter: it leaves the ledger one day after its wait ended, or earlier when the 5000-letter total is full and it is the finished letter that finished first (see [Persistence, clocks and limits](#persistence-clocks-and-limits)).
-Acknowledgement is the recipient's receipt for every agent kind: only the recipient's own pane and native session can acknowledge (`hide request ack` from a pane-bound caller is the only path, with no operator or helper path), so it records `hook_confirmed: true` and ends a matching report watch; a reply separately closes the original request's answer wait.
+Acknowledgement is the recipient's receipt for every agent kind: only the recipient's own pane and native session can acknowledge (`hide request ack` from a pane-bound caller is the only path, with no operator or helper path), so it records `hook_confirmed: true` and ends a matching report watch (a `progress` letter ends none); a reply separately closes the original request's answer wait.
 Retry the same intent after an interrupted call: the same sender identity and intent return the existing letter during its retention period, including after cancellation or delivery, for one day after the letter finished or until a full ledger drops it first; a send with the same intent after that creates a new letter.
 Use a new intent for a new letter.
 The envelope identifies the sender and letter kind; it is not a session-level authority or anti-forgery proof.
@@ -166,9 +170,9 @@ The doorbell types `🔔 <writer> <kind>: <the letter's first line>`, then ` · 
 🔔 hierarchy-pen-scratch 보고: Pen 시안이 준비됐습니다 · 외 1통
 ```
 
-The kind reads 요청 for a request, 막힘 for a block, 보고 for a report, 답장 for a reply and 감시 for a watch warning.
+The kind reads 요청 for a request, 막힘 for a block, 보고 for a report, 진행 for a progress letter, 답장 for a reply and 감시 for a watch warning.
 The writer is the name the sender registered under (`hide agent register`, `hide agent spawn --name`), else the title Hide's screens give it while its pane still hosts that session, else its runtime's name, such as Codex; never a pane id and never its registration id, which belong to the letter's envelope ([Names](#names-on-the-wire-and-on-screen)).
-A watch warning is named by the agent it watches, and its first line says for how long nothing moved, or that the agent stopped with a question ([Watch activity and completion](#watch-activity-and-completion)).
+A watch warning is named by the agent it watches, and its first line says for how long nothing moved, that the agent stopped with a question, or that it is blocked at a prompt ([Watch activity and completion](#watch-activity-and-completion)).
 Both are looked up in memory when the bell rings, on the doorbell's thread, never on the session-sync thread.
 The first line is the body's first line that has anything to show, cut to 60 characters with `…`, and the writer is cut to 32; a body with no such line leaves the colon and summary out.
 Agents learn from their session guidance that this first line is the letter's one-line summary, and that a prompt beginning with `🔔` brings a letter that `hide inbox` shows if the prompt did not.
@@ -253,7 +257,7 @@ Every `capacity` refusal of a letter writes one `letter.capacity_refused` diagno
 | Pending delivery deadline | 60 minutes of the recipient's machine being reachable (wall time on the core's own machine), then `undelivered`; visible through CLI |
 | Quiet period | 30 seconds since hide last routed a key and since Herdr last changed the pane's status |
 | Doorbell reservations per letter | Three total, persisted across restart |
-| First inactivity warning | 20 minutes without activity; one minute (one tick) when the target stopped on a question and the observer is a pane; the Factory's stall window (30 minutes by default) when the observer is a Factory |
+| First inactivity warning | 20 minutes without activity; one minute (one tick) when the target stopped on a question or is held at a Herdr-blocked prompt and the observer is a pane; the Factory's stall window (30 minutes by default) when the observer is a Factory |
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
 | Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
 | Answer wait of a `request` or `block` | 24 hours from the send, then `answer_wait_ended: "deadline"`; an end of either registration ends it at once as `party_ended` for a letter the recipient took in |
@@ -303,11 +307,12 @@ Proven original-target absence or a different positive native identity ends the 
 There is no cached response or retry during the same tick.
 Three consecutive read failures produce a rate-limited diagnostic.
 
-A target that stopped on a question it asked only in its own pane is told to a pane observer after one tick, 60 seconds of no activity, instead of 20 minutes, so the parent decides within about a minute whether to answer the child or ask the operator.
-The fact is the target's own row while its pane runs the watched session: activity stopped, a question demand ([status-model.md](status-model.md#where-each-axis-comes-from)), and no blocked prompt.
-A child that works, such as Codex while its async question stays open, or that Herdr holds at a blocked prompt, keeps the 20 minutes; a blocked child already rises to the operator ([Delegated escalation](status-model.md#delegated-escalation)).
-A question the target already sent this observer as a `request` or `block` letter still awaiting its answer keeps the 20 minutes too, since that letter rang the observer's doorbell, and a Factory observer keeps its stall window, since its engine stops the worker on the first warning.
-The early warning is the episode's first warning, and only its first line differs: `Stopped with a question (watch <id>).` instead of `No activity for N minutes`.
+A target that stopped on a question it asked only in its own pane, or that Herdr holds at a blocked prompt, is told to a pane observer after one tick, 60 seconds of no activity, instead of 20 minutes, so the parent decides within about a minute whether to answer the child or ask the operator.
+The fact is the target's own row while its pane runs the watched session: for a question, activity stopped, a question demand ([status-model.md](status-model.md#where-each-axis-comes-from)) and no blocked prompt; for a prompt, the row's `blocked`, whatever its activity, since Herdr reports no activity for a pane it holds at a menu.
+A blocked child also rises to the operator ([Delegated escalation](status-model.md#delegated-escalation)); the parent is told as well because a native runtime can time the prompt out on its own (Claude Code's built-in `rm` check gives up after two minutes, 2026-10-16), and a parent that hears in a minute can still tell the operator or send the child a safer command.
+A child that works, such as Codex while its async question stays open, keeps the 20 minutes.
+A question the target already sent this observer as a `request` or `block` letter still awaiting its answer keeps the 20 minutes too, since that letter rang the observer's doorbell; a blocked prompt rang nothing, so it is told whatever letters wait, and a Factory observer keeps its stall window for both, since its engine stops the worker on the first warning.
+The early warning is the episode's first warning, and only its first line differs: `Stopped with a question (watch <id>).` or `Blocked at a prompt (watch <id>).` instead of `No activity for N minutes`.
 The second warning, the unanswered-parent human notice and the escalation to the operator follow from its time exactly as from a 20-minute warning, and new activity of the target starts a new episode, so one question gives at most one early warning.
 The runtime reads the row it already holds when it hands each watch to the tick, under the lock that builds the tick's work; nothing is added to the tick's reads, threads or timers.
 
@@ -320,6 +325,7 @@ A target exit or parent's explicit stop ends the watch.
 A normal reply closes the request's answer wait and leaves the watch active.
 A done target remains watched until exit, explicit stop or a completion report.
 The first receipt, an acknowledgement or the actual post-flush confirmation, records `hook_confirmed: true` and ends a matching sender-parent watch for `hide request send --kind report`; a confirmation still does after cancellation or the delivery deadline, and replay after restart preserves a watch explicitly started after that receipt.
+A `progress` letter is received the same way and ends no watch: it is the interim report, such as a plan, and the child is still at work after it.
 A report from an unwatched sender is an ordinary letter; the parent can restart a watch explicitly.
 
 ## The code-owned recipient `factory:<id>`
@@ -450,6 +456,7 @@ A launch chained behind another command is refused whole, and a launch inside `b
 A first spawn of a new Codex child can answer `native_identity_unavailable` until that Codex has bound its session after its first turn; running the same `hide agent spawn` again with the same intent converges on the same child.
 A spawn's tab runs the account's shell with Hide's shell integration where that shell is zsh, bash or fish (Windows PowerShell on Windows), and its start is typed only after the shell marked its first prompt ([ARCHITECTURE.md](ARCHITECTURE.md)); a shell stopped at a startup question within the 30 s wait is refused as `shell_starting` with that question's line, nothing typed, and the next action is to answer it in that pane and spawn again.
 A start Herdr typed whose agent never showed (a startup question took its first letter in a bash pane, or the program exited before Herdr saw it) leaves Herdr holding the agent's name in that pane until its 120 s deadline, and Herdr gives that name to any agent that appears there meanwhile.
+A spawn waits up to 30 seconds for Herdr to create the worktree, which runs `git worktree add` and can be slow on a large repository under load; when no answer comes in that time the spawn is refused `worktree_unconfirmed`, because Herdr may still finish the worktree, and the next action is to run the same command again with the same intent, which finds that worktree and continues in it; a Factory asks it again after five seconds.
 Running the same intent again while the name is held answers `native_identity_unavailable` and types nothing; once Herdr let it go and the shell alone holds the terminal it types the start once more (`start.resent`), and a second start that never showed, or anything else in the foreground, answers `agent_not_started`, whose next action is to look at that pane and spawn with a new intent.
 A spawn about to start its agent closes the pane of every earlier spawn of the same parent, name and device that made a pane and never bound a child, where no agent shows and the shell alone holds the terminal, so a new attempt leaves no extra tab and Herdr no longer holds the name for it; each close is logged as `spawn` / `unstarted_attempt.close`, and a pane that cannot be read or closed is left to Herdr's refusal.
 A spawn records the Herdr terminal its pane runs (`terminal_id` from `pane.get`) together with the pane, because Herdr hands a pane id out again once its server is replaced, so an earlier spawn's pane id can name an unrelated shell the operator opened.

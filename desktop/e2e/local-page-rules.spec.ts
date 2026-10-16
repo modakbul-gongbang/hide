@@ -77,7 +77,7 @@ test("A local HTML page loads its own folder's files and nothing else", async ()
     const page = path.join(checkout, "page.html");
     fs.writeFileSync(page, `<!doctype html><meta charset="utf-8"><title>Local page</title><h1>Local page</h1>
 <img id="own" src="assets/pixel.png"><script src="assets/own.js"></script>`);
-    const opened = await agent(["browser", "open", pathToFileURL(page).href, "--reveal", "--wait"]);
+    const opened = await agent(["browser", "open", pathToFileURL(page).href, "--wait"]);
     expect(opened.status, opened.out).toBe(0);
     let url = "";
     await expect.poll(async () => (url = (await shownUrls()).find((shown) => shown.startsWith("file:") && shown.endsWith("/fixture/page.html")) ?? "")).not.toBe("");

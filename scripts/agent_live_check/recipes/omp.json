@@ -101,6 +101,10 @@
       [
         ".omp/agent/agent.db",
         "agent.db"
+      ],
+      [
+        ".omp/agent/config.yml",
+        "config.yml"
       ]
     ],
     "settings": [

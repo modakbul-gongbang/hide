@@ -1178,16 +1178,18 @@ impl Runtime {
                     },
                 };
                 // The target's own row, while its pane still runs the watched
-                // session: stopped on a question. A Herdr-blocked one already
-                // raises the child (Delegated escalation), and a working one,
-                // such as Codex's async question, has not stopped.
-                let asking = observation.is_some()
-                    && self.agent_row(&watch.target.pane_id).is_some_and(|row| {
-                        row.lineage_session == watch.target.session
-                            && row.demand == "question"
-                            && row.activity == "stopped"
-                            && !row.blocked
-                    });
+                // session: stopped on a question, or held at a Herdr-blocked
+                // prompt. A blocked one also raises the child to the operator
+                // (Delegated escalation); a working one, such as Codex's async
+                // question, has not stopped.
+                let row = observation
+                    .as_ref()
+                    .and_then(|_| self.agent_row(&watch.target.pane_id))
+                    .filter(|row| row.lineage_session == watch.target.session);
+                let blocked = row.is_some_and(|row| row.blocked);
+                let asking = row.is_some_and(|row| {
+                    row.demand == "question" && row.activity == "stopped" && !row.blocked
+                });
                 crate::delivery::worker::WatchWork {
                     id: watch.id.clone(),
                     observation,
@@ -1202,6 +1204,7 @@ impl Runtime {
                         .strip_prefix(crate::delivery::FACTORY_PREFIX)
                         .and_then(|id| self.factory_recipients.get(id).copied()),
                     asking,
+                    blocked,
                 }
             })
             .collect()

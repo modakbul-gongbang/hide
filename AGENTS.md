@@ -42,7 +42,7 @@ Do these three things, at these three moments, on every task; `python3 scripts/m
 
 1. Before the first line of code: start on an open pull request's branch, and open yours with `--base <that branch>`, only when the work needs what that pull request adds (an API, state, schema or contract); work that only might touch the same files starts from main, like work that does not.
 2. After the first push: run `python3 scripts/merge-order.py <number>` (or `--branch <name>` before the pull request exists) and act on its `Do:` line and nothing else; `Stay as you are` is the usual answer, and a stack is only ever joined by merging the layer below, never by rebasing and never by merging main into an upper layer.
-3. Before a merge, the lead only: run `python3 scripts/merge-order.py` with no argument and take the green pull requests in the order it prints, each through `python3 scripts/premerge-check.py <number>` and the merge command that prints; a delegated session never merges.
+3. Before a merge, the lead only, and this includes a merge `/ship` is about to make: run `python3 scripts/merge-order.py` with no argument first and take the green pull requests in the order it prints, each through `python3 scripts/premerge-check.py <number>` and the merge command that prints; a delegated session never merges.
 
 A documents-only overlap (`*.md`, `*.pen`, `site/`) never stacks; it is resolved once, by merging main right before the merge.
 
@@ -53,6 +53,8 @@ A green pull request does not need the latest main to merge: `python3 scripts/pr
 `CONTRIBUTING.md` lists every gate with its local command; run the lanes the diff touches before opening the pull request, and change a gate that is wrong in the same pull request with the reason in the description.
 Commit subjects and pull request titles take the form `<type>: <imperative sentence>` in English, such as `fix: keep a named tab when its last agent closes`, even when the operator writes in Korean; `CONTRIBUTING.md`, Commit messages and attribution, owns the types and the rule.
 Write the template in the order a reviewer reads it: `Summary` with screenshots, `Review` (what needs judgment, which files to watch and why, questions), `Evidence` (what was and was not confirmed), then `Breaking change` only when something breaks; answer from the diff, not from intent, and delete the lines that do not apply rather than filling them with "N/A".
+A pull request whose diff touches a screen (`web/src`, `site/`, `design/`) shows it: crop the candidate's panel, upload it with `node ~/.claude/skills/ship/scripts/prd_ship.js screenshots --no-run --file <png> --caption "<one line>"` (a PRD run drops `--no-run`), and put the image line it prints under `Summary`; when there is a reason to show nothing, write it as one line `스크린샷 없음: <reason>` for the reviewer to judge.
+`scripts/check-pr-screenshots.py` runs in `verify` and refuses the silent omission, and a body edit reruns it; `CONTRIBUTING.md`, CI gates, owns the rule.
 The reasons this repository has been burned by stay behind `Review`'s file list (runtime mutex, snapshot wire, ownership, Herdr contract, failure path, high-frequency path); machine facts such as SHAs, suite output and evidence hashes go in the folded `Verification record` block at the end, which `/ship` fills.
 
 ## Evidence Belongs Outside The Repository
@@ -99,7 +101,7 @@ Read `docs/ARCHITECTURE.md` in full before changing anything under `herdr-core/`
 - The core owns all state behind one `Mutex<Runtime>`; the shell dispatches typed events in and pulls one snapshot out when the notifier announces, and holds no authority of its own.
 - Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale, and changes those on the event that asked for it, telling Herdr afterwards.
   While that notification is pending, Herdr's move is read as confirmation; with nothing pending, a move Herdr makes on its own is followed and a diagnostic records it; a refusal or a timeout keeps the core's value and records a diagnostic.
-  A zoom, split, resize, pane close or new tab Hide asked for is drawn before Herdr's layout confirms it, and Herdr's layout replaces the drawing; the PTY size changes only after Herdr has applied the geometry, so a terminal keeps its grid while a change is drawn ahead (`docs/ARCHITECTURE.md`, Drawn ahead of Herdr).
+  A zoom, split, resize, pane close or new tab Hide asked for is drawn before Herdr's layout confirms it, and Herdr's layout replaces the drawing; each terminal's grid follows the rectangle drawn for it at once, because the PTY size is the controller client's and never Herdr's layout's (`docs/ARCHITECTURE.md`, Drawn ahead of Herdr).
   Each tab runs one geometry operation at a time with at most eight waiting, and a refusal drops the line behind it; keys typed before a new pane exists are held by the node that holds the pane up to 64 KiB per holder and 3 s per key, never dropped silently.
 - The notifier announces once per burst, and `herdr_core_snapshot` clears its latch **before** it takes the lock; clearing it after the read would swallow a change that landed during the read.
   Launch creates the core once, after the runtime resolution has finished, and never replaces it.

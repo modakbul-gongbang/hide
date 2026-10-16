@@ -61,7 +61,6 @@ fn delegated_inbound_caller_can_manage_background_views() {
     let page = apply(
         crate::workspace_control::Action::OpenBrowser {
             url: "https://example.test/delegated".to_owned(),
-            reveal: false,
             area_id: None,
             new_target: false,
         },
@@ -70,7 +69,6 @@ fn delegated_inbound_caller_can_manage_background_views() {
     apply(
         crate::workspace_control::Action::Select {
             view_id: page.view_id.clone(),
-            reveal: false,
             expected_browser_area: None,
         },
         "delegated-select",
@@ -118,7 +116,6 @@ fn authoritative_final_node_tab_close_keeps_its_page_and_drops_its_bookmark() {
             &format!("{}-owned-page", unix_milliseconds()),
             crate::workspace_control::Action::OpenBrowser {
                 url: "https://example.test/owned".to_owned(),
-                reveal: false,
                 area_id: None,
                 new_target: false,
             },

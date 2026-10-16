@@ -194,9 +194,10 @@ test("a pull request's panel shows the sessions that made it and worked on it af
     await expect(panel).toBeVisible();
 
     // A session whose file is gone stays as a dim line, and Resume says why (B15);
-    // the card reads the record again when it opens.
+    // the card reads the record again when it opens. The close chord, pressed
+    // with the keyboard in the lane (← took it), closes the slot as its ✕ does.
     fs.rmSync(files["s-gone"]);
-    await page.locator("[data-detail-close]").click();
+    await page.keyboard.press(chord("close_tab"));
     await expect(panel).toHaveCount(0);
     await openCard(page, 31, false);
     const gone = panel.locator('[data-link-session="s-gone"]');

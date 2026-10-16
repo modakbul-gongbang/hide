@@ -2334,6 +2334,12 @@ fn spawn_failure(reason: &str) -> Failure {
             again_in_ms: Some(2_000),
             ..Failure::starting("worker.spawn", reason)
         },
+        // Herdr had not confirmed the worktree in time and may still finish
+        // it; the same intent continues it.
+        "worktree_unconfirmed" => Failure {
+            again_in_ms: Some(5_000),
+            ..Failure::starting("worker.spawn", reason)
+        },
         "delivery_unavailable" | "ledger_unavailable" => {
             Failure::environment("worker.spawn", EnvSignal::HerdrSocket, reason)
         }

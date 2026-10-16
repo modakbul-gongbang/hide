@@ -1429,3 +1429,57 @@ fn a_parents_request_stays_the_childs_work_when_the_parents_screen_title_changes
         "{header}"
     );
 }
+
+#[test]
+fn a_panes_task_progress_reaches_the_wire_once_and_an_equal_answer_publishes_nothing() {
+    use crate::labels::analysis::LabelEnd;
+    use crate::links::ledger::{ChildProgress, ChildWork, SessionIdentity, WorkProgress, WorkTask};
+    let mut runtime = runtime();
+    let progress = vec![WorkProgress {
+        session: SessionIdentity {
+            device_id: "mac".into(),
+            agent: "claude".into(),
+            session_id: "s-1".into(),
+        },
+        done: 0,
+        total: 2,
+        tasks: ["task-3", "task-3.2"]
+            .map(|id| WorkTask {
+                id: id.into(),
+                chapter_id: "chapter-1".into(),
+                name: id.into(),
+                at_unix_ms: 1,
+                last_at_unix_ms: 2,
+                end: LabelEnd::Waiting,
+                done: false,
+            })
+            .to_vec(),
+        outputs: Vec::new(),
+        children: Some(ChildProgress {
+            children: vec![ChildWork::Done, ChildWork::Unjudged],
+            done: None,
+        }),
+    }];
+    assert!(runtime.ingest_work_progress(progress.clone()));
+    assert!(
+        !runtime.ingest_work_progress(progress),
+        "an equal answer redraws nothing"
+    );
+    let wire = serde_json::to_value(runtime.snapshot()).unwrap();
+    let row = &wire["link_summaries"]["progress"][0];
+    assert_eq!(
+        (row["done"].as_u64(), row["total"].as_u64()),
+        (Some(0), Some(2))
+    );
+    assert_eq!(
+        row["children"]["children"],
+        serde_json::json!(["done", "unjudged"])
+    );
+    assert!(
+        row["children"]["done"].is_null(),
+        "an unjudged child hides the fraction"
+    );
+    assert!(runtime.ingest_work_progress(Vec::new()));
+    let wire = serde_json::to_value(runtime.snapshot()).unwrap();
+    assert_eq!(wire["link_summaries"]["progress"], serde_json::json!([]));
+}

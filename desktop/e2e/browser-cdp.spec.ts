@@ -270,7 +270,7 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
   app = launched.app;
   await fitWindow(app, { width: 1024, height: 640 });
   await enterWorkspace(launched.page, "fixture");
-  const opened = await fromPane(["browser", "open", `${origin}/fixture`, "--reveal", "--wait"]);
+  const opened = await fromPane(["browser", "open", `${origin}/fixture`, "--wait"]);
   const displayId = (opened.result as { view_id: string }).view_id;
   expect(typeof displayId).toBe("string");
   await expect.poll(() => fromPane(["browser", "connect", "--display", displayId]).then((answer) => answer.ok), { timeout: 20_000 }).toBe(true);
@@ -442,13 +442,13 @@ test("browser CDP: creation stays in its originating area while another area is 
   const launched = await launch(run.env);
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
-  const first = await fromPane(["browser", "open", `${origin}/first`, "--reveal", "--wait"]);
+  const first = await fromPane(["browser", "open", `${origin}/first`, "--wait"]);
   await expandViews(launched.page);
   const firstId = (first.result as { view_id: string }).view_id;
   const originalArea = (await coreViews()).find((view) => view.view_id === firstId)!.area_id;
   const connected = await fromPane(["browser", "connect"]);
   const result = connected.result as Capability;
-  const foreign = await fromPane(["browser", "open", `${origin}/foreign`, "--reveal", "--wait"]);
+  const foreign = await fromPane(["browser", "open", `${origin}/foreign`, "--wait"]);
   const foreignId = (foreign.result as { view_id: string }).view_id;
   const split = await fromPane(["view", "split", foreignId, "--area", originalArea, "--edge", "right"]);
   const foreignArea = (split.result as { area_id: string }).area_id;
@@ -489,7 +489,7 @@ test("browser CDP: selected-display and direct-page close replies arrive before 
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
   for (const mode of ["browser", "page"] as const) {
-    const opened = await fromPane(["browser", "open", `${origin}/close-${mode}`, "--reveal", "--wait"]);
+    const opened = await fromPane(["browser", "open", `${origin}/close-${mode}`, "--wait"]);
     const displayId = (opened.result as { view_id: string }).view_id;
     const capability = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
     const inventory = await targets(capability);
@@ -515,7 +515,7 @@ test("browser CDP: injected incarnation-only sync revokes old URLs without repla
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
   const url = `${origin}/incarnation`;
-  const opened = await fromPane(["browser", "open", url, "--reveal", "--wait"]);
+  const opened = await fromPane(["browser", "open", url, "--wait"]);
   const displayId = (opened.result as { view_id: string }).view_id;
   const areaId = (await coreViews()).find((view) => view.view_id === displayId)!.area_id;
   const capability = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
@@ -586,7 +586,7 @@ test("browser CDP: the native guard cancels a pending preattach file load and re
   const launched = await launch(run.env);
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
-  const opened = await fromPane(["browser", "open", `${origin}/pending-preload`, "--reveal"]);
+  const opened = await fromPane(["browser", "open", `${origin}/pending-preload`]);
   const displayId = (opened.result as { view_id: string }).view_id;
   const refusals = (id: string) => hostLog(run.env).filter((line) => line.event === "browser.request_refused" && line.reason === "cdp_file_boundary" && line.display_id === id);
   await expect.poll(() => pendingPreload !== null).toBe(true);
@@ -625,7 +625,7 @@ test("browser CDP: the native guard cancels a pending preattach file load and re
   // A blocked error-page commit may conservatively quarantine the attacked
   // generation. Test normal HTTP and post-lease behavior on a fresh page.
   await fromPane(["view", "close", displayId]);
-  const later = await fromPane(["browser", "open", `${origin}/post-lease-guard`, "--reveal", "--wait"]);
+  const later = await fromPane(["browser", "open", `${origin}/post-lease-guard`, "--wait"]);
   const laterId = (later.result as { view_id: string }).view_id;
   const capability = (await fromPane(["browser", "connect", "--display", laterId])).result as Capability;
   const inventory = await targets(capability);
@@ -647,7 +647,7 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   const launched = await launch(run.env);
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
-  const opened = await fromPane(["browser", "open", `${origin}/protected`, "--reveal", "--wait"]);
+  const opened = await fromPane(["browser", "open", `${origin}/protected`, "--wait"]);
   const displayId = (opened.result as { view_id: string }).view_id;
   const connected = await fromPane(["browser", "connect"]);
   const capability = connected.result as { browser_ws_url: string; cdp_http_url: string };
@@ -700,7 +700,7 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   // even when its source is within this checkout and its renderer is live.
   const manual = path.join(herdr.root, "fixture", "manual-cdp-file.html");
   fs.writeFileSync(manual, "<title>Manual local file</title><h1>Manual local file</h1>");
-  const manualOpened = await fromPane(["browser", "open", pathToFileURL(manual).href, "--reveal", "--wait"]);
+  const manualOpened = await fromPane(["browser", "open", pathToFileURL(manual).href, "--wait"]);
   const manualId = (manualOpened.result as { view_id: string }).view_id;
   expect((await fromPane(["browser", "connect", "--display", manualId], false)).ok).toBe(false);
   const inventory = await (await fetch(`${capability.cdp_http_url}/json/list`)).json() as { id: string; url: string }[];
@@ -726,7 +726,7 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   browser = null;
   // A fresh native generation records redirect denial without sharing the
   // earlier attempts' finite diagnostic categories.
-  const redirectOpened = await fromPane(["browser", "open", `${origin}/redirect-guard`, "--reveal", "--wait"]);
+  const redirectOpened = await fromPane(["browser", "open", `${origin}/redirect-guard`, "--wait"]);
   const redirectId = (redirectOpened.result as { view_id: string }).view_id;
   const redirectCapability = (await fromPane(["browser", "connect", "--display", redirectId])).result as Capability;
   const redirectInventory = await targets(redirectCapability);
@@ -770,7 +770,7 @@ test("browser CDP: the owned native iframe request is causally canceled before f
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
   const url = `${origin}/frame-guard`;
-  const opened = await fromPane(["browser", "open", url, "--reveal", "--wait"]);
+  const opened = await fromPane(["browser", "open", url, "--wait"]);
   const displayId = (opened.result as { view_id: string }).view_id;
   const capability = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
   const refusals = () => hostLog(run.env).filter((line) => line.event === "browser.request_refused" && line.reason === "cdp_file_boundary" && line.display_id === displayId && line.resource_type === "subFrame");
@@ -827,7 +827,7 @@ test("browser CDP: controlled downloads are always canceled and log once after d
   const launched = await launch(run.env);
   app = launched.app;
   await enterWorkspace(launched.page, "fixture");
-  const opened = await fromPane(["browser", "open", `${origin}/download-guard`, "--reveal", "--wait"]);
+  const opened = await fromPane(["browser", "open", `${origin}/download-guard`, "--wait"]);
   const displayId = (opened.result as { view_id: string }).view_id;
   const capability = (await fromPane(["browser", "connect", "--display", displayId])).result as Capability;
   const inventory = await targets(capability);

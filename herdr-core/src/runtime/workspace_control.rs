@@ -377,25 +377,23 @@ impl Runtime {
             ) {
                 self.make_view_room(&key);
             }
-            // A pane of a tab the operator is not looking at leaves the
-            // selection and the lane as they were and only bookmarks its own
-            // tab (D-04, B7); `--reveal` brings the View forward instead.
-            let kept = (!super::view_bookmarks::action_reveals(&action))
-                .then(|| self.background_caller_tab(&key, pane_id))
-                .flatten()
-                .map(|_| self.keep_front(&key));
+            // On the Workspace in front only the agent in the pane the
+            // operator is in changes what they see; another pane, of the same
+            // tab or not, leaves the selection, the lane and every tab's
+            // bookmark as they were.
+            let kept = self
+                .caller_stays_behind(&key, pane_id)
+                .then(|| self.keep_front(&key));
             // An open the operator is looking at calls the lane as a click
-            // does: from the front tab of the front Workspace, or revealed
-            // (PRD right-lane B17), and keeps a tree that showed alone.
-            let calls_lane = lane_call(&action).is_some_and(|reveal| {
-                reveal || kept.is_none() && self.front_workspace_key().as_ref() == Some(&key)
-            });
+            // does (PRD right-lane B17), and keeps a tree that showed alone.
+            let calls_lane = kept.is_none()
+                && self.front_workspace_key().as_ref() == Some(&key)
+                && lane_call(&action);
             let lone_tree = calls_lane && self.front_lone_tree().as_ref() == Some(&key);
             let mut applied =
-                self.apply_workspace_action(&key, &context, request_id, pane_id, &action, material);
+                self.apply_workspace_action(&key, &context, request_id, &action, material);
             if let Ok(done) = &mut applied {
                 self.stamp_control_opener(&key, pane_id, &action, &done.view_id);
-                self.note_caller_view(&key, pane_id, &action, &done.view_id);
                 if calls_lane {
                     self.apply_area_intent_to(&key, AreaIntent::Files);
                     if lone_tree {
@@ -443,13 +441,11 @@ impl Runtime {
         key: &(String, String),
         context: &Context,
         request_id: &str,
-        caller_id: &str,
         action: &Action,
         material: Option<ActionMaterial>,
     ) -> Result<ActionResult, Refusal> {
         if let Action::OpenBrowser {
             url,
-            reveal,
             area_id,
             new_target,
         } = action
@@ -501,9 +497,6 @@ impl Runtime {
                 .view_layout_of(key)
                 .and_then(|layout| layout.area_of(&view_id))
                 .map(|area| area.id.clone());
-            if *reveal {
-                self.reveal_workspace_control(context, key, request_id, caller_id);
-            }
             return Ok(ActionResult {
                 context: context.clone(),
                 request_id: request_id.to_owned(),
@@ -513,16 +506,7 @@ impl Runtime {
                 load: Some(load),
             });
         }
-        if let Action::OpenFile {
-            path: _,
-            beside,
-            reveal,
-        }
-        | Action::OpenDiff {
-            path: _,
-            beside,
-            reveal,
-        } = action
+        if let Action::OpenFile { path: _, beside } | Action::OpenDiff { path: _, beside } = action
         {
             let Some(material) = material else {
                 return Err(Refusal {
@@ -632,17 +616,13 @@ impl Runtime {
             let area_id = self
                 .view_layout_of(key)
                 .map(|layout| layout.active_area().id.clone());
-            if *reveal {
-                self.reveal_workspace_control(context, key, request_id, caller_id);
-            }
             return Ok(ActionResult {
                 context: context.clone(),
                 request_id: request_id.to_owned(),
-                changed: *reveal
-                    || self
-                        .workspace_views
-                        .as_ref()
-                        .is_some_and(|store| store.generation != before_generation),
+                changed: self
+                    .workspace_views
+                    .as_ref()
+                    .is_some_and(|store| store.generation != before_generation),
                 view_id,
                 area_id,
                 load: None,
@@ -651,9 +631,7 @@ impl Runtime {
         let (view_id, changed, area_id) = match action {
             Action::OpenFile { .. } | Action::OpenDiff { .. } => unreachable!("handled above"),
             Action::OpenBrowser { .. } => unreachable!("handled above"),
-            Action::Select {
-                view_id, reveal, ..
-            } => {
+            Action::Select { view_id, .. } => {
                 let selected = self
                     .change_view_layout(key, |layout, stamp| {
                         layout
@@ -665,10 +643,7 @@ impl Runtime {
                     .view_layout_of(key)
                     .and_then(|layout| layout.area_of(view_id))
                     .map(|area| area.id.clone());
-                if *reveal {
-                    self.reveal_workspace_control(context, key, request_id, caller_id);
-                }
-                (view_id.clone(), selected || *reveal, area)
+                (view_id.clone(), selected, area)
             }
             Action::Split {
                 view_id,
@@ -984,20 +959,17 @@ fn layout_refusal(error: crate::view_layout::LayoutError) -> Refusal {
     }
 }
 
-/// Whether an action opens or selects a view the operator asked for, and
-/// with `--reveal`. A browser page's own target, bound to its area, calls
-/// the lane only when revealed: the page is where it already was.
-fn lane_call(action: &Action) -> Option<bool> {
+/// Whether an action opens or selects a view for the operator to look at. A
+/// browser page's own target, bound to its area, calls nothing: the page is
+/// where it already was.
+fn lane_call(action: &Action) -> bool {
     match action {
-        Action::OpenFile { reveal, .. } | Action::OpenDiff { reveal, .. } => Some(*reveal),
-        Action::OpenBrowser {
-            reveal, area_id, ..
-        } => (area_id.is_none() || *reveal).then_some(*reveal),
+        Action::OpenFile { .. } | Action::OpenDiff { .. } => true,
+        Action::OpenBrowser { area_id, .. } => area_id.is_none(),
         Action::Select {
-            reveal,
             expected_browser_area,
             ..
-        } => (expected_browser_area.is_none() || *reveal).then_some(*reveal),
-        Action::Split { .. } | Action::Move { .. } | Action::Close { .. } => None,
+        } => expected_browser_area.is_none(),
+        Action::Split { .. } | Action::Move { .. } | Action::Close { .. } => false,
     }
 }

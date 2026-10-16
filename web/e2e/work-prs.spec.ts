@@ -215,6 +215,11 @@ test("the card opens in the 보기 slot and Merge goes out on the head it showed
     const card = cardOf(page, 31);
     await expect(card).toBeVisible({ timeout: 30_000 });
     await expect(page.locator('[data-view-tab-bar] [role="tab"]', { hasText: "#31" })).toHaveCount(0);
+    // The rail's slot button draws the card's PR mark in its state and stands
+    // apart from the tools by one rule, so it is not read as a second PRs (B46).
+    const rail = await page.locator("[data-tool-rail] > [data-lane-tool], [data-tool-rail] > [data-tool-rail-divider]").evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-lane-tool") ?? "divider"));
+    expect(rail).toEqual(["detail", "divider", "memory", "prs", "divider", "files", "changes"]);
+    await expect(page.locator('[data-lane-tool="detail"] [data-detail-mark]')).toHaveAttribute("data-detail-mark", "mergeable");
     await expect(card.locator('[data-pr-card-reason="merge"]')).toBeVisible();
     // The head's ⋯ hands the pull request to an agent, makes an issue for it
     // or copies its branch name (D-28).
@@ -334,6 +339,7 @@ test("a merged pull request opens its card and draws its parts, with no Merge", 
     await work.locator('[data-pr-row="37"]').click();
     const card = cardOf(page, 37);
     await expect(card).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator('[data-lane-tool="detail"] [data-detail-mark]')).toHaveAttribute("data-detail-mark", "merged");
     await expect(card.locator("[data-pr-card-files]")).toBeVisible({ timeout: 30_000 });
     await expect(card.locator("[data-pr-card-steps]")).toHaveAttribute("data-pr-card-steps", "4");
     await unfold(card, "body");

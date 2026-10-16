@@ -183,7 +183,9 @@ pub(super) fn retract_operator_work(
         )
         .map_err(failed)?;
         tx.execute(
-            "DELETE FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3 AND task=?4",
+            &format!(
+                "DELETE FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3 AND {GROUP_SQL}=?4"
+            ),
             params![
                 session.device_id,
                 session.agent,
@@ -377,6 +379,44 @@ pub(super) fn apply_output_facts(
         tx.execute("INSERT INTO ledger_output_facts VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(repo,kind,number) DO UPDATE SET title=excluded.title,url=excluded.url,state=excluded.state,created_at=COALESCE(excluded.created_at,created_at),stale=excluded.stale,read_at=COALESCE(excluded.read_at,read_at)",
             params![output.repository.to_ascii_lowercase(),output.kind,output.number as i64,output.title,output.url,output.state,output.created_at.map(|n|n as i64),i64::from(output.stale),output.last_read_at.map(|n|n as i64)]).map_err(failed)?;
     }
+    Ok(())
+}
+
+/// `task_group` in SQL: the task id up to its first `.`.
+const GROUP_SQL: &str =
+    "(CASE WHEN instr(task,'.')>0 THEN substr(task,1,instr(task,'.')-1) ELSE task END)";
+
+/// The task cap counts groups, so a split request is kept or dropped whole.
+fn cap_task_groups(tx: &Transaction<'_>, session: &SessionIdentity) -> Result<(), String> {
+    let count: usize = tx
+        .query_row(
+            &format!("SELECT count(DISTINCT {GROUP_SQL}) FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3"),
+            params![session.device_id, session.agent, session.session_id],
+            |row| row.get(0),
+        )
+        .map_err(failed)?;
+    if count <= TASK_LIMIT {
+        return Ok(());
+    }
+    tx.execute(
+        &format!(
+            "DELETE FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3 AND {GROUP_SQL} IN \
+            (SELECT {GROUP_SQL} FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3 \
+            GROUP BY {GROUP_SQL} ORDER BY min(at),min(rowid) LIMIT ?4)"
+        ),
+        params![
+            session.device_id,
+            session.agent,
+            session.session_id,
+            (count - TASK_LIMIT) as i64
+        ],
+    )
+    .map_err(failed)?;
+    crate::diagnostic!(serde_json::json!({
+        "component":"links", "kind":"ledger.capacity", "table":"ledger_tasks",
+        "device_id":session.device_id, "agent":session.agent,
+        "session_id":session.session_id, "removed":count-TASK_LIMIT,
+    }));
     Ok(())
 }
 
@@ -925,67 +965,120 @@ impl LinkStore {
                 }
                 if *work_author {
                     match &judgment.task {
-                        TaskDecision::New { name } => {
+                        TaskDecision::New { names } => {
                             let chapter = chapter.as_deref().ok_or("ledger_chapter_missing")?;
-                            if name.trim().is_empty() || name.chars().count() > MISSED_CHARS {
-                                return Err("ledger_task_invalid".to_owned());
-                            }
-                            let task = format!("task-{offset}");
-                            tx.execute(
-                                "INSERT INTO ledger_tasks VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-                                params![
-                                    session.device_id,
-                                    session.agent,
-                                    session.session_id,
-                                    task,
-                                    chapter,
-                                    name,
-                                    start.unwrap_or(*at_unix_ms) as i64,
-                                    *at_unix_ms as i64,
-                                    encoded(end)?
-                                ],
-                            )
-                            .map_err(failed)?;
-                            tasks.push(task);
-                        }
-                        TaskDecision::Continue { ids } => {
-                            if ids.is_empty() || ids.len() > CONTINUED_TASK_LIMIT {
+                            if names.is_empty() || names.len() > NEW_TASK_LIMIT {
                                 return Err("ledger_task_capacity".to_owned());
                             }
+                            let mut seen = BTreeSet::new();
+                            for name in names {
+                                if name.trim().is_empty()
+                                    || name.chars().count() > MISSED_CHARS
+                                    || !seen.insert(name.trim())
+                                {
+                                    return Err("ledger_task_invalid".to_owned());
+                                }
+                            }
+                            // The request's tasks are one group: the first
+                            // keeps `task-<offset>`, so stored rows and
+                            // retraction keep reading it.
+                            for (index, name) in names.iter().enumerate() {
+                                let task = match index {
+                                    0 => format!("task-{offset}"),
+                                    n => format!("task-{offset}.{}", n + 1),
+                                };
+                                tx.execute(
+                                    "INSERT INTO ledger_tasks VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                                    params![
+                                        session.device_id,
+                                        session.agent,
+                                        session.session_id,
+                                        task,
+                                        chapter,
+                                        name,
+                                        start.unwrap_or(*at_unix_ms) as i64,
+                                        *at_unix_ms as i64,
+                                        encoded(end)?
+                                    ],
+                                )
+                                .map_err(failed)?;
+                                tasks.push(task);
+                            }
+                        }
+                        TaskDecision::Continue { ids } => {
+                            let groups =
+                                ids.iter().map(|id| task_group(id)).collect::<BTreeSet<_>>();
+                            if ids.is_empty() || groups.len() > CONTINUED_TASK_LIMIT {
+                                return Err("ledger_task_capacity".to_owned());
+                            }
+                            // Continuing one task continues its request's
+                            // whole group: its tasks share every END.
                             for task in ids {
-                                let changed = tx
-                                    .execute(
+                                let group = task_group(task);
+                                let exists: bool = tx
+                                    .query_row(
+                                        "SELECT EXISTS(SELECT 1 FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3 AND task=?4)",
+                                        params![session.device_id, session.agent, session.session_id, task],
+                                        |row| row.get(0),
+                                    )
+                                    .map_err(failed)?;
+                                if !exists {
+                                    return Err("ledger_task_unknown".to_owned());
+                                }
+                                if tasks.iter().any(|held: &String| task_group(held) == group) {
+                                    continue;
+                                }
+                                tx.execute(
+                                    &format!(
                                         "UPDATE ledger_tasks SET end=?5,last_at=?6 \
-                                    WHERE device=?1 AND agent=?2 AND id=?3 AND task=?4",
+                                    WHERE device=?1 AND agent=?2 AND id=?3 AND {GROUP_SQL}=?4"
+                                    ),
+                                    params![
+                                        session.device_id,
+                                        session.agent,
+                                        session.session_id,
+                                        group,
+                                        encoded(end)?,
+                                        *at_unix_ms as i64
+                                    ],
+                                )
+                                .map_err(failed)?;
+                                let mut members = tx
+                                    .prepare(&format!("SELECT task FROM ledger_tasks WHERE device=?1 AND agent=?2 AND id=?3 AND {GROUP_SQL}=?4 ORDER BY rowid"))
+                                    .map_err(failed)?;
+                                let members = members
+                                    .query_map(
                                         params![
                                             session.device_id,
                                             session.agent,
                                             session.session_id,
-                                            task,
-                                            encoded(end)?,
-                                            *at_unix_ms as i64
+                                            group
                                         ],
+                                        |row| row.get::<_, String>(0),
                                     )
+                                    .map_err(failed)?
+                                    .collect::<Result<Vec<_>, _>>()
                                     .map_err(failed)?;
-                                if changed == 0 {
-                                    return Err("ledger_task_unknown".to_owned());
-                                }
-                                if !tasks.contains(task) {
-                                    tasks.push(task.clone());
-                                }
+                                tasks.extend(members);
                             }
                         }
                         TaskDecision::None => {}
                     }
                 }
-                let output_task = if tasks.len() == 1 {
-                    tasks.first().cloned()
+                // An output belongs to a group, named by its first task: one
+                // group's turn needs no choice, two groups' take the model's.
+                let groups = tasks
+                    .iter()
+                    .map(|id| task_group(id))
+                    .collect::<BTreeSet<_>>();
+                let output_task = if groups.len() == 1 {
+                    groups.first().map(|group| (*group).to_owned())
                 } else {
                     judgment
                         .output_task_id
-                        .as_ref()
-                        .filter(|id| tasks.contains(id))
-                        .cloned()
+                        .as_deref()
+                        .filter(|id| tasks.iter().any(|task| task == id))
+                        .map(|id| task_group(id).to_owned())
                 };
                 tx.execute(
                     "INSERT INTO ledger_turns VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
@@ -1072,7 +1165,7 @@ impl LinkStore {
                     )
                     .map_err(failed)?;
                 }
-                cap(&tx, session, "ledger_tasks", TASK_LIMIT)?;
+                cap_task_groups(&tx, session)?;
                 cap(&tx, session, "ledger_missed", MISSED_LIMIT)?;
                 tx.execute("DELETE FROM ledger_issue_attempts WHERE device=?1 AND agent=?2 AND id=?3 AND state!='creating' AND NOT EXISTS(SELECT 1 FROM ledger_missed m WHERE m.device=ledger_issue_attempts.device AND m.agent=ledger_issue_attempts.agent AND m.id=ledger_issue_attempts.id AND m.missed=ledger_issue_attempts.missed)",params![session.device_id,session.agent,session.session_id]).map_err(failed)?;
                 // Turns use their end timestamp for bounded retention.
@@ -1230,7 +1323,7 @@ impl LinkStore {
             .connection
             .prepare(
                 "SELECT task,chapter,name,at,last_at,end FROM ledger_tasks \
-            WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC",
+            WHERE device=?1 AND agent=?2 AND id=?3 ORDER BY at DESC,rowid",
             )
             .map_err(failed)?;
         let tasks = statement
@@ -1349,15 +1442,34 @@ impl LinkStore {
                 output.number,
             ))
         });
+        // A request's tasks finish together: their shared END is Done and
+        // every pull request assigned to any of them is merged.
         for task in &mut record.tasks {
+            let group = task_group(&task.id);
             task.done = task.end == LabelEnd::Done
                 && record
                     .outputs
                     .iter()
-                    .filter(|o| o.kind == "pr" && o.task_id.as_deref() == Some(&task.id))
+                    .filter(|o| {
+                        o.kind == "pr" && o.task_id.as_deref().map(task_group) == Some(group)
+                    })
                     .all(|o| o.state == "merged");
         }
+        record.child_progress = ChildProgress::of(&record.children);
         Ok(record)
+    }
+
+    /// A live pane's chip and checklist: `None` for a session the ledger does
+    /// not hold or one with no task yet.
+    pub fn ledger_progress(
+        &self,
+        session: &SessionIdentity,
+    ) -> Result<Option<WorkProgress>, String> {
+        if self.session(&key(session))?.is_none() {
+            return Ok(None);
+        }
+        let record = self.record_tree(session, &mut BTreeSet::new(), 0, &mut 0, false)?;
+        Ok(WorkProgress::of(&record))
     }
 
     fn ledger_missed(&self, session: &SessionIdentity) -> Result<Vec<MissedWork>, String> {
@@ -1388,8 +1500,21 @@ impl LinkStore {
         let record = self.record_tree(session, &mut BTreeSet::new(), 0, &mut 0, false)?;
         let (mut finished_tasks, open_tasks): (Vec<_>, Vec<_>) =
             record.tasks.into_iter().partition(|task| task.done);
+        // The newest finished requests, each with all its tasks: a split
+        // request is one candidate, and continuing any of its tasks reopens
+        // the whole group (PRD task-split-checklist D-03).
         finished_tasks.sort_by_key(|task| std::cmp::Reverse(task.last_at_unix_ms));
-        finished_tasks.truncate(FINISHED_TASKS_IN_CONTEXT);
+        let mut groups = Vec::new();
+        finished_tasks.retain(|task| {
+            let group = task_group(&task.id).to_owned();
+            if !groups.contains(&group) {
+                if groups.len() == FINISHED_TASKS_IN_CONTEXT {
+                    return false;
+                }
+                groups.push(group);
+            }
+            true
+        });
         Ok(LedgerContext {
             parent_name,
             open_tasks,

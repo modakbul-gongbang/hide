@@ -2,7 +2,7 @@
 // in a pane of a private Herdr, reaches hided's relay with the pane's
 // Workspace credential, and drives the display through the desktop's scoped
 // gateway. The operator's app, Herdr server and browser are never used.
-import { expect, type Dialog, type ElectronApplication } from "@playwright/test";
+import { expect, type Dialog, type ElectronApplication, type Page } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import { createServer, type Server } from "node:http";
@@ -11,13 +11,14 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { WebSocket } from "ws";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { enterWorkspace } from "../../web/e2e/wire";
+import { enterWorkspace, showProjectRow } from "../../web/e2e/wire";
 import { fitWindow, HIDE_CLI, isolate, launch, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 180_000 });
 let herdr: HerdrFixture;
 let run: Isolated;
 let app: ElectronApplication | null = null;
+let shell: Page | null = null;
 let server: Server;
 let origin: string;
 let child: string;
@@ -102,7 +103,7 @@ function ref(text: string, line: RegExp): string {
 }
 async function openDisplay(url: string): Promise<string> {
   const stem = path.join(herdr.root, `browser-open-${++sequence}`);
-  const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[HIDE_CLI, "browser", "open", url, "--reveal", "--wait"].map(quote).join(" ")} > ${quote(`${stem}.json`)}; printf '%s' "$?" > ${quote(`${stem}.status`)}\n`;
+  const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[HIDE_CLI, "browser", "open", url, "--wait"].map(quote).join(" ")} > ${quote(`${stem}.json`)}; printf '%s' "$?" > ${quote(`${stem}.status`)}\n`;
   expect(spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0]!, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 }).status).toBe(0);
   await expect.poll(() => fs.existsSync(`${stem}.status`), { timeout: 30_000 }).toBe(true);
   const answer = JSON.parse(fs.readFileSync(`${stem}.json`, "utf8").trim().split("\n").at(-1)!) as { ok?: boolean; reason?: string; page?: unknown; result?: { view_id: string } };
@@ -126,6 +127,7 @@ async function inDisplay<T>(url: string, expression: string): Promise<T> {
 async function start(): Promise<void> {
   const launched = await launch(run.env);
   app = launched.app;
+  shell = launched.page;
   await fitWindow(app, { width: 1200, height: 800 });
   await enterWorkspace(launched.page, "fixture");
 }
@@ -269,8 +271,7 @@ test("hide browser: a cross-origin frame that never answers is noted and the res
 test("hide browser: a selected View of a Workspace behind another answers input and pixels at once, and nothing arrives when it comes forward", async () => {
   const other = path.join(herdr.root, "second-checkout");
   fs.mkdirSync(other, { recursive: true });
-  const created = herdr.run(["workspace", "create", "--cwd", other, "--label", "second", "--no-focus"]) as { result: { root_pane: { pane_id: string } } };
-  const otherPane = created.result.root_pane.pane_id;
+  herdr.run(["workspace", "create", "--cwd", other, "--label", "second", "--no-focus"]);
   await start();
   const url = `${origin}/agent`;
   const display = await openDisplay(url);
@@ -280,10 +281,10 @@ test("hide browser: a selected View of a Workspace behind another answers input 
   // Counts what the page receives, whenever it does.
   await inDisplay(url, `window.received = { clicks: 0, inputs: 0 }; document.addEventListener("click", () => window.received.clicks++, true); document.addEventListener("input", () => window.received.inputs++, true); true`);
   const received = () => inDisplay<string>(url, `JSON.stringify([window.received, document.querySelector("output").textContent])`);
-  // Another Workspace comes to the front; this one's View stays its area's
+  // The operator goes to another Workspace; this one's View stays its area's
   // selected View, and the host hides it behind the front one.
-  const front = await browserCli(["open", `${origin}/front`, "--reveal", "--wait"], otherPane);
-  expect(front.status, front.out).toBe(0);
+  const checkoutRow = (name: string) => shell!.locator("[data-project]", { hasText: name }).locator("[data-checkout]").first();
+  await (await showProjectRow(shell!, checkoutRow("second-checkout"))).click();
   const viewVisible = () => app!.evaluate(({ BrowserWindow }, address) => BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
     const contents = (view as { webContents?: Electron.WebContents }).webContents;
     return contents && !contents.isDestroyed() && contents.getURL() === address ? [(view as Electron.View).getVisible()] : [];
@@ -302,8 +303,8 @@ test("hide browser: a selected View of a Workspace behind another answers input 
   const behind = await received();
   expect(JSON.parse(behind)).toEqual([{ clicks: 1, inputs: 1 }, "applied: from behind"]);
 
-  const back = await hideCli(["view", "select", display, "--reveal"]);
-  expect(back.status, back.out).toBe(0);
+  // No agent can bring it forward; the operator coming back does.
+  await (await showProjectRow(shell!, checkoutRow("fixture"))).click();
   await expect.poll(viewVisible).toEqual([true]);
   await snapshot(display);
   await inDisplay(url, "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))");
@@ -356,7 +357,7 @@ test("hide browser: a busy, hidden, file or missing display and a stale ref are 
   await openDisplay(`${origin}/front`);
   const hidden = await json(["click", display, apply]);
   expect(hidden).toMatchObject({ ok: false, reason: "display_hidden" });
-  expect(hidden.next_action).toContain(`hide view select ${display} --reveal`);
+  expect(hidden.next_action).toContain("ask the operator to show it");
   expect((await json(["screenshot", display, path.join(herdr.root, "hidden.png")])).reason).toBe("display_hidden");
   expect(await snapshot(display)).toContain('button "Apply"');
   const file = path.join(herdr.root, "fixture", "agent-file.html");

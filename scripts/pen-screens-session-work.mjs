@@ -118,6 +118,38 @@ export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}
       ...children(id),
     ]);
   }
+  // A request split into several tasks (PRD task-split-checklist B1-B8): one
+  // task per deliverable sharing one state, the request's PR and words once on its first task,
+  // and the children's progress over the existing child rows (green done,
+  // blue working, grey the rest).
+  function split(suffix) {
+    const id = `swr-split-${suffix}`;
+    const KIDS = [['markdown-html 출시 전 수정 작업', '완료', 'done'], ['파일 페이지 댓글 기능 구현', '작업 중', 'working'], ['프로젝트 GitHub 마크 배지 적용', '완료', 'done']];
+    const segments = frame(`${id}-seg`, 'Child segments', {layout: 'horizontal', gap: 2, alignItems: 'center'},
+      KIDS.map(([, , kind], index) => frame(`${id}-seg-${index}`, kind, {width: 20, height: 4, cornerRadius: 2, fill: kind === 'done' ? '$--success' : '$--agent-working'}, [])));
+    const kid = (index, [title, state, kind]) => frame(`${id}-k${index}`, 'Delegated child', {width: 'fill_container', height: 24, layout: 'horizontal', gap: 6, alignItems: 'center', stroke: '$--lineage-rail', strokeWidth: {left: 1}, strokeAlignment: 'inner', padding: [0, 0, 0, 8]}, [
+      icon(`${id}-k${index}-fold`, 'chevron-right', {size: 12, fill: '$--muted-foreground'}),
+      provider(`${id}-k${index}-mark`, 'claude', 12),
+      label(`${id}-k${index}-title`, title, '$--foreground', {width: 'fill_container'}),
+      micro(`${id}-k${index}-state`, state, kind === 'working' ? '$--agent-working' : '$--muted-foreground'),
+    ]);
+    return panel(id, '나뉜 요청', [
+      ...top(id, {title: 'Pre-launch bugfix pass for File views and README', state: '쉬는 중 · 자식 3'}),
+      heading(`${id}-prs`, 'PR', '1'),
+      prRow(`${id}-pr1`, {number: 1233, state: 'mergeable', title: 'Draw HTML blocks and images in Markdown Live'}),
+      heading(`${id}-work`, '시킨 일', '0/4', [toggle(id, true)]),
+      task(`${id}-t1`, {state: 'review', name: 'README의 HTML 태그가 보이게 하기', pr: [1233, 'mergeable'], words: ['런칭 전 버그픽스 할 것 1. README에 html 태그가 안 보이는 것 같은데(우리 README 참고) 이거 어케 보여…']}),
+      task(`${id}-t2`, {state: 'review', name: '댓글 + 마크 위치 맞추기'}),
+      task(`${id}-t3`, {state: 'review', name: 'HTML 페이지에서 댓글이 동작하게 하기'}),
+      task(`${id}-t4`, {state: 'review', name: '드래그한 영역 남겨두기'}),
+      frame(`${id}-children`, '자식 일', {width: 'fill_container', height: 24, layout: 'horizontal', gap: 6, alignItems: 'center', padding: [8, 0, 0, 0]}, [
+        label(`${id}-children-t`, '자식 일', '$--subtle-foreground', {weight: '500'}),
+        micro(`${id}-children-n`, '2/3'),
+        segments,
+      ]),
+      ...KIDS.map((spec, index) => kid(index, spec)),
+    ]);
+  }
   // Summaries off: no task judgment, so the PRs and the operator's raw
   // requests, oldest first with the last five open.
   function off(suffix) {
@@ -173,5 +205,5 @@ export function sessionWorkScreens({frame, text, icon, screenButton, themedXref}
       ]),
     ]);
   }
-  return suffix => [record(suffix, false), record(suffix, true), off(suffix), states(suffix)];
+  return suffix => [record(suffix, false), record(suffix, true), split(suffix), off(suffix), states(suffix)];
 }

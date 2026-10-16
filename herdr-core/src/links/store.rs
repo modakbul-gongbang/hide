@@ -156,6 +156,16 @@ pub struct LocalFiles<'a> {
 }
 
 impl LinkStore {
+    /// Moves whenever a row of the file changes, through this connection or
+    /// another, so a reader can tell that an answer it derived still stands.
+    pub fn revision(&self) -> Result<(u64, i64), String> {
+        let version = self
+            .connection
+            .query_row("PRAGMA data_version", [], |row| row.get(0))
+            .map_err(failed)?;
+        Ok((self.connection.total_changes(), version))
+    }
+
     /// Opens the writer's connection, making the file private when it is
     /// new. A file that fails its integrity check is set aside once and made
     /// again; a file of a newer schema is refused and left as it is.

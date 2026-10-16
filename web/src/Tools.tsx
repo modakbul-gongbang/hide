@@ -136,12 +136,13 @@ function DetailSlotButton({ actions, pressed }: { actions: Actions; pressed: boo
   const title = useDetailTitle();
   if (!item) return null;
   return (
+    <>
     <Hint label={title || t("detail.slot")} side="left">
       <button
         type="button"
         aria-pressed={pressed}
         aria-label={title || t("detail.slot")}
-        className={`relative mb-xs flex size-(--size-tool-rail-button) items-center justify-center rounded-md outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
+        className={`relative flex size-(--size-tool-rail-button) items-center justify-center rounded-md outline-none hover:bg-secondary hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring ${pressed ? "bg-secondary font-medium text-foreground" : "text-muted-foreground"}`}
         data-lane-tool="detail"
         data-detail-slot={item.kind}
         onClick={() => actions.toggleDetail()}
@@ -150,6 +151,9 @@ function DetailSlotButton({ actions, pressed }: { actions: Actions; pressed: boo
         <DetailIcon item={item} className="size-(--size-icon-lg)" />
       </button>
     </Hint>
+    {/* The slot is no tool: one short rule sets it apart from the tools below. */}
+    <span aria-hidden="true" className="my-xs h-(--size-hairline) w-(--size-icon-lg) shrink-0 bg-border" data-tool-rail-divider="detail" />
+    </>
   );
 }
 

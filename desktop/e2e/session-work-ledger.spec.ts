@@ -9,6 +9,31 @@ import { enterWorkspace, openTaskFolds, showTool, taskRow } from "../../web/e2e/
 import { fitWindow, isolate, launchShell, REPO, test } from "./fixture";
 import { captureElectronWindow } from "./electron-window";
 
+/** The record, its words beside the split tasks, then the pane's checklist pinned by Show task list through the app menu's chord. */
+async function captureRecordAndTaskList(app: ElectronApplication, pane: string, theme: string, facts: Record<string, unknown>) {
+  const page = await app.firstWindow();
+  const record = page.locator('aside[data-lane="detail"][data-detail="record"] [data-session-record="lane"]');
+  await captureElectronWindow(app, `record-chapters-children-${theme}`, facts);
+  // The split request's words show once, under its first task (D-13).
+  await record.locator('[data-record-words="off"]').click();
+  await expect(record.locator("[data-record-words-bubble]").first()).toBeVisible();
+  await captureElectronWindow(app, `record-words-${theme}`, facts);
+  await record.locator('[data-record-words="on"]').click();
+  await page.locator(`[data-pane-view="${pane}"] .xterm-helper-textarea`).focus();
+  await page.keyboard.press(chord("toggle_task_list", "electron"));
+  const list = page.locator(`[data-pane-task-list="${pane}"]`);
+  await expect(list.locator("[data-task-list-name]")).toHaveCount(3);
+  await captureElectronWindow(app, `pane-task-list-${theme}`, facts);
+  await page.keyboard.press(chord("toggle_task_list", "electron"));
+  await expect(list).toHaveCount(0);
+}
+
+/** Agent summaries off keeps no tasks, so the pane head draws no chip (PRD task-split-checklist B9). */
+async function captureSummariesOff(app: ElectronApplication, pane: string, theme: string, facts: Record<string, unknown>) {
+  await expect((await app.firstWindow()).locator(`[data-pane-task-chip="${pane}"]`)).toHaveCount(0);
+  await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);
+}
+
 test("@platform session work records, missed lines, ended work and search render in both themes in a narrow native lane", async () => {
   test.setTimeout(240_000);
   const herdr = await startHerdr();
@@ -56,8 +81,8 @@ test("@platform session work records, missed lines, ended work and search render
     await setFixtureLifecycle(herdr, herdr.panes[0], "working");
     await expect(root).toContainText(NEXT_GOAL, { timeout: 45_000 });
     await setFixtureLifecycle(herdr, herdr.panes[0], "idle");
-    // The parent's two tasks; the child's is in its own record, behind its row (B20).
-    await expect(record.locator('[data-record-task]')).toHaveCount(2, { timeout: 45_000 });
+    // The parent's three tasks, the second request's two deliverables one each; the child's is in its own record, behind its row (B20).
+    await expect(record.locator('[data-record-task]')).toHaveCount(3, { timeout: 45_000 });
     await expect(record.locator('[data-record-output="pr"]')).toHaveCount(3, { timeout: 45_000 });
     // The child is a row of the parent's record (B20); the capture keeps the parent in front.
     await expect(record.locator(`[data-record-child="${child}"]`)).toBeVisible();
@@ -70,7 +95,7 @@ test("@platform session work records, missed lines, ended work and search render
       await page.locator('[data-language-option="ko"]').click();
       await page.keyboard.press("Escape");
       const facts = { ...fixtureIdentity, theme, tools: await page.locator("[data-lane-frame]").boundingBox() };
-      await captureElectronWindow(app, `record-chapters-children-${theme}`, facts);
+      await captureRecordAndTaskList(app, herdr.panes[0], theme, facts);
       const missed = record.locator('[data-missed-work]', { hasText: MISSED });
       await missed.getByRole("button", { name: "무시", exact: true }).click();
       // A closed one is a muted line under its task; Undo shows under the pointer.
@@ -101,7 +126,7 @@ test("@platform session work records, missed lines, ended work and search render
       await expect(record.locator('[data-record-child]')).toContainText('Claude');
       // Only the child's pull request names its maker; the session's own say nothing.
       await expect(record.locator('[data-output-source]')).toHaveText(['Claude']);
-      await captureElectronWindow(app, `record-summaries-off-${theme}`, facts);
+      await captureSummariesOff(app, herdr.panes[0], theme, facts);
       await page.locator('[data-open-settings]').click();
       await page.locator('[data-settings-tab="hideAi"]').click();
       await page.locator('[data-ai-agent-summary="false"]').click();

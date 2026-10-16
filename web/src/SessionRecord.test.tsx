@@ -199,3 +199,42 @@ it("ends an idle record with the last thing its agent said, and a working one wi
     expect(container.querySelector("[data-record-last-words]")).toBeNull();
   } finally { await unmount(); }
 });
+
+it("heads the children with their work done over their count and one segment each, or the plain count while one is unjudged (B7, B8)", async () => {
+  const judged = await mount({ ...BASE, children: [child, { ...child, session: { ...CHILD, session_id: "second" } }], child_progress: { children: ["done", "working"], done: 1 } });
+  try {
+    const head = judged.container.querySelector("[data-child-progress]")!;
+    expect(head.getAttribute("data-child-progress")).toBe("1/2");
+    expect(text(head)).toBe("Children's work1/2");
+    expect(Array.from(head.querySelectorAll("[data-child-segment]")).map((node) => node.getAttribute("data-child-segment"))).toEqual(["done", "working"]);
+    // The children list itself is unchanged below the heading.
+    expect(judged.container.querySelectorAll("[data-record-child]")).toHaveLength(2);
+  } finally { await judged.unmount(); }
+  const unjudged = await mount({ ...BASE, child_progress: { children: ["unjudged"], done: null } });
+  try {
+    expect(unjudged.container.querySelector("[data-child-progress]")?.getAttribute("data-child-progress")).toBe("count");
+    expect(unjudged.container.querySelector("[data-child-segment]")).toBeNull();
+  } finally { await unjudged.unmount(); }
+  // With Agent summaries off the record keeps its old children heading.
+  const off = await mount({ ...BASE, child_progress: { children: ["done"], done: 1 } }, { summaries: false });
+  try {
+    expect(off.container.querySelector("[data-child-progress]")).toBeNull();
+  } finally { await off.unmount(); }
+});
+
+it("shows a split request's words once, under its first task, with the button on (B18)", async () => {
+  const split: RecordValue = {
+    ...BASE,
+    tasks: [task("task-3", "README tags", AT + 3, false, "waiting"), task("task-3.2", "Comment marks", AT + 3, false, "waiting")],
+    requests: [request(3, "1. README tags 2. comment marks", ["task-3", "task-3.2"]), request(5, "merge it", ["task-3", "task-3.2"])],
+    missed: [missed("m-split", "Pen board icon", 3)],
+    outputs: [],
+  };
+  const { container, unmount } = await mount(split, { words: true });
+  try {
+    expect(text(container.querySelector("[data-record-work] h3"))).toBe("Assigned work 0/2");
+    const rows = Array.from(container.querySelectorAll("[data-record-task]"));
+    expect(rows.map((row) => Array.from(row.querySelectorAll("[data-record-words-bubble]")).map((node) => node.getAttribute("data-record-words-bubble")))).toEqual([["3", "5"], []]);
+    expect(rows.map((row) => row.querySelectorAll("[data-missed-work]").length)).toEqual([1, 0]);
+  } finally { await unmount(); }
+});

@@ -11,7 +11,7 @@
 
 use super::ledger::{
     LEDGER_DEPTH_LIMIT, LEDGER_QUEUE_LIMIT, LEDGER_RPC_LIMIT, LedgerAnswer, LedgerCall,
-    LedgerContext, LedgerUpdate, SessionIdentity, SessionRecord, SessionSearchHit,
+    LedgerContext, LedgerUpdate, SessionIdentity, SessionRecord, SessionSearchHit, WorkProgress,
 };
 use super::store::{IssueLinks, LinkStore, LocalFiles, Opened, PrLinks};
 use super::{
@@ -20,7 +20,7 @@ use super::{
 };
 use crate::node_access::NodeLink;
 use hide_session::links::{self, Candidate, ReadRequest};
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -63,6 +63,8 @@ pub trait Sink: Send + 'static {
     fn session_search(&self, _generation: u64, _answer: Result<Vec<SessionSearchHit>, String>) {}
     /// Each project's counts and chips, by workspace id, when one changed.
     fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>);
+    /// Each live pane session's tasks and children, when one changed.
+    fn progress(&self, progress: Vec<WorkProgress>);
     /// A panel read's answer; `generation` fences a superseded one.
     fn panel(&self, generation: u64, answer: Result<PanelAnswer, String>);
     /// Whether the first fill or a listing's reads are running (B24).
@@ -347,6 +349,10 @@ struct State {
     panel: Option<PanelRequest>,
     panel_answer: Option<Result<PanelAnswer, String>>,
     summaries: BTreeMap<String, ProjectLinkSummary>,
+    progress: Vec<WorkProgress>,
+    /// The store revision and the pane sessions `progress` was read at; the
+    /// same pair again means the same answer, so nothing is read.
+    progress_read: Option<((u64, i64), BTreeSet<SessionIdentity>)>,
     queue: VecDeque<Candidate>,
     /// The listing whose files are being read, until its last page drains.
     listing: Option<Listing>,
@@ -369,6 +375,37 @@ struct State {
 }
 
 impl State {
+    fn new() -> Self {
+        Self {
+            ledger: VecDeque::new(),
+            ledger_retry_at: None,
+            record: None,
+            record_answer: None,
+            search: None,
+            projects: Arc::default(),
+            projects_due: false,
+            panes: Arc::default(),
+            parents: None,
+            panel: None,
+            panel_answer: None,
+            summaries: BTreeMap::new(),
+            progress: Vec::new(),
+            progress_read: None,
+            queue: VecDeque::new(),
+            listing: None,
+            filled: false,
+            filled_unknown: true,
+            devices: HashMap::new(),
+            devices_at: None,
+            filling: false,
+            write_failure: None,
+            dirty_at: None,
+            listed: None,
+            panes_at: None,
+            pruned: None,
+        }
+    }
+
     /// Notes a write's outcome; a change of failure re-answers the panel.
     fn wrote(&mut self, result: Result<(), String>, what: &str) -> bool {
         let failure = result.err();
@@ -472,32 +509,7 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
     // again every listing period; until then a panel says why.
     let mut store = open_store(&paths.store);
     let mut opened_at = Instant::now();
-    let mut state = State {
-        ledger: VecDeque::new(),
-        ledger_retry_at: None,
-        record: None,
-        record_answer: None,
-        search: None,
-        projects: Arc::default(),
-        projects_due: false,
-        panes: Arc::default(),
-        parents: None,
-        panel: None,
-        panel_answer: None,
-        summaries: BTreeMap::new(),
-        queue: VecDeque::new(),
-        listing: None,
-        filled: false,
-        filled_unknown: true,
-        devices: HashMap::new(),
-        devices_at: None,
-        filling: false,
-        write_failure: None,
-        dirty_at: None,
-        listed: None,
-        panes_at: None,
-        pruned: None,
-    };
+    let mut state = State::new();
     loop {
         let (lock, wake) = &*client.0;
         let Ok(mut mailbox) = lock.lock() else { return };
@@ -773,6 +785,7 @@ fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink)
         {
             state.dirty_at = None;
             publish_summaries(store, &mut state, sink);
+            publish_progress(store, &mut state, sink);
             if state.panel.is_some() {
                 answer_panel(store, own, paths, &mut state, sink);
             }
@@ -1356,6 +1369,56 @@ fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
     }
 }
 
+/// The chip and checklist of every session a pane carries, from the same
+/// record the context reads; one that cannot be read keeps what it showed.
+fn publish_progress(store: &LinkStore, state: &mut State, sink: &impl Sink) {
+    let sessions = state
+        .panes
+        .iter()
+        .map(|pane| SessionIdentity {
+            device_id: pane.device_id.clone(),
+            agent: pane.agent.clone(),
+            session_id: pane.session_id.clone(),
+        })
+        .collect::<BTreeSet<_>>();
+    let revision = store.revision().ok();
+    if revision.is_some_and(|revision| {
+        state
+            .progress_read
+            .as_ref()
+            .is_some_and(|(read, panes)| *read == revision && *panes == sessions)
+    }) {
+        return;
+    }
+    let mut progress = Vec::new();
+    let mut failed = false;
+    for session in &sessions {
+        match store.ledger_progress(session) {
+            Ok(Some(row)) => progress.push(row),
+            Ok(None) => {}
+            Err(code) => {
+                failed = true;
+                log_write(&code, "ledger_progress");
+                progress.extend(
+                    state
+                        .progress
+                        .iter()
+                        .find(|held| &held.session == session)
+                        .cloned(),
+                );
+            }
+        }
+    }
+    // A failed read is not taken as read: the next summary pass reads again.
+    state.progress_read = revision
+        .filter(|_| !failed)
+        .map(|revision| (revision, sessions));
+    if progress != state.progress {
+        state.progress = progress.clone();
+        sink.progress(progress);
+    }
+}
+
 fn refresh_reader_context(
     client: &LinkClient,
     store: &LinkStore,
@@ -1544,7 +1607,7 @@ mod tests {
                 turn_witness: None,
                 judgment: TurnJudgment {
                     task: TaskDecision::New {
-                        name: "Current root task".into(),
+                        names: vec!["Current root task".into()],
                     },
                     ..Default::default()
                 },
@@ -1654,7 +1717,7 @@ mod tests {
                 turn_witness: None,
                 judgment: TurnJudgment {
                     task: TaskDecision::New {
-                        name: "Release build".into(),
+                        names: vec!["Release build".into()],
                     },
                     ..Default::default()
                 },
@@ -1851,10 +1914,104 @@ mod tests {
         assert_eq!(store.ledger_record(&identity).unwrap().repository, None);
     }
 
+    #[test]
+    fn a_panes_progress_is_read_again_only_after_the_store_or_the_panes_change() {
+        struct Count(Arc<Mutex<Vec<Vec<WorkProgress>>>>);
+        impl Sink for Count {
+            fn summaries(&self, _summaries: BTreeMap<String, ProjectLinkSummary>) {}
+            fn progress(&self, progress: Vec<WorkProgress>) {
+                self.0.lock().unwrap().push(progress);
+            }
+            fn panel(&self, _generation: u64, _answer: Result<PanelAnswer, String>) {}
+            fn filling(&self, _filling: bool) {}
+            fn devices(&self) -> Vec<(String, Arc<dyn NodeLink>)> {
+                Vec::new()
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let (mut store, _) = LinkStore::open(&directory.path().join("links.sqlite3")).unwrap();
+        let session = SessionIdentity {
+            device_id: "device-a".into(),
+            agent: "codex".into(),
+            session_id: "session-a".into(),
+        };
+        let ask = |store: &mut LinkStore, offset: u64, names: &[&str]| {
+            store
+                .apply_ledger_update(&LedgerUpdate::Requests {
+                    session: session.clone(),
+                    cwd: "/repo".into(),
+                    path: None,
+                    requests: vec![crate::links::ledger::RecordedRequest {
+                        offset,
+                        at_unix_ms: offset * 1_000,
+                        text: "고쳐줘".into(),
+                        author: crate::links::ledger::WorkAuthor::Operator,
+                        task_ids: vec![],
+                        chapter_id: None,
+                        judged: false,
+                    }],
+                })
+                .unwrap();
+            store
+                .apply_ledger_update(&LedgerUpdate::TurnEnd {
+                    session: session.clone(),
+                    offset,
+                    at_unix_ms: offset * 1_000 + 500,
+                    end: crate::labels::analysis::LabelEnd::Waiting,
+                    work_author: true,
+                    turn_witness: None,
+                    judgment: crate::links::ledger::TurnJudgment {
+                        task: crate::links::ledger::TaskDecision::New {
+                            names: names.iter().map(|name| (*name).into()).collect(),
+                        },
+                        ..Default::default()
+                    },
+                })
+                .unwrap();
+        };
+        store
+            .apply_ledger_update(&LedgerUpdate::Chapter {
+                session: session.clone(),
+                goal: "출시 전 수정".into(),
+                at_unix_ms: 500,
+            })
+            .unwrap();
+        ask(&mut store, 1, &["README 태그", "댓글 위치"]);
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = Count(seen.clone());
+        let mut state = State::new();
+        state.panes = Arc::new(vec![PaneFact {
+            device_id: session.device_id.clone(),
+            agent: session.agent.clone(),
+            session_id: session.session_id.clone(),
+            cwd: "/repo".into(),
+            branch: None,
+        }]);
+        publish_progress(&store, &mut state, &sink);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert_eq!(seen.lock().unwrap()[0][0].total, 2);
+        // Nothing moved: no read, so a held answer the store would not give
+        // stays, and nothing is published.
+        state.progress = Vec::new();
+        publish_progress(&store, &mut state, &sink);
+        assert_eq!(seen.lock().unwrap().len(), 1);
+        assert!(state.progress.is_empty());
+        // A judged turn changes the store, so the pane is read and published again.
+        ask(&mut store, 2, &["HTML 댓글"]);
+        publish_progress(&store, &mut state, &sink);
+        assert_eq!(seen.lock().unwrap().len(), 2);
+        assert_eq!(seen.lock().unwrap()[1][0].total, 3);
+        // The pane closing changes the sessions read, and the row goes.
+        state.panes = Arc::default();
+        publish_progress(&store, &mut state, &sink);
+        assert_eq!(seen.lock().unwrap().last().unwrap(), &Vec::new());
+    }
+
     #[derive(Default)]
     struct Seen {
         panel: Option<Result<PanelAnswer, String>>,
         summaries: BTreeMap<String, ProjectLinkSummary>,
+        progress: Vec<WorkProgress>,
     }
 
     struct TestSink {
@@ -1865,6 +2022,9 @@ mod tests {
     impl Sink for TestSink {
         fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>) {
             self.seen.lock().unwrap().summaries = summaries;
+        }
+        fn progress(&self, progress: Vec<WorkProgress>) {
+            self.seen.lock().unwrap().progress = progress;
         }
         fn panel(&self, _generation: u64, answer: Result<PanelAnswer, String>) {
             self.seen.lock().unwrap().panel = Some(answer);

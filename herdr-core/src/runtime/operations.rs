@@ -869,6 +869,13 @@ impl Runtime {
             prediction,
         );
         self.begin_op_timing(&id, kind, Some(&scope_id), &[&target_id]);
+        // A zoom or resize is drawn at the request, and the pane's grid
+        // follows the drawing, so its record waits for the frame after the
+        // resize that drawing sends (PRD grid-ahead-of-herdr D-06); a
+        // split's record learns its pane from Herdr's answer.
+        if matches!(kind, "pane.zoom" | "pane.resize") {
+            self.await_op_frame(&id, &target_id, true);
+        }
         if let Some(request_id) = input_request {
             self.input_requests.open(
                 request_id,
@@ -1533,42 +1540,37 @@ impl Runtime {
                 let now = std::time::Instant::now();
                 self.op_timings
                     .stamp(id, super::op_timing::Stage::HerdrAck, now);
-                match created_pane_id.as_deref() {
-                    Some(created) => {
-                        self.op_timings.learn(id, None, Some(created));
-                        self.await_op_frame(id, created, false);
-                        // The split is drawn now, with the pane Herdr named
-                        // (D-03, D-07); Herdr's layout replaces it on arrival.
-                        if let GeometryRequest::Pane(PaneControlAction::Split {
-                            pane_id,
-                            direction,
-                            ..
-                        }) = &operation.request
-                            && let Some(current) = self.pane_operations.get_mut(id)
-                        {
-                            current.prediction = Some(super::pane_prediction::Prediction::Split {
-                                target: pane_id.clone(),
-                                direction: match direction {
-                                    PaneSplitDirection::Right => {
-                                        crate::model::PaneLayoutDirection::Right
-                                    }
-                                    PaneSplitDirection::Down => {
-                                        crate::model::PaneLayoutDirection::Down
-                                    }
-                                },
-                                created: created.to_owned(),
-                            });
-                            self.request_republish();
-                        }
-                        // Keys typed since the split was asked for belong to
-                        // the pane Herdr just named, and to no other, once its
-                        // shell reads them.
-                        self.resolve_input_request_at_shell(
-                            &super::terminal_input::InputOrigin::Split(id.to_owned()),
-                            created,
-                        );
+                if let Some(created) = created_pane_id.as_deref() {
+                    self.op_timings.learn(id, None, Some(created));
+                    self.await_op_frame(id, created, false);
+                    // The split is drawn now, with the pane Herdr named
+                    // (D-03, D-07); Herdr's layout replaces it on arrival.
+                    if let GeometryRequest::Pane(PaneControlAction::Split {
+                        pane_id,
+                        direction,
+                        ..
+                    }) = &operation.request
+                        && let Some(current) = self.pane_operations.get_mut(id)
+                    {
+                        current.prediction = Some(super::pane_prediction::Prediction::Split {
+                            target: pane_id.clone(),
+                            direction: match direction {
+                                PaneSplitDirection::Right => {
+                                    crate::model::PaneLayoutDirection::Right
+                                }
+                                PaneSplitDirection::Down => crate::model::PaneLayoutDirection::Down,
+                            },
+                            created: created.to_owned(),
+                        });
+                        self.request_republish();
                     }
-                    None => self.await_op_frame(id, &operation.target_id, true),
+                    // Keys typed since the split was asked for belong to
+                    // the pane Herdr just named, and to no other, once its
+                    // shell reads them.
+                    self.resolve_input_request_at_shell(
+                        &super::terminal_input::InputOrigin::Split(id.to_owned()),
+                        created,
+                    );
                 }
                 if let Some(current) = self.pane_operations.get_mut(id) {
                     current.phase = "awaiting_topology".to_owned();
@@ -1711,10 +1713,7 @@ impl Runtime {
                 continue;
             };
             self.report_prediction_mismatch(&operation, &current_signature);
-            if let Some(pane) = self.op_timings.applied(&id, std::time::Instant::now()) {
-                self.terminals
-                    .control(hide_node_link::terminal::TerminalControl::WatchFrame { pane });
-            }
+            self.op_timings.applied(&id, std::time::Instant::now());
             self.push_diagnostic(
                 "pane.operation.topology_confirmed",
                 format!(

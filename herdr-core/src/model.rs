@@ -2574,12 +2574,6 @@ pub struct TerminalPaneSnapshot {
     /// from the wire while false.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub scroll_held_elsewhere: bool,
-    /// The pane's tab is drawn ahead of Herdr (a split, close, zoom or resize
-    /// Herdr has not confirmed), so its PTY keeps its size: the core sends no
-    /// resize for it and the shell keeps its terminal grid until Herdr
-    /// confirms (PRD instant-pane-topology D-08). Absent while false.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub grid_held: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -6472,6 +6466,21 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "label_end", &ends);
         checked.insert("label_end");
+
+        use crate::links::ledger::ChildWork;
+        let children = [
+            ChildWork::Done,
+            ChildWork::Working,
+            ChildWork::Other,
+            ChildWork::Unjudged,
+        ];
+        for variant in children {
+            match variant {
+                ChildWork::Done | ChildWork::Working | ChildWork::Other | ChildWork::Unjudged => {}
+            }
+        }
+        assert_wire(&contract, "child_work", &children);
+        checked.insert("child_work");
 
         use hide_session::turns::UserTurnKind;
         let user_turns = [UserTurnKind::PlanApproval, UserTurnKind::Question];
