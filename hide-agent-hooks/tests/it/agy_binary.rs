@@ -50,10 +50,17 @@ fn the_real_agy_loads_hide_s_hook_block() {
             command.env(name, value);
         }
     }
-    // The nightly's CI account (`agy-contract.yml`, `live`). Which variable
-    // agy signs in from is not proven yet; the first configured run settles it.
+    // The nightly's CI account (`agy-contract.yml`, `live`). agy runs against
+    // the Gemini API without signing in when its settings say
+    // `"modelProvider": "gemini"` and `GEMINI_API_KEY` holds the key (agy's
+    // changelog, in the 1.4.0 binary).
     let key = std::env::var_os("HIDE_AGY_API_KEY").filter(|key| !key.is_empty());
     if let Some(key) = &key {
+        std::fs::write(
+            home.path().join(".gemini/antigravity-cli/settings.json"),
+            r#"{"modelProvider": "gemini"}"#,
+        )
+        .unwrap();
         command.env("GEMINI_API_KEY", key);
     }
     let finished = hide_platform::process::run_to_end(
@@ -83,7 +90,7 @@ fn the_real_agy_loads_hide_s_hook_block() {
     // for agy's own sign-in, and nothing on PATH could open one.
     assert!(
         key.is_none() || signed_in.is_some(),
-        "agy did not sign in with HIDE_AGY_API_KEY passed as GEMINI_API_KEY; it wants a browser sign-in, which a CI runner cannot give:\n{report}"
+        "agy did not run on HIDE_AGY_API_KEY (GEMINI_API_KEY with modelProvider gemini); it wants a browser sign-in, which a CI runner cannot give:\n{report}"
     );
     if let Some(answer) = signed_in {
         let listed = answer["response"].as_str().unwrap_or_default();
