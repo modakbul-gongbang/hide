@@ -481,6 +481,7 @@ The child button opens with the raised branches expanded whenever its core raise
 Blocked is a warning band with its cause, Fix is red, Result is success, and Review or Merge take its pull request's state colour (failed red, mergeable green, pending muted).
 Merge stands for a mergeable pull request and Review for a pending one, so a draft carries neither.
 Task bands carry a reason and stable action age; they navigate only, with answers in the terminal and merges in the PR view.
+A pull request band names only what its verb does not, `고치기 CI 실패` or `고치기 변경 요청`, and Review or Merge stands alone; nothing Hide could not read, such as a check's name, is written on it.
 Working has a thin blue line; CI wait, waiting and idle have no task band, although their children can fill the second row.
 Normal termination, disconnection, starting, sleeping and control elsewhere are gray; a failed exit is red with the actual code.
 Connection and sleep recovery controls stay in the body, and Not connected stays a chip.

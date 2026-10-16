@@ -135,7 +135,7 @@ function AskBand({ paneId, band, navigation, unreachable, failed, actions, hasTr
   const self = agentsByPane(agents).get(paneId);
   const raised = band.raised ?? null;
   const verb = raised?.verb ?? (band.kind === "answer" ? "answer" : "approval");
-  const what = askWhat(t, verb, raised ? raised.what : band.reason ?? (band.facts ? bandReason(band, t) : null));
+  const what = askWhat(t, verb, raised ? raised.what : band.reason);
   const minutes = band.since_unix_ms == null ? null : Math.max(0, Math.floor((Date.now() - band.since_unix_ms) / 60_000));
   // The path from the root already ends with the agent named; the wait is its verb's (B5).
   const who = raised ? [
@@ -280,10 +280,15 @@ function ChildSummary({ child, connection }: { child: AgentRow; connection: stri
   </Hint>;
 }
 
-/** Localize the core's facts; no verb or attention decision lives here. */
+/**
+ * Localize the core's facts, saying only what the verb does not: a failed
+ * check and asked-for changes. Review and Merge already say the rest, and a
+ * fact Hide could not read stays off the band. No verb or attention decision
+ * lives here.
+ */
 function bandReason(band: NonNullable<PaneHeader["band"]>, t: TFunction<"translation">): string | null {
   const facts = band.facts;
   if (!facts) return band.reason;
-  if (facts.kind === "approval_command_unavailable") return t("agentSessions.approvalCommandUnavailable");
-  return [t(`agentSessions.checks.${facts.checks}`), t(reviewWord(facts.review)?.key ?? "agentSessions.review.unknown"), facts.checks === "failed" ? t("agentSessions.checkNamesUnavailable") : null].filter(Boolean).join(" · ");
+  const words = [facts.checks === "failed" ? t("agentSessions.pr.failed") : null, facts.review === "changes_requested" ? t(reviewWord(facts.review)!.key) : null];
+  return words.filter(Boolean).join(" · ") || null;
 }
