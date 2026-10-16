@@ -3,6 +3,7 @@
 // redrawn in place under the selection), on an isolated pinned Herdr.
 
 import { expect, test, type Page } from "@playwright/test";
+import { mod } from "./chords";
 import { execFileSync } from "node:child_process";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
@@ -18,7 +19,7 @@ function herdrCli(herdr: HerdrFixture, args: string[]): string {
 const paneText = (page: Page, pane: string) => page.evaluate((id) => window.__hideProbe?.paneText(id) ?? "", pane);
 const selection = (page: Page, pane: string) => page.evaluate((id) => window.__hideProbe?.paneSelection(id) ?? null, pane);
 
-test("a selection stays on the text it covers when the wheel scrolls the pane", async ({ page }) => {
+test("a selection stays on the text it covers when the wheel scrolls the pane", async ({ page, context }) => {
   await page.setViewportSize({ width: 1680, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -66,9 +67,18 @@ test("a selection stays on the text it covers when the wheel scrolls the pane", 
     await expect.poll(() => paneText(page, pane), { timeout: 10_000 }).toBe(textBefore);
     await expect.poll(() => selection(page, pane)).toBe(before);
 
-    // Scrolled until its text leaves the screen, nothing stays selected on other text.
+    // Scrolled until its text leaves the screen, nothing is drawn selected on
+    // other text, and Copy still takes the text that was selected.
     await page.mouse.wheel(0, -(grid.rows + 6) * (screen.height / grid.rows));
     await expect.poll(() => paneText(page, pane), { timeout: 10_000 }).not.toContain("row-12");
+    await expect(page.locator(`[data-pane-view="${pane}"] .xterm-selection div`)).toHaveCount(0);
+    expect(await selection(page, pane)).toBe(before);
+    await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.keyboard.press(mod("KeyC"));
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(before);
+
+    // A click in the pane ends it.
+    await page.mouse.click(cell(20, 10).x, cell(20, 10).y);
     await expect.poll(() => selection(page, pane)).toBeNull();
   } finally {
     daemon?.stop();

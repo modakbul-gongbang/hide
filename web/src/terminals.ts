@@ -65,6 +65,11 @@ type Instance = {
    * that moved that text under it has been found; null when none waits.
    */
   follow: FollowedSelection | null;
+  /**
+   * The copy text of a selection the wheel carried off the screen: nothing is
+   * drawn for it, and Copy still takes it until the next drag, click or key.
+   */
+  kept: string | null;
   /** The cell of a primary press that may still become a click, or null once it dragged or was not one. */
   press: { column: number; row: number } | null;
   /**
@@ -83,11 +88,16 @@ type FollowedSelection = {
   start: { x: number; y: number };
   end: { x: number; y: number };
   rows: string[];
+  /** What Copy takes from it. */
+  text: string;
   /** The shift of the text the wheel asked for, rows, positive moving it down. */
   expected: number;
 };
 
 const instances = new Map<string, Instance>();
+
+/** Keys that end nothing by themselves: the chord they begin may be Copy. */
+const MODIFIER_KEYS = new Set(["Meta", "Control", "Shift", "Alt", "AltGraph", "CapsLock", "Fn", "OS"]);
 
 /** The most lines one `terminal_scroll` carries (the core reads a u16). */
 const SCROLL_LINES_MAX = 65535;
@@ -178,6 +188,7 @@ export function feedChunks(chunks: TerminalChunk[]) {
 export function resetAllTerminals() {
   for (const instance of instances.values()) {
     instance.term.reset();
+    setKept(instance, null);
     instance.grid = null;
     if (!instance.host) instance.stale = true;
   }
@@ -361,8 +372,35 @@ function armFollow(instance: Instance, rows: number) {
     start: { ...range.start },
     end: { ...range.end },
     rows: screenRows(term).slice(range.start.y, last),
+    text: selectedText(instance) ?? "",
     expected: shift,
   };
+}
+
+/** Nothing of the selection is on screen any more: Copy keeps its text, the highlight goes. */
+function keepOffscreen(instance: Instance, follow: FollowedSelection) {
+  instance.term.clearSelection();
+  setKept(instance, follow.text === "" ? null : follow.text);
+}
+
+/**
+ * Keeps or drops the text of a selection that left the screen. The terminal's
+ * input textarea holds it selected while kept, since the browser fires a copy
+ * event (⌘C, the Edit menu) only for a selection to copy; `onCopy` then puts
+ * the text on the clipboard.
+ */
+function setKept(instance: Instance, text: string | null) {
+  if (instance.kept === text) return;
+  instance.kept = text;
+  const area = instance.term.textarea;
+  if (!area) return;
+  area.value = text ?? "";
+  if (text !== null) area.select();
+}
+
+/** Whether Copy has something to take: a drawn selection or one the wheel carried off. */
+function hasCopyText(instance: Instance): boolean {
+  return instance.term.hasSelection() || instance.kept !== null;
 }
 
 /**
@@ -394,13 +432,13 @@ function followSelection(instance: Instance) {
     // that changed in place under a selection stays as xterm keeps it.
     const first = follow.start.y + follow.expected;
     const last = follow.end.y + follow.expected;
-    if (last < 0 || first > term.rows - 1) term.clearSelection();
+    if (last < 0 || first > term.rows - 1) keepOffscreen(instance, follow);
     return;
   }
   const moved = movedSelection(follow.start, follow.end, shift, term.rows, term.cols);
   if (!moved) {
     instance.follow = null;
-    term.clearSelection();
+    keepOffscreen(instance, follow);
     return;
   }
   term.select(moved.column, moved.row, moved.length);
@@ -414,6 +452,7 @@ function followSelection(instance: Instance) {
     start: { ...now.start },
     end: { ...now.end },
     rows: screen.slice(now.start.y, now.end.x === 0 && now.end.y > now.start.y ? now.end.y : now.end.y + 1),
+    text: follow.text,
     expected: remaining,
   };
 }
@@ -505,6 +544,8 @@ function cellAt(geometry: CellGeometry, event: { clientX: number; clientY: numbe
 
 function onMouseDown(instance: Instance, event: MouseEvent) {
   instance.press = null;
+  // A right-click opens the menu, whose Copy still takes the kept text.
+  if (event.button === 0) setKept(instance, null);
   // The primary button alone can become a click; ⌥ + press and a second
   // click of a multi-click are the `application` and `localSelection`
   // routes, and neither is replayed to the program. A press on a link is the
@@ -545,7 +586,7 @@ function selectedText(instance: Instance): string | null {
 /** The copy text of the pane's selection, for the probe; null without a selection or an instance. */
 export function terminalSelectionText(paneId: string): string | null {
   const instance = instances.get(paneId);
-  return instance ? selectedText(instance) : null;
+  return instance ? (selectedText(instance) ?? instance.kept) : null;
 }
 
 /** Resolves only the cell right-clicked, using the link provider's existing bounds and cache. */
@@ -616,7 +657,7 @@ export function selectAllText(paneId: string) {
 }
 
 function onCopy(instance: Instance, event: ClipboardEvent) {
-  const text = selectedText(instance);
+  const text = selectedText(instance) ?? instance.kept;
   if (text === null || !event.clipboardData) return;
   // One owner again: xterm's own copy handler would put its padded,
   // hard-broken rows on the clipboard from the same event.
@@ -661,6 +702,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
     grid: null,
     wheel: { held: false, rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
     follow: null,
+    kept: null,
     press: null,
     commitPending: false,
     keysWaiting: 0,
@@ -677,7 +719,12 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
   const system = keySystem();
   term.attachCustomKeyEventHandler((event) => {
     if (event.type !== "keydown") return true;
-    const action = terminalKey(event, system, term.hasSelection());
+    const action = terminalKey(event, system, hasCopyText(instance));
+    // A key that is not a modifier ends the text kept off screen, as it ends
+    // a drawn selection; the chord that copies it keeps it for its own read.
+    // On macOS ⌘C is the browser's own copy, which `terminalKey` leaves alone.
+    const copying = action?.kind === "copy" || (system === "mac" && event.metaKey && event.code === "KeyC");
+    if (!copying && !MODIFIER_KEYS.has(event.key)) setKept(instance, null);
     if (!action) return true;
     event.preventDefault();
     const run = () => {
@@ -687,7 +734,13 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
       else if (action.kind === "paste") void pasteClipboard(paneId, "terminal");
       // Clearing the selection once it is copied lets the next Ctrl+C
       // interrupt; a refused copy keeps it. Nothing selected copies nothing.
-      else if (term.hasSelection()) void copySelection(paneId, "terminal").then((copied) => copied && term.clearSelection());
+      else if (hasCopyText(instance)) {
+        void copySelection(paneId, "terminal").then((copied) => {
+          if (!copied) return;
+          setKept(instance, null);
+          term.clearSelection();
+        });
+      }
     };
     // xterm sends a pending composition early for a key that reaches its own
     // handler, and a key taken here never does. macOS Chromium delivers the
@@ -704,6 +757,10 @@ function createInstance(paneId: string, dispatch: DispatchFn, links: TerminalLin
       }, 0);
     } else run();
     return false;
+  });
+  // A selection drawn again, a drag or select-all, replaces the kept text.
+  term.onSelectionChange(() => {
+    if (term.hasSelection()) setKept(instance, null);
   });
   term.onData((data) => send(new TextEncoder().encode(data)));
   const linkProvider = registerTerminalLinks(term, paneId, link, () => instance.links);
