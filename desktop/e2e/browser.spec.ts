@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { runInPane, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { fixtureExecutable } from "../../web/e2e/platform-fixture";
-import { countSent, enterWorkspace, showExplorer, showTool } from "../../web/e2e/wire";
+import { countSent, enterWorkspace, showExplorer, showProjectRow, showTool } from "../../web/e2e/wire";
 import { fitWindow, focusPage, hostLog, isolate, launch, NEEDS_FOCUS, nodeOf, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { compositorPresents, quietFor } from "../../web/e2e/wait";
 
@@ -207,7 +207,7 @@ async function displayIdOf(page: Page, text: string): Promise<string> {
 // The native child-view lifetime is shared; the pane CLI uses cmd on Windows
 // and a POSIX shell elsewhere, through the same portable fixture boundary.
 for (const width of [1500, 720]) {
-test(`browser: Agent tabs share one page per address through a background open and reveal the caller (${width}px)`, { tag: "@platform" }, async () => {
+test(`browser: Agent tabs share one page per address through a background open and never move the operator (${width}px)`, { tag: "@platform" }, async () => {
   ({ app } = await launch(run.env));
   await fitWindow(app, { width, height: 900 });
   const page = await shellPage(app);
@@ -229,7 +229,7 @@ test(`browser: Agent tabs share one page per address through a background open a
     if (callFiles) await showTool(page, "files");
   };
   try {
-    const opened = await openFromCli(url, ["--reveal", "--wait"]);
+    const opened = await openFromCli(url, ["--wait"]);
     expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
     const a = (opened.result as { view_id: string }).view_id;
     await shownAndSelected(page, url, a);
@@ -241,7 +241,7 @@ test(`browser: Agent tabs share one page per address through a background open a
     // lane-files-checkout-views B1, B3, B12).
     await chooseTab(other);
     await expect(tab(page, "Page A")).toHaveCount(1);
-    const again = await cliFromPane(["browser", "open", url, "--reveal", "--wait"], otherPane);
+    const again = await cliFromPane(["browser", "open", url, "--wait"], otherPane);
     expect(again).toMatchObject({ status: 0, ok: true, result: { view_id: a } });
     await expect.poll(async () => (await views()).filter((view) => view.url === url).length).toBe(1);
     await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
@@ -261,13 +261,14 @@ test(`browser: Agent tabs share one page per address through a background open a
     await tab(page, "/c.html").click();
     await expect.poll(async () => (await viewOf(`${origin}/c.html`)).visible).toBe(true);
     await windowShot(`background-tab-C-behind-${width}`, process.platform === "darwin");
-    // `--reveal` from the other tab's pane brings the page forward and makes
-    // that pane's tab the one on screen (B8).
-    expect(await cliFromPane(["browser", "open", url, "--reveal", "--wait"], otherPane)).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
-    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${other}"]`)).toHaveAttribute("aria-selected", "true");
-    await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${a}"]`)).toBeVisible();
-    await expect.poll(async () => (await views()).filter((view) => view.url === url && view.visible).map((view) => view.id)).toEqual([original.id]);
-    await windowShot(`background-tab-A-revealed-${width}`, process.platform === "darwin");
+    // The other tab's pane asks for the page again: it stays behind the
+    // operator's c.html and the first tab stays on screen, since only the
+    // pane the operator is in moves the screen (B8).
+    expect(await cliFromPane(["browser", "open", url], otherPane)).toMatchObject({ status: 0, ok: true, result: { view_id: a } });
+    await expect(page.locator(`[data-agent-tab-bar] [data-tab="${herdr.tab}"]`)).toHaveAttribute("aria-selected", "true");
+    await expect(page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${a}"]`)).toHaveCount(0);
+    await expect.poll(async () => (await viewOf(`${origin}/c.html`)).visible).toBe(true);
+    await windowShot(`background-tab-A-stays-behind-${width}`, process.platform === "darwin");
   } finally {
     herdr.run(["tab", "close", other]);
   }
@@ -287,7 +288,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // `hide browser open` from an agent's pane opens the page in that pane's
   // Workspace and answers with the core's receipt.
-  const opened = await openFromCli(`${origin}/a.html`, ["--reveal", "--wait"]);
+  const opened = await openFromCli(`${origin}/a.html`, ["--wait"]);
   expect(opened).toMatchObject({ status: 0, ok: true, result: { context: { device_id: nodeOf(run!.env), checkout_path: checkout } }, page: { state: "loaded" } });
   expect(await cliFromPane(["view", "status", (opened.result as { view_id: string }).view_id])).toMatchObject({ status: 0, ok: true, view: { page: { state: "loaded" } } });
   const a = await displayIdOf(page, "Page A");
@@ -489,7 +490,7 @@ test("browser: a shell layer never has a page drawn over it, and a page tab's hi
   await enterWorkspace(page, "fixture");
   const url = `${origin}/long.html`;
   const title = "Quarterly report draft";
-  expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true });
+  expect(await openFromCli(url, ["--wait"])).toMatchObject({ status: 0, ok: true });
   const a = await displayIdOf(page, title);
   const shown = async () => (await viewOf(url)).visible;
   await expect.poll(shown).toBe(true);
@@ -582,8 +583,8 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
   await expect(focusedLocator).toHaveAttribute("data-pane-view", /./);
   const focused = await focusedLocator.getAttribute("data-pane-view");
   // An agent in a tab the operator is not looking at opens the page, so it
-  // stays hidden; from the front tab the open would call the lane (PRD
-  // right-lane B17).
+  // stays hidden; from the operator's own pane the open would call the lane
+  // (PRD right-lane B17).
   const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "Background", "--no-focus"]) as {
     result: { tab: { tab_id: string }; root_pane: { pane_id: string } };
   };
@@ -597,8 +598,6 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
     expect(hidden).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
     expect(await cliFromPane(["view", "status", hidden.view_id as string], agent)).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
     await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", focused!);
-    const revealed = await cliFromPane(["browser", "open", `${origin}/b.html`, "--reveal", "--wait"], agent);
-    expect(revealed).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
   } finally {
     herdr.run(["tab", "close", created.result.tab.tab_id]);
   }
@@ -618,14 +617,17 @@ test("browser: a login in one Workspace is available in another", async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   await enterWorkspace(page, "fixture");
-  expect(await openFromCli(`${origin}/a.html`, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true });
+  expect(await openFromCli(`${origin}/a.html`, ["--wait"])).toMatchObject({ status: 0, ok: true });
   await viewOf(`${origin}/a.html`);
   await inPage(`${origin}/a.html`, "document.cookie = 'shared=ready; path=/'");
   const firstScreen = await page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen");
 
-  const opened = await cliFromPane(["browser", "open", `${origin}/b.html`, "--reveal", "--wait"], otherPane);
-  expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
+  // The operator goes to the second Workspace, whose agent then opens the
+  // page in front; an agent the operator is not with would only add it behind.
+  await (await showProjectRow(page, page.locator("[data-project]", { hasText: "second-checkout" }).locator("[data-checkout]").first())).click();
   await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toBe(firstScreen);
+  const opened = await cliFromPane(["browser", "open", `${origin}/b.html`, "--wait"], otherPane);
+  expect(opened).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
   expect(await inPage(`${origin}/b.html`, "document.cookie")).toContain("shared=ready");
 });
 
@@ -635,7 +637,7 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
   await fitWindow(app, WINDOW);
   await enterWorkspace(page, "fixture");
   const signin = `${origin}/signin.html`;
-  const opened = await openFromCli(signin, ["--reveal", "--wait"]);
+  const opened = await openFromCli(signin, ["--wait"]);
   expect(opened).toMatchObject({ status: 0, ok: true });
   await viewOf(signin);
   const windows = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
@@ -685,7 +687,7 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
     shell.openExternal = async (url: string) => { probe.opened.push(url); };
   });
   const probe = () => app!.evaluate(() => (globalThis as unknown as { appLinkProbe: { asked: string[]; opened: string[] } }).appLinkProbe);
-  expect(await openFromCli(signin, ["--reveal", "--wait"])).toMatchObject({ status: 0, ok: true });
+  expect(await openFromCli(signin, ["--wait"])).toMatchObject({ status: 0, ok: true });
   await viewOf(signin);
   await inPage(signin, `location.href = "hide-e2e-app://open?room=1"`);
   await expect.poll(async () => (await probe()).opened).toEqual(["hide-e2e-app://open?room=1"]);
@@ -744,7 +746,7 @@ test("new-tab: empty page creates no native renderer and address loads in the sa
   await fitWindow(app, WINDOW);
   const page = await app.firstWindow();
   await enterWorkspace(page, "fixture");
-  expect(await openFromCli(`${origin}/a.html`, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  expect(await openFromCli(`${origin}/a.html`, ["--wait"])).toMatchObject({ ok: true });
   await viewOf(`${origin}/a.html`);
   const count = (await views()).length;
   await page.locator('[data-view-new-tab]').click();
@@ -850,13 +852,13 @@ test("area cycle native: page input previews one exact area, releases once and c
   const outside = `${origin}/a.html`;
   const previous = `${origin}/b.html`;
   const current = `${origin}/korean.html`;
-  for (const url of [outside, previous]) expect(await openFromCli(url, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  for (const url of [outside, previous]) expect(await openFromCli(url, ["--wait"])).toMatchObject({ ok: true });
   // Two View areas side by side need the lane's width.
   await widenFiles(page);
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role=menu] [data-menu-item=split_right]').click();
   await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
-  expect(await openFromCli(current, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  expect(await openFromCli(current, ["--wait"])).toMatchObject({ ok: true });
   const originalId = await displayIdOf(page, "한글 브라우저");
   const previousId = await displayIdOf(page, "Page B");
   const outsideId = await displayIdOf(page, "Page A");
@@ -1004,7 +1006,7 @@ test("zoom: the text-size commands zoom a focused page in Chrome's steps and a p
   const sent = countSent(page);
   await enterWorkspace(page, "fixture");
   const pageA = `${origin}/a.html`;
-  expect(await openFromCli(pageA, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  expect(await openFromCli(pageA, ["--wait"])).toMatchObject({ ok: true });
   await expect.poll(async () => (await viewOf(pageA)).visible).toBe(true);
   const textScales = () => (sent.get("pane_text_scale") ?? 0) + (sent.get("editor_text_scale") ?? 0);
 

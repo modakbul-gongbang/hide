@@ -143,8 +143,25 @@ impl Runtime {
         let Caller::Pane(pane_id) = Caller::parse(caller_id) else {
             return false;
         };
-        self.snapshot.terminal.pane_id.as_deref() == Some(pane_id)
-            && self.front_workspace_key().as_ref() == Some(key)
+        self.front_workspace_key().as_ref() == Some(key)
+            && self.operator_pane(&key.0) == Some(pane_id)
+    }
+
+    /// The pane the operator is in on `device`, the device in front: this
+    /// machine's selected pane, or the pane a device's Herdr has focused,
+    /// which the shell draws focused and follows (`remoteView` in
+    /// `web/src/remote.ts`).
+    fn operator_pane(&self, device: &str) -> Option<&str> {
+        if device == self.node.as_str() {
+            return self.snapshot.terminal.pane_id.as_deref();
+        }
+        self.snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device)
+            .and_then(|status| status.session.as_ref())
+            .and_then(|session| session.focused_pane_id.as_deref())
     }
 
     /// The tab of a GUI open asked in a pane that is not looking at the

@@ -756,7 +756,11 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
         ["Remote dev", "Remote HTML"].includes((entry as { webContents?: Electron.WebContents }).webContents?.getTitle() ?? "")).length ?? 0
     ), { timeout: 15_000 }).toBe(0);
     const upperAddress = `FILE://${fs.realpathSync(html)}`;
-    const upper = await commandFromPane(remote, run, bridge, ["browser", "open", upperAddress, "--reveal"], "remote-uppercase-file");
+    // The page loads only on screen, and only the operator brings the device
+    // forward: its agent's open then lands in front.
+    await sendFrame(page, state, { kind: "focus_device", payload: { device_id: "ssh-e2e" } });
+    await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen"), { timeout: 20_000 }).toContain("ssh-e2e");
+    const upper = await commandFromPane(remote, run, bridge, ["browser", "open", upperAddress], "remote-uppercase-file");
     expect(upper.status, JSON.stringify(upper.answer)).toBe(0);
     const upperViews = await commandFromPane(remote, run, bridge, ["view", "list"], "remote-uppercase-list");
     expect((upperViews.answer.result as { views: { target: string }[] }).views.some((view) => view.target === upperAddress)).toBe(true);
@@ -804,9 +808,16 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       });
     }, { ...state, node: nodeOf(run.env) });
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
-    const revealed = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/remote.html`, "--reveal"], "remote-reveal");
-    expect(revealed.status, JSON.stringify(revealed.answer)).toBe(0);
+    // From the device's pane while the operator is on this Mac, the open stays
+    // behind and no checkout moves; once the operator is on the device, the
+    // same pane's open is in front.
+    const behind = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/remote.html`], "remote-behind");
+    expect(behind.status, JSON.stringify(behind.answer)).toBe(0);
+    expect(await page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
+    await sendFrame(page, state, { kind: "focus_device", payload: { device_id: "ssh-e2e" } });
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen"), { timeout: 20_000 }).toContain("ssh-e2e");
+    const front = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/remote.html`], "remote-front");
+    expect(front.status, JSON.stringify(front.answer)).toBe(0);
     await expect.poll(async () => (await native())?.live, { timeout: 20_000 }).toBe("remote-live");
     const ownedUrl = (await native())!.url;
     const candidatePid = app.process().pid;
