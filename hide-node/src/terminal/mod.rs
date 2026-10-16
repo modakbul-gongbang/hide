@@ -852,9 +852,7 @@ impl Inner {
                     self.panes.entry(pane).or_default().closing = true;
                 }
             },
-            TerminalControl::Resize { pane, size, force } => {
-                self.resize(shared, &pane, size, force, now)
-            }
+            TerminalControl::Resize { pane, size } => self.resize(shared, &pane, size, now),
             TerminalControl::Shown { panes } => {
                 self.shown = panes.into_iter().collect();
                 self.wake_clock = true;
@@ -2033,14 +2031,7 @@ impl Inner {
         }));
     }
 
-    fn resize(
-        &mut self,
-        shared: &Arc<Shared>,
-        pane: &str,
-        size: GridSize,
-        force: bool,
-        now: Instant,
-    ) {
+    fn resize(&mut self, shared: &Arc<Shared>, pane: &str, size: GridSize, now: Instant) {
         let entry = self.panes.entry(pane.to_owned()).or_default();
         if entry.awaiting_size {
             entry.awaiting_size = false;
@@ -2051,7 +2042,7 @@ impl Inner {
             return;
         }
         let previous = entry.size.replace(size);
-        if !force && previous == Some(size) && !entry.need_full {
+        if previous == Some(size) && !entry.need_full {
             return;
         }
         crate::diagnostic!(json!({

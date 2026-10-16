@@ -194,8 +194,8 @@ With no such checkout, the screen stays and the area shows its empty state; a ta
 A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the operator and the keyboard with it, to that checkout too, when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
 A pane closing inside a tab that keeps other panes leaves the canvas the moment the close is approved, and its neighbours take its space as Herdr will lay them out; its sidebar row stays until Herdr confirms the close, and a close Herdr refuses or cannot answer draws the pane back where it stood.
 A split, a zoom or unzoom and a pane resize Hide asked for are drawn at once, a split as soon as Herdr names the new pane, without waiting for Herdr's layout; a new tab appears in its area as soon as Herdr answers its creation.
-While such a change is drawn ahead of Herdr, each terminal keeps its grid and draws it inside its new rectangle, and its rows and columns change only once Herdr has applied the change, so a change Herdr lays out differently never reflows a terminal twice.
-When Herdr's layout differs from the drawn one, Herdr's is drawn.
+In the same frame a pane's rectangle changes, the terminal inside it takes the rows and columns that fit the new rectangle and its program redraws, without waiting for Herdr: a pane's neighbour widens the moment the pane leaves, a zoomed pane fills the tab the moment it is zoomed, and a split pane's terminal shrinks to its half as soon as Herdr names the new pane.
+When Herdr's layout differs from the drawn one, Herdr's is drawn and each terminal in it takes that rectangle's grid, one more reflow; when it is the same, nothing moves again.
 Changes to one tab's panes are made one at a time in the order asked, with up to eight waiting; a ninth waiting change is not made, and one Herdr refuses drops the changes waiting behind it and draws the layout Herdr confirmed.
 Changes in different tabs never wait for each other.
 A sole empty area shows No agent tab is open and New tab.

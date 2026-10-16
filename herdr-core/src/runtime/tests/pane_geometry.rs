@@ -1,12 +1,13 @@
 //! Pane geometry drawn ahead of Herdr (PRD instant-pane-topology D-07..D-10,
-//! D-12, B11..B19).
+//! D-12, B11..B19) and the terminal grid that follows the drawing at once
+//! (PRD grid-ahead-of-herdr D-03..D-06, B1..B7).
 //!
 //! The fake Herdr records what left over the socket; each test hands the
 //! runtime Herdr's answers and session updates itself, and stands in for the
 //! coordinator's republish by ingesting the session Herdr last sent, so the
 //! order under test never depends on the scheduler (docs/TESTING.md). The
-//! assertions read what the shell draws (`pane_layouts`, the tab's pane rows,
-//! `grid_held`) and what reached Herdr or a pane's PTY.
+//! assertions read what the shell draws (`pane_layouts`, the tab's pane rows)
+//! and what reached Herdr or a pane's PTY.
 
 use super::control_order::diagnostic_messages;
 use super::*;
@@ -139,16 +140,6 @@ fn drawn(runtime: &Runtime) -> PaneLayoutSnapshot {
         .expect("the tab is drawn")
 }
 
-fn held(runtime: &Runtime, pane: &str) -> bool {
-    runtime
-        .snapshot()
-        .terminal
-        .panes
-        .iter()
-        .find(|row| row.pane_id == pane)
-        .is_some_and(|row| row.grid_held)
-}
-
 /// The PTY sizes the pane's node was asked to settle, in order.
 fn resizes(terminals: &RecordedTerminals, pane: &str) -> Vec<(u16, u16)> {
     terminals
@@ -191,12 +182,12 @@ fn zoom_action(pane: &str) -> PaneControlAction {
     }
 }
 
-/// Frames the zoomed pane shows before Herdr's layout confirms the zoom do
-/// not end its timing record and ask its node for nothing: the core watches
-/// for a frame when Herdr accepts the zoom and once more when the layout
-/// confirms it, however many frames come between.
+/// B8, D-06: a zoom's record counts the first frame after the resize its
+/// drawing sent, so the node is asked for that frame with the resize and
+/// not when Herdr accepts or applies the zoom; frames before the resize ask
+/// nothing and end nothing.
 #[test]
-fn frames_before_herdr_confirms_a_zoom_ask_the_node_for_no_watch() {
+fn a_zooms_frame_watch_starts_with_its_resize_and_ends_with_the_frame_after_it() {
     let herdr = fake_herdr("geometry-frame-watch");
     let (mut runtime, terminals) = runtime_on(&herdr, session(Some(0.5), false));
     let watches = |terminals: &RecordedTerminals| {
@@ -217,31 +208,58 @@ fn frames_before_herdr_confirms_a_zoom_ask_the_node_for_no_watch() {
     zoom(&mut runtime, LEFT);
     herdr.wait_for_requests(1, Duration::from_secs(5));
     answer(&mut runtime, zoom_action(LEFT), accepted());
-    assert_eq!(watches(&terminals), 1, "watched once Herdr accepted");
     for _ in 0..3 {
         shown(&mut runtime);
     }
     assert_eq!(
         watches(&terminals),
         0,
-        "frames before the layout ask nothing"
+        "neither the request, the answer nor a frame before the resize asks for a watch"
     );
-    runtime.ingest_session(Ok(session(Some(0.5), true)));
+    // A resize of the pane before its drawing was read is another change's.
+    dispatch(
+        &mut runtime,
+        "terminal_resize",
+        serde_json::json!({"pane_id": LEFT, "rows": 26, "cols": 44}),
+    );
     assert_eq!(
         watches(&terminals),
-        1,
-        "watched again once Herdr applied it"
+        0,
+        "a resize before the drawing asks nothing"
     );
+    // The drawn snapshot is read for the browser, which fits and reports.
+    runtime.ingest_session(Ok(session(Some(0.5), false)));
+    runtime.snapshot_delta_payload(0);
+    dispatch(
+        &mut runtime,
+        "terminal_resize",
+        serde_json::json!({"pane_id": LEFT, "rows": 30, "cols": 80}),
+    );
+    assert_eq!(watches(&terminals), 1, "watched once the resize went out");
     shown(&mut runtime);
-    shown(&mut runtime);
-    assert_eq!(watches(&terminals), 0, "the frame after it ends the record");
+    runtime.ingest_session(Ok(session(Some(0.5), true)));
+    assert_eq!(watches(&terminals), 0, "Herdr's layout asks for no watch");
+    // The snapshot carrying Herdr's layout is read for the browser.
+    let (_, records) = crate::diagnostics::capture(|| {
+        runtime.snapshot_delta_payload(0);
+    });
+    let timing = records
+        .iter()
+        .map(ToString::to_string)
+        .find(|record| record.contains("pane_op.timing"))
+        .expect("the record closed once the layout was applied and read");
+    assert!(
+        timing.contains("\"first_frame_ms\""),
+        "the frame after the resize is its first frame: {timing}"
+    );
 }
 
-/// B14, B12: a zoom is drawn at the request, the panes of its tab keep
-/// their PTY size while Herdr has not confirmed, and the size the view
-/// reported meanwhile reaches the PTY once when Herdr's layout arrives.
+/// B1, B5, B7: a zoom is drawn at the request and the grid its view then
+/// reports reaches the PTY at once; Herdr confirming the same layout moves
+/// nothing, and a layout drawn differently makes the view report once more,
+/// which goes out once.
 #[test]
-fn a_zoom_is_drawn_at_once_and_its_ptys_keep_their_size_until_herdr_confirms() {
+fn a_zoom_sends_its_pty_size_at_the_drawing_and_nothing_more_when_herdr_confirms_the_same_layout() {
     let herdr = fake_herdr("geometry-zoom");
     let (mut runtime, terminals) = runtime_on(&herdr, session(Some(0.5), false));
     zoom(&mut runtime, LEFT);
@@ -251,16 +269,16 @@ fn a_zoom_is_drawn_at_once_and_its_ptys_keep_their_size_until_herdr_confirms() {
     );
     runtime.ingest_session(Ok(session(Some(0.5), false)));
     assert!(drawn(&runtime).zoomed);
-    assert!(held(&runtime, LEFT) && held(&runtime, RIGHT));
 
     dispatch(
         &mut runtime,
         "terminal_resize",
         serde_json::json!({"pane_id": LEFT, "rows": 30, "cols": 80}),
     );
-    assert!(
-        resizes(&terminals, LEFT).is_empty(),
-        "no PTY resize while held"
+    assert_eq!(
+        resizes(&terminals, LEFT),
+        [(30, 80)],
+        "the PTY follows the drawing before Herdr answers"
     );
 
     herdr.wait_for_requests(1, Duration::from_secs(5));
@@ -271,8 +289,20 @@ fn a_zoom_is_drawn_at_once_and_its_ptys_keep_their_size_until_herdr_confirms() {
         "Herdr's layout confirmed it"
     );
     assert!(drawn(&runtime).zoomed);
-    assert!(!held(&runtime, LEFT) && !held(&runtime, RIGHT));
-    assert_eq!(resizes(&terminals, LEFT), [(30, 80)]);
+    assert_eq!(
+        resizes(&terminals, LEFT),
+        [],
+        "the same layout confirmed sends nothing"
+    );
+
+    // Herdr laid the tab out differently: the view reports the grid of the
+    // rectangle it was given, once.
+    dispatch(
+        &mut runtime,
+        "terminal_resize",
+        serde_json::json!({"pane_id": LEFT, "rows": 30, "cols": 76}),
+    );
+    assert_eq!(resizes(&terminals, LEFT), [(30, 76)]);
 }
 
 /// A view reporting the size its pane already runs at sends its node
@@ -296,14 +326,14 @@ fn a_view_reporting_the_size_its_pane_runs_at_sends_no_resize() {
     assert_eq!(resizes(&terminals, LEFT), [(30, 40)]);
 }
 
-/// B11: a split is drawn when Herdr names the new pane: the pane split in
-/// half with the new one second, a row the canvas can draw it from, and a
-/// terminal entry that attaches at its own view's size while the pane it
-/// split keeps its grid.
+/// B11, grid-ahead-of-herdr B3: a split is drawn when Herdr names the new
+/// pane: the pane split in half with the new one second, a row the canvas
+/// can draw it from, a terminal entry that attaches at its own view's size,
+/// and the grid the split pane's view reports for its half goes out at once.
 #[test]
 fn a_split_is_drawn_with_the_pane_herdr_named_before_its_layout_arrives() {
     let herdr = fake_herdr("geometry-split");
-    let (mut runtime, _) = runtime_on(&herdr, session(None, false));
+    let (mut runtime, terminals) = runtime_on(&herdr, session(None, false));
     let split = PaneControlAction::Split {
         pane_id: LEFT.to_owned(),
         direction: PaneSplitDirection::Right,
@@ -354,14 +384,23 @@ fn a_split_is_drawn_with_the_pane_herdr_named_before_its_layout_arrives() {
         .flat_map(|tab| tab.panes.iter().map(|pane| pane.id.clone()))
         .collect::<Vec<_>>();
     assert!(rows.contains(&CREATED.to_owned()), "{rows:?}");
-    assert!(held(&runtime, LEFT));
     assert!(
         runtime
             .snapshot()
             .terminal
             .panes
             .iter()
-            .any(|row| row.pane_id == CREATED && !row.grid_held)
+            .any(|row| row.pane_id == CREATED)
+    );
+    dispatch(
+        &mut runtime,
+        "terminal_resize",
+        serde_json::json!({"pane_id": LEFT, "rows": 24, "cols": 20}),
+    );
+    assert_eq!(
+        resizes(&terminals, LEFT),
+        [(24, 20)],
+        "the split pane's grid shrinks to its half before Herdr's layout"
     );
 }
 
@@ -438,12 +477,13 @@ fn the_next_operation_in_a_line_waits_for_its_own_layout() {
     assert_eq!(sent(&herdr, "pane.zoom"), 3);
 }
 
-/// B16, B19: a refusal drops what waited behind it and the tab is drawn
-/// as Herdr confirmed it, its PTYs never resized.
+/// B16, B19, grid-ahead-of-herdr B6: a refusal drops what waited behind it
+/// and the tab is drawn as Herdr confirmed it; the grid that followed the
+/// drawing goes back with the drawing, as one more resize.
 #[test]
 fn a_refused_operation_drops_the_line_behind_it_and_draws_what_herdr_confirmed() {
     let herdr = fake_herdr("geometry-refused");
-    let (mut runtime, _) = runtime_on(&herdr, session(Some(0.5), false));
+    let (mut runtime, terminals) = runtime_on(&herdr, session(Some(0.5), false));
     zoom(&mut runtime, LEFT);
     dispatch(
         &mut runtime,
@@ -452,6 +492,12 @@ fn a_refused_operation_drops_the_line_behind_it_and_draws_what_herdr_confirmed()
     );
     runtime.ingest_session(Ok(session(Some(0.5), false)));
     assert!(drawn(&runtime).zoomed);
+    dispatch(
+        &mut runtime,
+        "terminal_resize",
+        serde_json::json!({"pane_id": LEFT, "rows": 30, "cols": 80}),
+    );
+    assert_eq!(resizes(&terminals, LEFT), [(30, 80)]);
     herdr.wait_for_requests(1, Duration::from_secs(5));
     runtime.take_republish_request();
 
@@ -468,7 +514,17 @@ fn a_refused_operation_drops_the_line_behind_it_and_draws_what_herdr_confirmed()
         layout.root,
         PaneLayoutNodeSnapshot::Split { ratio, .. } if ratio == 0.5
     ));
-    assert!(!held(&runtime, LEFT));
+    // The view is back in its confirmed rectangle and reports that grid.
+    dispatch(
+        &mut runtime,
+        "terminal_resize",
+        serde_json::json!({"pane_id": LEFT, "rows": 24, "cols": 40}),
+    );
+    assert_eq!(
+        resizes(&terminals, LEFT),
+        [(24, 40)],
+        "the grid returns with the drawing"
+    );
     assert_eq!(
         sent(&herdr, "pane.resize"),
         0,

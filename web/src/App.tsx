@@ -36,7 +36,7 @@ import { useShellStore } from "./store";
 import { AddProjectDialog } from "./AddProjectDialog";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { applyEditorTheme } from "./editor/theme";
-import { applyGridHolds, applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
+import { applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { PALETTE_HIDE_CLASS, primaryValue, readColorTheme, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useUsageWindowHint } from "./components/usage";
@@ -116,7 +116,6 @@ export function App() {
       // vanished panes lose theirs here, never on a tab switch (D-05).
       if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) {
         retainTerminals();
-        applyGridHolds(state.rest?.terminal?.panes);
       }
       if (state.rest?.terminal?.input_requests !== previous.rest?.terminal?.input_requests) observeInputRequests(state.rest?.terminal?.input_requests);
       const fresh = freshError(state, previous);
