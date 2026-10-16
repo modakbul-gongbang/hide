@@ -129,7 +129,7 @@ jobs:
             desktop/resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt \
             README.md \
             docs/INSTALL.md
-          git commit -m "Move the bundled Herdr pin to v${latest}"
+          git commit -m "build: move the bundled Herdr pin to v${latest}"
           git push --set-upstream origin "$branch"
           cat > "$RUNNER_TEMP/pr-body.md" <<BODY
           Moves the pinned Herdr runtime from v${pinned} to v${latest}.
@@ -158,6 +158,6 @@ jobs:
           v${latest} server and exercise the tab, scroll and reorder paths.
           BODY
           gh pr create \
-            --title "Move the bundled Herdr pin to v${latest}" \
+            --title "build: move the bundled Herdr pin to v${latest}" \
             --body-file "$RUNNER_TEMP/pr-body.md"
           echo "Opened a bump proposal for v${latest}." >> "$GITHUB_STEP_SUMMARY"
