@@ -88,7 +88,8 @@ test("roots stay in one sidebar, open their children in place, and the header's 
     expect(last.get("task_reveal")).toMatchObject({ pane_id: parent });
     await expect(page.getByRole("dialog", { name: "Overview", exact: true })).toHaveCount(0);
 
-    // B16: when the child goes, the tree and its button go with it.
+    // B16: when the child goes, the tree and its button go with it. The reveal left the sidebar on 태스크; the row is in 프로젝트.
+    await page.locator('[data-sidebar-lens-option="projects"]').click();
     await page.locator(`nav[data-sidebar] [data-pane="${parent}"] [data-agent-open="${parent}"]`).first().click();
     await treeButton.click();
     herdr.run(["pane", "close", child]);
