@@ -149,6 +149,13 @@ impl PaneRecord {
         }
     }
 
+    /// Whether the next analysis builds its context from the operator's
+    /// requests in the whole conversation rather than rolling on a goal
+    /// already named: a pane with no goal yet, or none fed by a request.
+    pub(crate) fn needs_initial_context(&self) -> bool {
+        self.goal.is_none() || self.task_input_cursor.is_none()
+    }
+
     /// Whether the label belongs to the session the pane runs now. With no
     /// current reference nothing is shown, and the proof is kept for when
     /// the same reference returns (session-label-isolation B9).

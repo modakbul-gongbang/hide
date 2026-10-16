@@ -3899,3 +3899,56 @@ fn a_backlog_read_in_several_polls_holds_the_turn_end_until_the_last() {
         "the backlog took more than one read"
     );
 }
+
+/// A pane whose label never named a goal (a greeting) and whose next turns
+/// came from another agent was never labelled again after a restart: the
+/// restarted reader began at the last human record, past the first request
+/// a goal-less context is built from, and every turn was skipped in silence.
+#[test]
+fn a_pane_with_no_goal_is_still_analyzed_after_a_restart() {
+    let harness = Harness::new();
+    let no_goal = || {
+        json!({
+            "goal": null, "goal_changed": false, "line": "", "end": "done",
+            "work":{"task":{"kind":"none"},"missed":[],"resolved":[],"output_task_id":null},
+        })
+    };
+    let mut turns = vec![("user", "안녕하세요"), ("assistant", "안녕하세요!")];
+    let path = harness.session("a", "native-a", &turns);
+    {
+        let store = harness.store();
+        let (mut worker, woken, _) = harness.worker(Arc::clone(&store));
+        harness.backend.answers.lock().unwrap().push_back(no_goal());
+        observe(&mut worker, &agent(&path, "idle", 1));
+        settle(&mut worker, &woken);
+        // Another agent's request: no submit of the operator's explains it.
+        turns.extend([("user", "OK 한 단어로 답해줘"), ("assistant", "OK")]);
+        harness.session("a", "native-a", &turns);
+        harness.backend.answers.lock().unwrap().push_back(no_goal());
+        observe(&mut worker, &agent(&path, "idle", 3));
+        settle(&mut worker, &woken);
+        assert_eq!(store.target(LOCAL_TARGET)["w1:p1"].goal, None);
+        store.flush();
+    }
+    assert_eq!(harness.backend.calls(), 2);
+
+    turns.extend([
+        ("user", "README 섹션 세 개 말해줘"),
+        ("assistant", "Install, Usage, License"),
+    ]);
+    harness.session("a", "native-a", &turns);
+    harness.backend.answer("README 섹션 안내", "done", "");
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let idle = agent(&path, "idle", 5);
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        harness.backend.calls(),
+        3,
+        "the turn after the restart was not analyzed"
+    );
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("README 섹션 안내")
+    );
+}

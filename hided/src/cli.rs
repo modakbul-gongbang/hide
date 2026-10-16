@@ -43,7 +43,6 @@ pub enum CommandKind {
     Dev,
     BrowserOpen {
         target: String,
-        reveal: bool,
         wait: bool,
         request_id: Option<String>,
     },
@@ -87,7 +86,7 @@ const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | bran
 
 const MEMORY_USAGE: &str = "usage: hide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>";
 
-const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
+const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
 /// The version this build reports: `HIDE_VERSION` when it was built (a
 /// package passes the version it ships), else the crate's own.
@@ -285,9 +284,9 @@ fn parse_open<'a>(
     file: bool,
 ) -> Result<CommandKind, String> {
     let usage = if file {
-        "usage: hide file open <path> [--beside] [--reveal] [--request-id <id>]"
+        "usage: hide file open <path> [--beside] [--request-id <id>]"
     } else {
-        "usage: hide diff open <path> [--beside] [--reveal] [--request-id <id>]"
+        "usage: hide diff open <path> [--beside] [--request-id <id>]"
     };
     if iter.next().map(String::as_str) != Some("open") {
         return Err(usage.to_owned());
@@ -296,11 +295,10 @@ fn parse_open<'a>(
         .next()
         .filter(|path| !path.is_empty() && !path.starts_with('-'))
         .ok_or(usage)?;
-    let (mut beside, mut reveal, mut request_id) = (false, false, None);
+    let (mut beside, mut request_id) = (false, None);
     while let Some(option) = iter.next() {
         match option.as_str() {
             "--beside" if !beside => beside = true,
-            "--reveal" if !reveal => reveal = true,
             "--request-id" if request_id.is_none() => {
                 request_id = Some(
                     iter.next()
@@ -316,20 +314,18 @@ fn parse_open<'a>(
         Action::OpenFile {
             path: path.clone(),
             beside,
-            reveal,
         }
     } else {
         Action::OpenDiff {
             path: path.clone(),
             beside,
-            reveal,
         }
     };
     Ok(CommandKind::WorkspaceAction { action, request_id })
 }
 
 fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
-    let usage = "usage: hide view list | status <view-id> | select <view-id> [--reveal] [--request-id <id>] | close <view-id> [--request-id <id>] | split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>] | move <view-id> --area <area-id> --index <n> [--request-id <id>]";
+    let usage = "usage: hide view list | status <view-id> | select <view-id> [--request-id <id>] | close <view-id> [--request-id <id>] | split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>] | move <view-id> --area <area-id> --index <n> [--request-id <id>]";
     let verb = iter.next().map(String::as_str).ok_or(usage)?;
     if verb == "list" {
         return if iter.next().is_none() {
@@ -357,12 +353,7 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
     let mut edge = None;
     let mut index = None;
     let mut request_id = None;
-    let mut reveal = false;
     while let Some(option) = iter.next() {
-        if option == "--reveal" && !reveal {
-            reveal = true;
-            continue;
-        }
         let value = iter.next().ok_or(usage)?;
         if value.is_empty() || value.starts_with('-') {
             return Err(usage.to_owned());
@@ -388,21 +379,18 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
     let action = match verb {
         "select" if area_id.is_none() && edge.is_none() && index.is_none() => Action::Select {
             view_id,
-            reveal,
             expected_browser_area: None,
         },
-        "close" if area_id.is_none() && edge.is_none() && index.is_none() && !reveal => {
-            Action::Close {
-                view_id,
-                expected_browser_area: None,
-            }
-        }
-        "split" if index.is_none() && !reveal => Action::Split {
+        "close" if area_id.is_none() && edge.is_none() && index.is_none() => Action::Close {
+            view_id,
+            expected_browser_area: None,
+        },
+        "split" if index.is_none() => Action::Split {
             view_id,
             area_id: area_id.ok_or(usage)?,
             edge: edge.ok_or(usage)?,
         },
-        "move" if edge.is_none() && !reveal => Action::Move {
+        "move" if edge.is_none() => Action::Move {
             view_id,
             area_id: area_id.ok_or(usage)?,
             index: index.ok_or(usage)?,
@@ -436,10 +424,9 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
     if verb != Some("open") {
         return Err(BROWSER_USAGE.to_owned());
     }
-    let (mut target, mut reveal, mut wait, mut request_id) = (None, false, false, None);
+    let (mut target, mut wait, mut request_id) = (None, false, None);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--reveal" if !reveal => reveal = true,
             "--wait" if !wait => wait = true,
             "--request-id" if request_id.is_none() => {
                 request_id = Some(
@@ -456,7 +443,6 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
     let target = target.ok_or_else(|| BROWSER_USAGE.to_owned())?;
     Ok(CommandKind::BrowserOpen {
         target,
-        reveal,
         wait,
         request_id,
     })
@@ -497,7 +483,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader."
+            "hide workspace info\nhide file open <path> [--beside] [--request-id <id>]\nhide diff open <path> [--beside] [--request-id <id>]\nhide browser open <url-or-path> [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader."
         );
         return Ok(());
     }
@@ -566,10 +552,9 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         CommandKind::Dev => dev(env),
         CommandKind::BrowserOpen {
             target,
-            reveal,
             wait,
             request_id,
-        } => browser_open(&env, &target, reveal, wait, request_id.as_deref()),
+        } => browser_open(&env, &target, wait, request_id.as_deref()),
         CommandKind::BrowserConnect { display_id } => {
             let answer = browser_connect_value(&env, display_id.as_deref(), true)?;
             println!("{answer}");
@@ -901,11 +886,7 @@ fn workspace_action_value(
     request_id: Option<&str>,
 ) -> Result<serde_json::Value, String> {
     let action = match action {
-        Action::OpenFile {
-            path,
-            beside,
-            reveal,
-        } => Action::OpenFile {
+        Action::OpenFile { path, beside } => Action::OpenFile {
             path: match absolute_caller_path(&path) {
                 Ok(path) => path,
                 Err(reason) => {
@@ -913,13 +894,8 @@ fn workspace_action_value(
                 }
             },
             beside,
-            reveal,
         },
-        Action::OpenDiff {
-            path,
-            beside,
-            reveal,
-        } => Action::OpenDiff {
+        Action::OpenDiff { path, beside } => Action::OpenDiff {
             path: match absolute_caller_path(&path) {
                 Ok(path) => path,
                 Err(reason) => {
@@ -927,7 +903,6 @@ fn workspace_action_value(
                 }
             },
             beside,
-            reveal,
         },
         other => other,
     };
@@ -1168,7 +1143,6 @@ fn view_status(env: &Env, view_id: &str) -> Result<(), String> {
 fn browser_open(
     env: &Env,
     target: &str,
-    reveal: bool,
     wait: bool,
     request_id: Option<&str>,
 ) -> Result<(), String> {
@@ -1186,7 +1160,6 @@ fn browser_open(
         env,
         Action::OpenBrowser {
             url,
-            reveal,
             area_id: None,
             new_target: false,
         },
@@ -2745,7 +2718,6 @@ mod tests {
             parse(&["hide", "browser", "open", "index.html"]),
             Ok(CommandKind::BrowserOpen {
                 target: "index.html".into(),
-                reveal: false,
                 wait: false,
                 request_id: None,
             })
@@ -2756,14 +2728,12 @@ mod tests {
                 "browser",
                 "open",
                 "localhost:3000",
-                "--reveal",
                 "--wait",
                 "--request-id",
                 "1234567890000-abc",
             ]),
             Ok(CommandKind::BrowserOpen {
                 target: "localhost:3000".into(),
-                reveal: true,
                 wait: true,
                 request_id: Some("1234567890000-abc".into()),
             })
@@ -2774,6 +2744,7 @@ mod tests {
             &["hide", "browser", "open"],
             &["hide", "browser", "open", "a", "b"],
             &["hide", "browser", "open", "a", "--pane"],
+            &["hide", "browser", "open", "a", "--reveal"],
             &[
                 "hide", "browser", "open", "a", "--pane", "p1", "--pane", "p2",
             ],
@@ -3044,23 +3015,22 @@ mod tests {
                 action: Action::OpenFile {
                     path: "src/lib.rs".into(),
                     beside: true,
-                    reveal: false,
                 },
                 request_id: None,
             })
         );
         assert_eq!(
-            parse(&["hide", "diff", "open", "src/lib.rs", "--reveal"]),
+            parse(&["hide", "diff", "open", "src/lib.rs"]),
             Ok(CommandKind::WorkspaceAction {
                 action: Action::OpenDiff {
                     path: "src/lib.rs".into(),
                     beside: false,
-                    reveal: true,
                 },
                 request_id: None,
             })
         );
         assert!(parse(&["hide", "file", "open", "src/lib.rs", "--workspace", "other"]).is_err());
+        assert!(parse(&["hide", "file", "open", "src/lib.rs", "--reveal"]).is_err());
         assert!(parse(&["hide", "diff", "open", "src/lib.rs", "--beside", "--beside"]).is_err());
     }
 

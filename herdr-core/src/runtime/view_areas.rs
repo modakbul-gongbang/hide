@@ -1745,7 +1745,6 @@ impl Runtime {
             .unwrap_or_else(|| crate::workspace_control::checkout_caller_id("browser", &key.1));
         let action = crate::workspace_control::Action::OpenBrowser {
             url: url.to_owned(),
-            reveal,
             area_id: bound_area,
             new_target: false,
         };
@@ -1828,7 +1827,9 @@ impl Runtime {
                 return Err(error);
             }
         };
-        self.note_caller_view(&key, &caller, &action, &display_id);
+        if let Some(tab) = self.control_caller_tab(&key, &caller) {
+            self.record_tab_view(&key, &tab, &display_id);
+        }
         match kept {
             Some(kept) => self.restore_front(kept),
             None => self.apply_area_intent_to(&key, AreaIntent::Files),

@@ -917,11 +917,15 @@ mod tests {
             Err("controls no terminal".to_owned()),
             Ok(LineInput::Lines { limit: 1024 }),
         ]);
+        // The second read has to land before the bound, one poll
+        // (SHELL_READING_POLL) after the first; with a 150 ms bound a first
+        // request over 100 ms on a loaded CI runner ended the wait on the
+        // failed read instead (2026-10-16, twice in one nextest run).
         let outcome = wait_for_shell_reading(
             &herdr.connector(),
             &node,
             "w1:p2",
-            Instant::now() + Duration::from_millis(150),
+            Instant::now() + Duration::from_secs(1),
             || true,
         );
         assert_eq!(outcome, Some(ShellWait::Timeout));

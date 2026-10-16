@@ -82,23 +82,19 @@ export type WorkspaceCommand =
       action: "open_file";
       path: string;
       beside: boolean;
-      reveal: boolean;
     }
   | {
       action: "open_diff";
       path: string;
       beside: boolean;
-      reveal: boolean;
     }
   | {
       action: "open_browser";
       url: string;
-      reveal: boolean;
     }
   | {
       action: "select";
       view_id: string;
-      reveal: boolean;
     }
   | {
       action: "close";

@@ -68,7 +68,7 @@ test("Comment on a local HTML page: point at an element and drag an area, and th
   };
   const file = path.join(herdr.root, "fixture", "index.html");
   fs.writeFileSync(file, PAGE);
-  const opened = JSON.parse(ok(await agent(["browser", "open", pathToFileURL(file).href, "--reveal", "--wait"])).trim().split("\n").at(-1)!) as { result: { view_id: string } };
+  const opened = JSON.parse(ok(await agent(["browser", "open", pathToFileURL(file).href, "--wait"])).trim().split("\n").at(-1)!) as { result: { view_id: string } };
   const display = opened.result.view_id;
   const url = await shownAs("index.html");
 
@@ -157,7 +157,7 @@ test("The comment world of a local HTML page reads exactly what the page itself 
   try {
     const page = path.join(checkout, "probe.html");
     fs.writeFileSync(page, "<!doctype html><meta charset=\"utf-8\"><title>Probe</title><h1>Probe</h1>");
-    const opened = await agent(["browser", "open", pathToFileURL(page).href, "--reveal", "--wait"]);
+    const opened = await agent(["browser", "open", pathToFileURL(page).href, "--wait"]);
     expect(opened.status, opened.out).toBe(0);
     const url = await shownAs("probe.html");
     const probe = `(async () => {

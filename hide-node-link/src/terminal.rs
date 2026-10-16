@@ -78,15 +78,10 @@ pub enum TerminalControl {
     /// A session that ends while its pane closes is not a failure, and keys
     /// for it are refused.
     Closing { pane: String, closing: bool },
-    /// The PTY size the core settled for the pane, after Herdr confirmed the
-    /// layout it belongs to. `force` sends it even when it is the size the
-    /// session already has: a size held while the layout was drawn ahead.
-    Resize {
-        pane: String,
-        size: GridSize,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        force: bool,
-    },
+    /// The PTY size the core settled for the pane: the grid its view fits
+    /// in the rectangle drawn for it, confirmed by Herdr or not, since the
+    /// controller alone sizes the PTY (PRD grid-ahead-of-herdr D-02).
+    Resize { pane: String, size: GridSize },
     /// The panes of the tabs on screen. A failed attach is retried on its
     /// own only while its pane is shown.
     Shown { panes: Vec<String> },
