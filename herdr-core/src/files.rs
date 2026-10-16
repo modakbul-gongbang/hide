@@ -1181,7 +1181,10 @@ pub(crate) mod tests {
             ("/repo/src", "/repo/src/nested", "into itself"),
         ] {
             let refused = ExplorerOperation::copy_into(root, path, destination).unwrap_err();
-            assert!(refused.contains(expected), "{path} -> {destination}: {refused}");
+            assert!(
+                refused.contains(expected),
+                "{path} -> {destination}: {refused}"
+            );
         }
         let item = |path: &str| ImportItem {
             path: path.to_owned(),
@@ -1252,11 +1255,13 @@ pub(crate) mod tests {
         let applied = apply_explorer_operation(&host, &document_root, &drop).unwrap();
         assert_eq!(applied.destination.as_deref(), Some("/repo/src/a copy.txt"));
         match host.calls.lock().unwrap().as_slice() {
-            [Call::Import {
-                destination,
-                entries,
-                ..
-            }] => {
+            [
+                Call::Import {
+                    destination,
+                    entries,
+                    ..
+                },
+            ] => {
                 assert_eq!(destination, "src");
                 assert_eq!(entries.len(), 2);
                 assert_eq!(entries[0].data, "aGk=");
