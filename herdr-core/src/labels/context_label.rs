@@ -18,7 +18,7 @@ use std::time::Duration;
 pub(crate) const FEATURE_ID: &str = "context_label";
 /// Bumped whenever a prompt or a schema changes, so a log line can be read
 /// against the pair that produced it.
-pub(crate) const SCHEMA_VERSION: &str = "context_label.v11";
+pub(crate) const SCHEMA_VERSION: &str = "context_label.v12";
 /// Long enough for a provider that has to start a child process, short
 /// enough that a stuck turn does not hold the pane's slot for a whole event
 /// cycle series.
@@ -91,6 +91,8 @@ fn end_prompt(limits: LabelLimits) -> String {
         "A question or problem the agent put to the user to answer directly (a quiz included) is question even without an explicit request phrase, and is question even while other work is running. ",
         "An open greeting waiting for new work such as \"What can I help you with?\", a completion report, and optional offers such as \"if you want, I can also ...\" are not question. ",
         "If the requested action cannot be written as one sentence in line, it is not question. ",
+        "A request to look at or check the output of work that is still running (a render, a build, a draft, a list of corrections) is not question while that work runs, because the agent does not need the answer to go on and reports the result when it finishes: it is waiting (3). ",
+        "It stays question when the running work cannot go on without the answer, such as a choice, an approval or a missing piece of information. ",
         "2. blocked: the requested work is not finished, and the last assistant message states its cause (a full disk, an authentication or permission error, a network outage, a failing tool or CI: something the agent cannot resolve alone). ",
         "It is blocked only when the cause can be written as one sentence in line. If it only looks stuck or the cause is unclear, it is not blocked. ",
         "3. waiting: it stopped to wait for the result of something other than a PR that is still running, such as tests, a build, CI or another agent. ",
