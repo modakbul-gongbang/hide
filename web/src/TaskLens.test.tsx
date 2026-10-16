@@ -140,6 +140,23 @@ it("selects the row of the pane with the keyboard, and its nearest drawn ancesto
   expect(container.querySelector('[data-task-row="parent"] [data-task-children]')?.getAttribute("data-task-children")).toBe("1");
 });
 
+it("numbers the task rows top to bottom while ⌥ is held, an opened fold's rows after the groups, and a task's children never (electron-digit-shortcuts-hints D-02)", async () => {
+  const agents = [row("ask", {}, { group: "needs_you" }), row("parent", { lineage_child_pane_ids: ["child"] }), row("child", { lineage_parent_pane_id: "parent", delegated: true }), row("done"), row("rest")];
+  const cards = [card("ask", "needs_you", "hide-main"), card("parent", "working", "hide-main", ["parent", "child"]), card("done", "done", "site-main"), card("rest", "resting", "hide-main")];
+  const { container } = await render(snapshot(agents, cards, "status", ["parent"]), agents);
+  const caps = () => [...container.querySelectorAll("[data-task-row], [data-task-child]")].map((item) => `${item.getAttribute("data-task-row") ?? item.getAttribute("data-task-child")}:${item.querySelector("[data-keycap]")?.textContent ?? "-"}`);
+  // Nothing before the hold reveals.
+  expect(container.querySelector('[data-task-child="child"]')).not.toBeNull();
+  expect(container.querySelector("[data-keycap]")).toBeNull();
+  await act(async () => useUiStore.getState().setHint("agents"));
+  expect(caps()).toEqual(["ask:1", "parent:2", "child:-", "done:3"]);
+  // The fold opened on this page draws its rows, and they take the next numbers.
+  await act(async () => container.querySelector<HTMLElement>("[data-task-fold] > button")!.click());
+  expect(caps()).toEqual(["ask:1", "parent:2", "child:-", "done:3", "rest:4"]);
+  await act(async () => useUiStore.getState().setHint(null));
+  expect(container.querySelector("[data-keycap]")).toBeNull();
+});
+
 it("draws the first step when the device has no project, and New agent when it has no task (B20, B42)", async () => {
   const empty = { ...snapshot([], []), navigator: { ...snapshot([], []).navigator, workspaces: [] } } as SnapshotRest;
   const none = await render(empty, []);
