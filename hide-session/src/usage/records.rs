@@ -380,9 +380,13 @@ pub(super) fn parse(
 
 /// Names the conversation an agy transcript belongs to, and the checkout
 /// its index row gives it, before the transcript's steps are read.
+/// A checkout the index gives only later (agy writes the row about a second
+/// after the first prompt) is taken then.
 pub(super) fn antigravity_context(context: &mut Context, session: &str, cwd: Option<String>) {
     if context.session.is_none() {
         context.session = Some(session.to_owned());
+    }
+    if context.cwd.is_none() {
         context.cwd = cwd;
     }
 }
