@@ -6,34 +6,25 @@ import { ChildProgressHead, TaskMark } from "./components/task-progress";
 import { PrMark } from "./components/pr-mark";
 import { Kbd } from "./components/ui/kbd";
 import { Popover, PopoverAnchor, PopoverContent } from "./components/ui/popover";
-import { summariesEnabled } from "./hideAi";
 import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
 import { agentsByPane } from "./paneAgents";
 import { usePaneAgents } from "./PaneHeaderBand";
 import { PR_LOOK } from "./prMark";
-import { groupPrs, orderedOutputs, outputPrState, sessionOfAgentOn, taskGroup, taskState, workKey } from "./sessionWork";
+import { groupPrs, orderedOutputs, outputPrState, paneProgress, taskGroup, taskState } from "./sessionWork";
 import { commandLabel } from "./shortcutLabels";
-import { localDeviceId, type AgentRow, type WorkProgress } from "./snapshot";
+import type { AgentRow, WorkProgress } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
 /** How long the pointer may cross the gap between the chip and its popover before the popover closes. */
 const LEAVE_MS = 150;
 
-/**
- * The live pane's tasks and children, as the core published them for its
- * session; null for a pane with no task, a shell, or with Agent summaries
- * off, which keep no tasks (PRD task-split-checklist B9, B15).
- */
+/** The live pane's agent and the progress `paneProgress` finds for it. */
 export function usePaneProgress(paneId: string): { agent: AgentRow; progress: WorkProgress } | null {
   const agent = agentsByPane(usePaneAgents()).get(paneId);
-  const localId = useShellStore((s) => localDeviceId(s.rest));
-  const summaries = useShellStore((s) => summariesEnabled(s.rest?.status?.background_ai));
-  const session = agent ? sessionOfAgentOn(agent, localId) : null;
-  const key = session ? workKey(session) : null;
-  const progress = useShellStore((s) => (key ? s.linkSummaries?.progress?.find((row) => workKey(row.session) === key) ?? null : null));
-  return agent && progress && summaries ? { agent, progress } : null;
+  const progress = useShellStore((state) => paneProgress(state, paneId));
+  return agent && progress ? { agent, progress } : null;
 }
 
 /**
@@ -51,12 +42,17 @@ export function PaneTaskChip({ paneId, actions }: { paneId: string; actions: Act
   const [hovered, setHovered] = useState(false);
   const [focused, setFocused] = useState(false);
   const leave = useRef<number | null>(null);
+  const chipRef = useRef<HTMLButtonElement>(null);
   useEffect(() => () => {
     if (leave.current !== null) window.clearTimeout(leave.current);
   }, []);
   // A pin outlives a pane that loses its tasks only as long as the pane does.
   useEffect(() => {
-    if (!found && pinned) setPinned(null);
+    if (found) return;
+    if (pinned) setPinned(null);
+    // A chip that comes back opens only when the pointer arrives again.
+    setHovered(false);
+    setFocused(false);
   }, [found, pinned, setPinned]);
   if (!found) return null;
   const { agent, progress } = found;
@@ -80,6 +76,7 @@ export function PaneTaskChip({ paneId, actions }: { paneId: string; actions: Act
     <Popover open={open} onOpenChange={(next) => (next ? undefined : close())} modal={false}>
       <PopoverAnchor asChild>
         <button
+          ref={chipRef}
           type="button"
           aria-label={label}
           aria-expanded={open}
@@ -88,7 +85,8 @@ export function PaneTaskChip({ paneId, actions }: { paneId: string; actions: Act
           data-state={open ? "open" : "closed"}
           className="flex h-(--size-sidebar-line-detail) shrink-0 items-center gap-xxs rounded-xs border border-border bg-background px-xs font-mono text-micro text-muted-foreground outline-none hover:bg-popover hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:border-ring data-[state=open]:text-foreground"
           onMouseDown={(event) => event.preventDefault()}
-          onClick={() => setPinned(pinned ? null : paneId)}
+          // A second press closes the list outright, though the pointer still rests on the chip.
+          onClick={() => (pinned ? close() : setPinned(paneId))}
           onPointerEnter={enter}
           onPointerLeave={exit}
           onFocus={() => setFocused(true)}
@@ -108,6 +106,11 @@ export function PaneTaskChip({ paneId, actions }: { paneId: string; actions: Act
         onCloseAutoFocus={(event) => event.preventDefault()}
         onPointerEnter={enter}
         onPointerLeave={exit}
+        // The chip is outside the list, so its own press would dismiss the
+        // list before its click toggles the pin; the click alone decides.
+        onInteractOutside={(event) => {
+          if (event.target instanceof Node && chipRef.current?.contains(event.target)) event.preventDefault();
+        }}
         onEscapeKeyDown={(event) => {
           // Esc closes a pinned list and stops there, so an agent CLI in the
           // focused terminal is not interrupted by it; a list the pointer

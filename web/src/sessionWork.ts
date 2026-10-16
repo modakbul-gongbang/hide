@@ -1,5 +1,7 @@
+import { summariesEnabled } from "./hideAi";
+import { agentsByPane, allAgents } from "./paneAgents";
 import type { BoardProject } from "./projectBoard";
-import { localDeviceId, type AgentRow, type Checkout, type Workspace, type MissedWork, type PrState, type SessionRecord, type SessionWorkSummary, type SnapshotRest, type WorkOutput, type WorkRequest, type WorkSession, type WorkTask } from "./snapshot";
+import { localDeviceId, type AgentRow, type Checkout, type LinkSummaries, type Workspace, type MissedWork, type PrState, type SessionRecord, type SessionWorkSummary, type SnapshotRest, type WorkOutput, type WorkProgress, type WorkRequest, type WorkSession, type WorkTask } from "./snapshot";
 
 export const workKey = (session: WorkSession) => `${session.device_id}\0${session.agent}\0${session.session_id}`;
 export function sessionOfAgent(agent: AgentRow, rest: SnapshotRest | null): WorkSession | null {
@@ -8,6 +10,20 @@ export function sessionOfAgent(agent: AgentRow, rest: SnapshotRest | null): Work
 /** The same, given this machine's id, for a caller that should not read the whole snapshot. */
 export function sessionOfAgentOn(agent: AgentRow, localId: string): WorkSession | null {
   return agent.session_id ? { device_id: agent.device_id ?? localId, agent: agent.agent_kind, session_id: agent.session_id } : null;
+}
+/**
+ * The live pane's tasks and children as the core published them for its
+ * session; null for a pane with no task, a shell, or with Agent summaries
+ * off, which keep no tasks (PRD task-split-checklist B9, B15). The row is
+ * the snapshot's own, so a store selector stays stable.
+ */
+export function paneProgress(state: { agents: AgentRow[]; rest: SnapshotRest | null; linkSummaries: LinkSummaries | null }, paneId: string): WorkProgress | null {
+  if (!summariesEnabled(state.rest?.status?.background_ai)) return null;
+  const agent = agentsByPane(allAgents(state.agents, state.rest?.status?.remote)).get(paneId);
+  const session = agent ? sessionOfAgentOn(agent, localDeviceId(state.rest)) : null;
+  if (!session) return null;
+  const key = workKey(session);
+  return state.linkSummaries?.progress?.find((row) => workKey(row.session) === key) ?? null;
 }
 export function recordTitle(record: Pick<SessionRecord, "title" | "manual_title" | "native_title" | "fallback_title">, summaries: boolean): string {
   return record.manual_title ?? (summaries ? record.title : record.native_title ?? record.fallback_title);

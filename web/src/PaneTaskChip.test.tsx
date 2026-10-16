@@ -126,6 +126,39 @@ it("pins the focused pane's list by the shortcut's action and closes it on a sec
   } finally { await view.unmount(); }
 });
 
+it("closes a pinned list on a second press of the chip, pointer down included", async () => {
+  const view = await mount([progress([task("task-3", "가")])]);
+  try {
+    // A browser renders between the press and the click, as separate tasks.
+    const press = async () => {
+      await act(async () => {
+        view.chip()!.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true, button: 0 }));
+        view.chip()!.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }));
+        view.chip()!.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true, button: 0 }));
+      });
+      await act(async () => view.chip()!.click());
+    };
+    await press();
+    expect(useUiStore.getState().taskListPane).toBe("p1");
+    expect(view.list()).not.toBeNull();
+    // The list listens for outside presses from the tick after it opens.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    await press();
+    expect(useUiStore.getState().taskListPane, "the press that dismisses must not pin again").toBeNull();
+    expect(view.list()).toBeNull();
+  } finally { await view.unmount(); }
+});
+
+it("pins nothing by the shortcut on a pane with no chip", async () => {
+  const view = await mount([progress([task("task-3", "가")])]);
+  try {
+    // A shell pane draws no chip, so nothing would ever clear a pin left on it.
+    useShellStore.setState({ focusedPaneId: "shell-pane" });
+    await act(async () => view.actions.toggleTaskList());
+    expect(useUiStore.getState().taskListPane).toBeNull();
+  } finally { await view.unmount(); }
+});
+
 it("opens the record from the list on the same session", async () => {
   const view = await mount([progress([task("task-3", "가")])]);
   try {

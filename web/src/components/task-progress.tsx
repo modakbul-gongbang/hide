@@ -33,10 +33,10 @@ export function ChildProgressHead({ progress }: { progress: ChildProgress }) {
       <span className="text-micro tabular-nums text-muted-foreground">{count}</span>
     </span>;
   }
-  return <span className="flex min-w-0 items-center gap-xs" data-child-progress={`${progress.done}/${count}`}>
+  return <span className="flex min-w-0 flex-wrap items-center gap-xs" data-child-progress={`${progress.done}/${count}`}>
     <span>{t("sessionWork.childWork")}</span>
     <span className="text-micro tabular-nums text-muted-foreground">{progress.done}/{count}</span>
-    <span className="flex items-center gap-xxs" role="list" aria-label={t("sessionWork.childWork")}>
+    <span className="flex flex-wrap items-center gap-xxs" role="list" aria-label={t("sessionWork.childWork")}>
       {progress.children.map((child, index) => {
         const name = t(`sessionWork.childState.${child}`);
         return <Hint key={index} label={name}><span role="listitem" aria-label={name} data-child-segment={child} className={cn("h-[calc(4*var(--size-hairline))] w-(--size-control-sm) rounded-full", SEGMENT[child])} /></Hint>;

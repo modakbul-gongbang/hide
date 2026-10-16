@@ -36,7 +36,7 @@ import { registeredName } from "./screenMachine";
 import { allAgents, boardProjects, type OpenTarget } from "./navigation";
 import { cardOfItem } from "./overviewTasks";
 import { backlogIntent } from "./overviewBacklog";
-import { sessionOfAgent, workKey } from "./sessionWork";
+import { paneProgress, sessionOfAgent, workKey } from "./sessionWork";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
@@ -2348,12 +2348,15 @@ export function createActions(send: DispatchFn) {
      */
     /**
      * ⇧⌘L: pins the focused pane's task checklist open, or closes it when it
-     * is pinned there. A pane without tasks draws no chip, so nothing opens.
+     * is pinned there. A pane without tasks draws no chip and pins nothing, so
+     * a list never opens by itself once that pane later has tasks.
      */
     toggleTaskList(target?: string) {
-      const paneId = target ?? useShellStore.getState().focusedPaneId;
+      const state = useShellStore.getState();
+      const paneId = target ?? state.focusedPaneId;
       if (!paneId) return;
-      ui().setTaskListPane(ui().taskListPane === paneId ? null : paneId);
+      if (ui().taskListPane === paneId) return ui().setTaskListPane(null);
+      if (paneProgress(state, paneId)) ui().setTaskListPane(paneId);
     },
     togglePaneRecord(session: import("./snapshot").WorkSession) {
       const top = rest()?.ui_state?.detail?.items.at(-1);

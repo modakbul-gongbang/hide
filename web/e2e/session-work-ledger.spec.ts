@@ -90,6 +90,12 @@ test("@platform a native session keeps its chapters, child outputs and reversibl
     await expect(list.locator("[data-task-list-name]")).toHaveText(["기록 화면 구현", "이슈와 검색 검증", "좁은 열 줄바꿈 확인"]);
     await page.keyboard.press(chord("toggle_task_list"));
     await expect(list).toHaveCount(0);
+    // A press pins the list; a second press on the chip closes it under the pointer.
+    await chip.click();
+    await expect(chip).toHaveAttribute("aria-pressed", "true");
+    await chip.click();
+    await expect(list).toHaveCount(0);
+    await expect(chip).toHaveAttribute("aria-pressed", "false");
     // A child is a row that opens its own record in the slot, and the head's ← comes back (PRD sidebar-task-lens B16).
     await record.locator(`[data-record-child="${child}"]`).click();
     // The slot swaps the parent's three tasks for the child's one, so wait for that whole list.
