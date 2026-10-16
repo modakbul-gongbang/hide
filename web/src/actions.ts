@@ -2561,6 +2561,11 @@ export function createActions(send: DispatchFn) {
       this.openLink(url, external || deviceId !== localDeviceId(rest()));
     },
 
+    /** A project's GitHub repository page: the default browser's for an SSH device's project, as for its pull request. */
+    openRepository(repository: string, deviceId: string, external: boolean) {
+      this.openLink(`https://github.com/${repository}`, external || deviceId !== localDeviceId(rest()));
+    },
+
     /**
      * A path a terminal link names on this Mac (docs/ARCHITECTURE.md, A
      * clicked path is one event). Inside a registered checkout it is one

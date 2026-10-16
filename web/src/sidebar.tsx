@@ -2,7 +2,7 @@ import { deviceScope } from "./agentScope";
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
 import { useInterfaceTranslation } from "./i18n/client";
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, EllipsisIcon, FolderGit2Icon, FolderIcon, Loader2Icon, MoonIcon, PanelsTopLeftIcon, PinIcon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, EllipsisIcon, FolderGit2Icon, FolderIcon, Loader2Icon, PanelsTopLeftIcon, PinIcon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { StatusMark } from "./components/status-mark";
 import { markTone } from "./agentRow";
@@ -15,6 +15,7 @@ import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu, EntryDropdown } from "./components/entry-menu";
 import { SidebarHeader, type DeviceMenu, type FactoryProjectRow } from "./components/sidebar-header";
+import { GithubIcon } from "./components/github-icon";
 import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { PrMark } from "./components/pr-mark";
@@ -38,8 +39,6 @@ import { Usage } from "./components/usage";
 import { agentGroupTitle, agentPlaces, allAgents, type ListedAgent } from "./navigation";
 import {
   activeCheckouts,
-  activityAge,
-  ageText,
   checkoutCard,
   checkoutHasSecondLine,
   checkoutNameParts,
@@ -50,7 +49,6 @@ import {
   projectCheckout,
   folderCheckout,
   inactiveCheckouts,
-  projectMarks,
   projectRows,
   shownPullRequest,
   type CheckoutPresentation,
@@ -61,7 +59,7 @@ import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
 import { contextAgents, contextAllWorkspaces, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
-import { projectIssueSource, settingsTarget } from "./projectSettings";
+import { projectIssueSource, projectRepository, settingsTarget } from "./projectSettings";
 import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./screenMachine";
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useStartPanel } from "./startDraft";
@@ -946,52 +944,19 @@ function ProjectName({ workspace, hidden = false, grow = true }: { workspace: Wo
 }
 
 /**
- * The badge cell of a project or folder row: its agents' status badge, or,
- * while every agent sleeps and the row is folded, one moon cell with how long
- * ago the latest fell asleep (D-03, B4).
+ * A project or folder row's `+` and `⋯` (PRD sidebar-titlebar-refresh D-04,
+ * B6-B8): `+` opens the start panel aimed at the project's main checkout, `⋯`
+ * the row's own menu under the button. They wait for the pointer or the
+ * keyboard, as the row's other revealed controls do, and stay while their
+ * menu is open; the cell keeps its width so showing them never moves the name.
  */
-function ProjectBadge({ workspace, expanded, marks }: { workspace: Workspace; expanded: boolean; marks: ReturnType<typeof projectMarks> | undefined }) {
-  const { t } = useInterfaceTranslation();
-  const asleep = workspace.agent_presence?.asleep;
-  if (asleep && !expanded) {
-    const age = activityAge(asleep.since_unix_ms, Date.now());
-    return (
-      <span className="flex shrink-0 items-center gap-xxs font-mono text-caption text-muted-foreground" data-project-asleep={workspace.id}>
-        <MoonIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-        {age ? ageText(age, t) : null}
-      </span>
-    );
-  }
-  return <StatusBadge counts={marks} data-project-status={workspace.id} />;
-}
-
-/** The sleeping project's words for a screen reader, which the moon cell says to the eye; null when the badge speaks. */
-function asleepLabel(workspace: Workspace, expanded: boolean, t: TFunction<"translation">): string | null {
-  const asleep = workspace.agent_presence?.asleep;
-  if (!asleep || expanded) return null;
-  const age = activityAge(asleep.since_unix_ms, Date.now());
-  return age ? t("sidebar.asleepFor", { age: ageText(age, t) }) : null;
-}
-
-/** Shown over the badge cell while the pointer or the keyboard is on the row, or the row's menu is open; the badge gives way to them. */
-const ROW_COVERED = "group-hover:opacity-0 group-focus-within:opacity-0 group-data-[state=open]:opacity-0 hoverless:opacity-0";
-
-/**
- * A project or folder row's `+` and `⋯` over its badge cell (PRD
- * sidebar-titlebar-refresh D-04, B6-B8): `+` opens the start panel aimed at
- * the project's main checkout, `⋯` the row's own menu under the button. The
- * cell is as wide as the wider of the badge and the pair, so showing the pair
- * never moves the name. They wait for the pointer or the keyboard, as the
- * row's other revealed controls do, and stay while their menu is open.
- */
-function RowActions({ workspace, badge, items, onSelect }: { workspace: Workspace; badge: ReactNode; items: () => MenuItem[]; onSelect: (id: MenuItem["id"]) => void }) {
+function RowActions({ workspace, items, onSelect }: { workspace: Workspace; items: () => MenuItem[]; onSelect: (id: MenuItem["id"]) => void }) {
   const { t } = useInterfaceTranslation();
   const [menuOpen, setMenuOpen] = useState(false);
   const more = useRef<HTMLButtonElement>(null);
   const control = "flex size-(--size-icon-button-toolbar) items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
   return (
     <span className="grid shrink-0 items-center justify-items-end">
-      <span className={cn("col-start-1 row-start-1 flex items-center", menuOpen ? "opacity-0" : ROW_COVERED)}>{badge}</span>
       <span className={cn("pointer-events-auto relative col-start-1 row-start-1 flex items-center gap-xxs", menuOpen ? "opacity-100" : ROW_REVEALED)} data-row-actions={workspace.id}>
         <Hint label={t("sidebar.startAgentIn", { name: workspace.label })}>
           <button
@@ -1028,6 +993,33 @@ function RowActions({ workspace, badge, items, onSelect }: { workspace: Workspac
   );
 }
 
+/**
+ * A GitHub project's mark at its row's end: the repository's name in a tooltip,
+ * and a press opens it on GitHub (⌘ asks for the default browser, as on a
+ * pull request's mark) without selecting the project. It sits outside the
+ * hover-swapped `+` and `⋯` so it stays pressable while they show. A folder,
+ * or a project no GitHub repository is known for, draws nothing.
+ */
+function RepositoryMark({ workspace, actions }: { workspace: Workspace; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const repository = useShellStore((s) => projectRepository(s.rest, workspace));
+  if (!repository) return null;
+  const label = t("sidebar.openRepository", { repository });
+  return (
+    <Hint label={repository}>
+      <button
+        type="button"
+        aria-label={label}
+        data-project-github={workspace.id}
+        className="flex size-(--size-icon-button-toolbar) shrink-0 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        onClick={(event) => actions.openRepository(repository, workspace.device_id, pullRequestOpenExternal(event))}
+      >
+        <GithubIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+      </button>
+    </Hint>
+  );
+}
+
 function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; level: "root" | "child"; context: ListContext }) {
   const { t } = useInterfaceTranslation();
   const { agents, actions, disclosure } = context;
@@ -1055,7 +1047,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   if (workspace.checkouts.length > 0 && workspace.checkouts.every((checkout) => workspace.session_folds?.cleanup.includes(checkout.id))) return null;
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
   const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
-  const marks = projectMarks(workspace);
   const hiding = focusFold(workspace, context.workspaceScreen ? context.focusedCheckoutId : null, expanded);
   // A checkout Hide AI made is drawn only while it is in front or an operator's agent works in it (PRD hide-ai-work-home D-17, B3).
   const drawn = (checkout: Checkout) => drawnInTree(hideAiListed, workspace, checkout, checkout.id === context.focusedCheckoutId, (rowsByCheckout.get(checkout.id) ?? NO_BOARD_ROWS).length > 0);
@@ -1089,20 +1080,19 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             type="button"
             data-project-row={workspace.id}
             aria-current={hiding === "project" ? "true" : undefined}
-            aria-label={[workspace.label, asleepLabel(workspace, expanded, t) ?? badgeWords(marks, t)].filter(Boolean).join(", ")}
+            aria-label={workspace.label}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, target, context.workspaceScreen ? context.focusedCheckoutId : null, disclosure))}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
             <ProjectName workspace={workspace} />
           </button>
-          {/* The project's badge stays while its checkouts are open: it is the project's own summary. */}
           <RowActions
             workspace={workspace}
-            badge={<ProjectBadge workspace={workspace} expanded={expanded} marks={marks} />}
             items={() => projectMenu(workspace, menuHost(), t, issueSource)}
             onSelect={(item) => runProjectItem(actions, workspace, item)}
           />
+          <RepositoryMark workspace={workspace} actions={actions} />
           {disclosure ? (
             <FoldToggle
               open={expanded}
@@ -1342,7 +1332,6 @@ const FolderRowView = memo(function FolderRowView({
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote, t));
   const issueSource = useShellStore((s) => projectIssueSource(s.rest, workspace));
   const view = checkoutPresentation(workspace, checkout, Date.now(), t);
-  const marks = checkout.agent_summary?.marks;
   const sleeping = useSleepingCheckout(checkout.path, workspace.device_id);
   // A folder whose every agent sleeps follows its own fold, which starts folded (D-03, D-19).
   const asleep = context.disclosure && workspace.agent_presence?.asleep !== undefined;
@@ -1373,7 +1362,7 @@ const FolderRowView = memo(function FolderRowView({
             checkout={checkout}
             view={view}
             focused={focused}
-            label={[workspace.label, asleepLabel(workspace, open, t) ?? badgeWords(marks, t), purpose].filter(Boolean).join(", ")}
+            label={[workspace.label, purpose].filter(Boolean).join(", ")}
             actions={actions}
             expanded={asleep ? undefined : checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
             projectExpanded={asleep ? checkoutRowExpansion(true, context.workspaceScreen && focused, open) : undefined}
@@ -1386,7 +1375,6 @@ const FolderRowView = memo(function FolderRowView({
             <RowEnd>
               <RowActions
                 workspace={workspace}
-                badge={<ProjectBadge workspace={workspace} expanded={open} marks={marks} />}
                 items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, issueSource)}
                 onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
               />

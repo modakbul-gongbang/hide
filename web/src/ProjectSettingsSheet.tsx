@@ -12,7 +12,7 @@ import { deviceConnected } from "./devices";
 import { useInterfaceTranslation } from "./i18n/client";
 import { MemorySettings, useMemoryProject } from "./MemoryTab";
 import { guardPartOf, ProjectGuardrails, pathRefusalKey, type GuardPart } from "./ProjectGuardrails";
-import { guardedBase, projectBaseBranch, projectGuardrails, projectIssueSource, projectSettings, readableSettings, refusedForGood, unguardedAgents, type Guardrails, type ProjectSettingsPatch, type ProjectSettingsTarget } from "./projectSettings";
+import { guardedBase, projectBaseBranch, projectGuardrails, projectIssueSource, projectRepository, projectSettings, readableSettings, refusedForGood, unguardedAgents, type Guardrails, type ProjectSettingsPatch, type ProjectSettingsTarget } from "./projectSettings";
 import { issueSourceChoices } from "./settings";
 import { catalogWorkspaces } from "./snapshot";
 import { useShellStore } from "./store";
@@ -86,8 +86,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
     setRepositoryDraft(confirmedRepository ?? "");
     setRepositoryEditing(confirmedRepository !== null);
   }, [confirmedRepository, write?.state, intent?.state]);
-  const detected = workspace?.home_issues?.repository ?? (workspace?.tasks?.source?.kind === "github" ? workspace.tasks.source.name : null);
-  const branches = workspace?.branches ?? [];
+    const branches = workspace?.branches ?? [];
   const base = workspace ? projectBaseBranch(rest, workspace) : { branch: "", missing: null };
   const baseChoice = record?.base_branch;
   const selectedBase = baseChoice?.mode === "branch" ? baseChoice.branch : baseChoice?.mode === "auto" ? null : rest?.ui_state?.project_base_branches?.[target.root];
@@ -127,7 +126,7 @@ function ProjectSettingsBody({ target, actions, initialPage }: { target: Project
               {!readableSettings(record) ? <Note tone="warn">{t("projectSettings.newerVersion")}</Note> : null}
               {page === "connections" ? <>
                 <Group title={t("projectSettings.repository")} note={t("projectSettings.repositoryNote")}>
-                  <Row label={t("projectSettings.repository")} detail={<>{workspace?.is_git ? <Value>{confirmedRepository ?? detected ?? t("projectSettings.repositoryMissing")}</Value> : <Note>{t("projectSettings.folder")}</Note>}{stateFor("repository")}</>}>
+                  <Row label={t("projectSettings.repository")} detail={<>{workspace?.is_git ? <Value>{(workspace && projectRepository(rest, workspace)) ?? t("projectSettings.repositoryMissing")}</Value> : <Note>{t("projectSettings.folder")}</Note>}{stateFor("repository")}</>}>
                     <Select value={confirmedRepository !== null ? "repository" : "auto"} disabled={blocked || !workspace?.is_git} onValueChange={(value) => { if (value === "repository") setRepositoryEditing(true); if (value === "auto") save("repository", { repository: { mode: "auto" } }); }}>
                       <SelectTrigger aria-label={t("projectSettings.repository")}><SelectValue /></SelectTrigger><SelectContent><SelectItem value="auto">{t("projectSettings.automatic")}</SelectItem><SelectItem value="repository">{t("projectSettings.override")}</SelectItem></SelectContent>
                     </Select>

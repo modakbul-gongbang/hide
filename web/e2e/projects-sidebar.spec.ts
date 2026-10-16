@@ -148,8 +148,9 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // agent-hierarchy-screens B35: while its agents are open, the open
     // checkout is one line; its purpose comes back when they fold (below).
     await expect(primary.locator("[data-purpose]")).toHaveCount(0);
-    await expect(project.locator('[data-project-status] [data-badge-part="idle"]')).toHaveText("2");
-    await expect(project.locator("[data-project-row]")).toHaveAccessibleName("repo, 2 idle");
+    // The project row carries no agent counts: its checkouts and their agents say that.
+    await expect(project.locator("[data-project-status]")).toHaveCount(0);
+    await expect(project.locator("[data-project-row]")).toHaveAccessibleName("repo");
     await screenshot(page, "projects-sidebar-closed");
 
     // sidebar-readability B2, B4, B7: the fold sits on the right in a slot
@@ -181,8 +182,6 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(primaryToggle).toHaveCSS("opacity", "1");
     await expect(projectToggle).toHaveCSS("opacity", "0");
     await expect(page.locator("[data-project-list]").getByRole("button", { name: /actions$/ })).toHaveCount(0);
-    const status = project.locator("[data-project-status]");
-    expect((await projectToggle.boundingBox())!.x).toBeGreaterThan((await status.boundingBox())!.x);
     await project.locator("[data-project-row]").hover();
     await expect(projectToggle).toHaveCSS("opacity", "1");
     await primaryRow.hover();
@@ -256,7 +255,6 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     // The chevron opens the agent rows below the row: their own marks stand
     // for the checkout's badge, which goes, and the row becomes one line with
     // its age, its purpose waiting for the fold (agent-hierarchy-screens B35).
-    // The project's badge stays.
     const featureButton = feature.locator("[data-checkout]");
     await featureToggle.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
@@ -265,7 +263,6 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(feature.locator("[data-purpose]")).toHaveCount(0);
     await expect(feature.locator("[data-checkout-age]")).toBeVisible();
     expect((await featureButton.boundingBox())!.height).toBe(await featureButton.evaluate((node) => parseFloat(getComputedStyle(node).getPropertyValue("--size-checkout-row"))));
-    await expect(project.locator("[data-project-status]")).toBeVisible();
     await screenshot(page, "projects-sidebar-open");
 
     // The row itself still opens the checkout.
@@ -273,15 +270,14 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(feature.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
 
     // A plain folder is one row: no project row or fold of its own, a folder
-    // glyph, and its agent counted on its badge, which, being the project's,
-    // stays while its chevron has the agent rows open.
+    // glyph, and no agent counts, which its agent rows say once its chevron opens them.
     const folder = page.locator("[data-project]", { hasText: /^notes/ });
     await expect(folder.locator("[data-project-row]")).toHaveCount(0);
     await expect(folder.locator("[data-project-toggle]")).toHaveCount(0);
     const folderRow = folder.locator("[data-checkout]");
     await expect(folderRow).toHaveCount(1);
     await expect(folderRow).toHaveAttribute("data-checkout-kind", "folder");
-    await expect(folder.locator('[data-project-status] [data-badge-part="idle"]')).toHaveText("1");
+    await expect(folder.locator("[data-project-status]")).toHaveCount(0);
     const folderToggle = folder.locator("[data-checkout-toggle]");
     await expect(folderToggle).toHaveAttribute("aria-expanded", "true");
     await folderToggle.click();
@@ -295,7 +291,6 @@ test("the sidebar: kind, age, status badges, opened checkouts and folded project
     await expect(folderToggle).toHaveAttribute("aria-expanded", "true");
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await expect(folder.locator(`[data-checkout-agents-open] [data-pane="${notesPane}"]`)).toBeVisible();
-    await expect(folder.locator("[data-project-status]")).toBeVisible();
     // B7: an agent's elapsed time counts from the state change the core saw.
     await expect(folder.locator(`[data-pane="${notesPane}"] [data-agent-elapsed]`)).toHaveText(/^\d+[sm]$/);
     await expect(feature.locator(`[data-pane="${rowsPane}"] [data-agent-elapsed]`)).toHaveText(/^\d+[sm]$/);
@@ -640,7 +635,7 @@ test("projects without agents fold under No agents, and only a working agent wei
 });
 
 // PRD sidebar-titlebar-refresh B4, B5: the fold of a sleeping project is the core's, kept across a reload.
-test("a project whose agents all sleep folds behind its moon, and stays open once opened", async ({ page }) => {
+test("a project whose agents all sleep folds, and stays open once opened", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -653,11 +648,9 @@ test("a project whose agents all sleep folds behind its moon, and stays open onc
     await expect(project.locator(`[data-pane="${napPane}"]`)).toBeVisible({ timeout: 20_000 });
 
     await sendEvent(page, daemon, "agent_sleep", { pane_id: napPane });
-    // B4: folded, with one moon cell in the badge's place and no agent row.
-    const moon = project.locator("[data-project-asleep]");
-    await expect(moon).toBeVisible({ timeout: 30_000 });
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
-    await expect(project.locator("[data-project-status]")).toHaveCount(0);
+    // B4: folded, with no agent row, and no moon or counts on the project row.
+    await expect(toggle).toHaveAttribute("aria-expanded", "false", { timeout: 30_000 });
+    await expect(project.locator("[data-project-asleep], [data-project-status]")).toHaveCount(0);
     await expect(project.locator(`[data-pane="${napPane}"]`)).toHaveCount(0);
     await expect(project.locator("[data-project-weight]")).toHaveAttribute("data-project-weight", "quiet");
     await screenshot(page, "projects-asleep-folded");
@@ -665,11 +658,9 @@ test("a project whose agents all sleep folds behind its moon, and stays open onc
     // B4, B5: opened, the checkout and its sleeping row show, and the opening survives a reload.
     await toggle.click();
     await expect(toggle).toHaveAttribute("aria-expanded", "true");
-    await expect(moon).toHaveCount(0);
     await expect(project.locator(`[data-pane="${napPane}"] [data-mark="☾"]`)).toBeVisible();
     await page.reload();
     await expect(project.locator("[data-project-toggle]")).toHaveAttribute("aria-expanded", "true", { timeout: 20_000 });
-    await expect(project.locator("[data-project-asleep]")).toHaveCount(0);
   } finally {
     await daemon?.stop();
     await herdr.stop();
@@ -677,7 +668,7 @@ test("a project whose agents all sleep folds behind its moon, and stays open onc
 });
 
 // PRD sidebar-titlebar-refresh B6-B8.
-test("a project row's + and ⋯ appear on hover and focus over its badge, start in its main checkout and open its menu", async ({ page }) => {
+test("a project row's + and ⋯ appear on hover and focus, start in its main checkout and open its menu", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -690,18 +681,15 @@ test("a project row's + and ⋯ appear on hover and focus over its badge, start 
     const start = project.locator("[data-row-start]");
     const more = project.locator("[data-row-more]");
     const pair = project.locator("[data-row-actions]");
-    const badge = pair.locator("xpath=preceding-sibling::span[1]");
     await expect(row).toBeVisible({ timeout: 20_000 });
     await rest(page);
     const name = row.locator("[data-row-name]");
     const nameWidth = (await name.boundingBox())!.width;
     await expect(pair).toHaveCSS("opacity", "0");
-    await expect(badge).toHaveCSS("opacity", "1");
 
-    // B6: the pointer shows the pair over the badge and the name keeps its width.
+    // B6: the pointer shows the pair and the name keeps its width.
     await row.hover();
     await expect(pair).toHaveCSS("opacity", "1");
-    await expect(badge).toHaveCSS("opacity", "0");
     expect((await name.boundingBox())!.width).toBe(nameWidth);
     await screenshot(page, "projects-row-actions-hover");
     await rest(page);

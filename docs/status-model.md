@@ -430,11 +430,11 @@ The Workspace draws the representative agent's exact mark, color, and emphasis t
 The web shell draws no representative chip; it draws a status badge in its place.
 The same pass counts each agent under the mark its own row draws (`RowMark` in `agent_state/tally.rs`, the one decision behind the row's symbol): blocked (`error` on the wire), approval, question, working, stopped, done, and idle, the hollow ring of a quiet agent the operator has already seen.
 A row Herdr reports as unknown draws `~` and is counted in none of them, so the badge claims nothing the projection cannot vouch for.
-The counts ride the summary as `marks`, and a project's badge is its checkouts' counts added up.
+The counts ride the summary as `marks`; the web sidebar draws them on a checkout's row only, and a project or folder row draws none.
 The badge draws one mark and count per state, worst first (`▲ ! ? ● ◐ ✓ ○`), zero states left out, in the marks and colors the rows use, so it says what opening the rows would show.
 Unlike the descendant mark it counts idle agents, because on a folded checkout it is also how the operator sees that agents are there at all.
-A checkout's badge stands for its folded agent rows and leaves while they are open; a project's stays, open or folded, because it is the project's own summary (docs/UI_BEHAVIOR.md, Sidebar hierarchy).
-Regression owners: `workspace_summary_uses_physical_ownership_priority_and_unique_panes` for the counts, `projects.test.ts` for the project sum, and `projects-sidebar.spec.ts` for where the badges are drawn.
+A checkout's badge stands for its folded agent rows and leaves while they are open (docs/UI_BEHAVIOR.md, Sidebar hierarchy).
+Regression owners: `workspace_summary_uses_physical_ownership_priority_and_unique_panes` for the counts, and `projects-sidebar.spec.ts` for where the badges are drawn.
 
 The tooltip lists positive counts in group order: Needs You, Done, Working, Seen.
 Unknown is reported as a subset of Seen, never added again to the total.

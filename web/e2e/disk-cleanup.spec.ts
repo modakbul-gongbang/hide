@@ -390,8 +390,8 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
     // Once its turn is over, the same worktree is chosen and the sheet counts the pane that closes with it.
     const status = await setFixtureLifecycle(herdr, pane, "idle");
     // The core hears Herdr's status change a moment after Herdr reports it, and a review reads the agents the
-    // core holds, the same rows the project's badge counts: the review opens once the badge shows the turn over.
-    await expect(page.locator("[data-project]", { has: page.locator("[data-project-row]", { hasText: /^repo/ }) }).locator(`[data-project-status] [data-badge-part="${status}"]`)).toHaveText(/\b1$/, { timeout: 30_000 });
+    // core holds, the same rows the sidebar draws: the review opens once the agent's row shows the turn over.
+    await expect(page.locator(`[data-pane="${pane}"] [data-agent-status-mark]`)).toHaveAttribute("data-agent-status-mark", status, { timeout: 30_000 });
     await open();
     await expect(row().locator("[data-disk-in-use]")).toHaveCount(0);
     await expect(row().locator('[data-disk-cell$=":worktree"]')).toHaveAttribute("data-disk-cell-state", "selectable");
