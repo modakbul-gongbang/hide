@@ -1189,7 +1189,7 @@ Like a fenced code block, a block is one unit: a selection anywhere in it, edges
 A file opens with the caret at 0, which the operator did not put there, so a block or image there stays drawn until the operator first moves the caret or edits; every other mark follows the caret from the start.
 An HTML block inside a quote or a list item, a comment, and a block with nothing visible left after cleaning stay source.
 An empty Markdown file is an empty Live editor with the caret in it.
-Links open on modifier-click only: HTTP(S) in the external browser, a relative file inside the current checkout as an Explorer reveal, and anything else as a caller-visible notice; a plain click places the caret.
+Links open on modifier-click only, a Markdown `[text](url)` link and a link in drawn HTML alike: HTTP(S) and `mailto:` in the external browser, a relative file inside the current checkout as a tab, and anything else (a path outside the checkout) as a diagnostic-log line; a plain click places the caret, and a drawn link never navigates the page.
 Drawn HTML is cleaned by DOMPurify on an allowlist (paragraph, heading, list, table, `<a>`, `<img>`, `<details>` and the like; `align`, `width`, `height`, `alt`, `title`, `colspan`, `rowspan`): no `script`, `style`, `iframe`, `object`, `form`, event handler, inline style or script URL survives, and a link keeps only an http(s), `mailto:`, `#fragment` or relative address.
 A link in drawn HTML opens as above, on modifier-click only (a relative file inside the checkout opens as a tab), and never navigates the page itself.
 Images load from three places only.
@@ -1197,7 +1197,8 @@ A relative path (or one starting with `/`, taken from the checkout root) resolve
 An `https:` address loads in the browser with no referrer.
 A `data:image/*` address loads because it names its own bytes and opens no connection; it counts against the byte cap.
 `http:`, `file:`, protocol-relative and every other scheme are not loaded, and an issue body, which has no folder, loads `https:` and `data:` images only.
-An image that is not loaded, or fails, shows its alt text (its file name when it has none) in the muted caption size, with no banner.
+An image that is not loaded, fails, or has not answered in 8 seconds (the request is cancelled) shows its alt text (its file name when it has none) in the muted caption size, with no banner; until then it takes no room.
+A file that opens at its first line stays there while blocks and images above the fold are drawn and load; the first wheel, key, touch, caret move or edit ends that.
 One Live text loads at most 64 images, 32 MiB of file and data bytes and 8 MiB for one file; past a cap the image shows its alt text and the diagnostic log records the crossing once.
 A drawn block or image keeps its DOM, and its image, while the edit is outside it.
 A document over 256 KB opens in Source with Live disabled and a notice that Live preview is off for files over that size, because Live re-parses the whole document after each edit.

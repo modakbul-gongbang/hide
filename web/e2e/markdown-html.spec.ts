@@ -95,6 +95,10 @@ test("the repository README opens as drawn HTML and shows a block source under t
     await expect(logo).toBeVisible();
     await expect.poll(() => logo.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
     await expect(logo).toHaveAttribute("src", /^blob:/);
+    // The file opens at its first line, with the logo in view, once it and the badges have loaded.
+    await expect(page.locator('.cm-md-html img[alt="Built on Herdr"]')).toHaveJSProperty("complete", true);
+    expect(await page.locator(".cm-scroller").first().evaluate((element) => element.scrollTop)).toBe(0);
+    await expect(logo).toBeInViewport();
     await expect(page.locator(".cm-content")).toContainText("Run more agents. Hold less.");
     await expect(page.locator(".cm-content")).not.toContainText('<p align="center">');
     // Nothing was fetched from the app's own address for a relative image.
@@ -144,6 +148,49 @@ test("a document's script, outside path and http image never load, and a broken 
     // shot.png twice (the tag and the Markdown image share one read) and missing.png; ../outside.png is never asked for.
     expect(stack.sent.get("file_bytes")).toBe(2);
     await screenshot(page, "markdown-html-broken-images");
+  } finally {
+    close(stack);
+  }
+});
+
+test("a badge that cannot be reached ends in its alt text and the logo still draws, scrolled to the top", async ({ page }) => {
+  const root = path.resolve("..");
+  const stack = await openStack(page, {
+    "README.md": fs.readFileSync(path.join(root, "README.md")),
+    "design/brand/hide-icon-blinking.svg": fs.readFileSync(path.join(root, "design/brand/hide-icon-blinking.svg")),
+    "site/assets/hide-workspace.webp": fs.readFileSync(path.join(root, "site/assets/hide-workspace.webp")),
+  });
+  // One badge host refuses at once (offline), the other never answers.
+  await page.route("https://img.shields.io/badge/**", (route) => route.abort("internetdisconnected"));
+  await page.route("https://img.shields.io/github/**", () => {});
+  try {
+    await page.locator(`[data-explorer-row="${stack.repo}/README.md"]`).click();
+    for (const alt of ["Latest release", "Apache License 2.0", "macOS, Windows and Linux", "Built on Herdr"]) {
+      await expect(page.locator(".cm-md-alt[data-state='failed']", { hasText: alt })).toBeVisible({ timeout: 30_000 });
+    }
+    const logo = page.locator('.cm-md-html img[alt="hide owl app icon"]');
+    await expect(logo).toBeInViewport();
+    expect(await page.locator(".cm-scroller").first().evaluate((element) => element.scrollTop)).toBe(0);
+    await screenshot(page, "markdown-html-readme-top-offline");
+  } finally {
+    close(stack);
+  }
+});
+
+test("a Markdown link opens on modifier-click only, and a plain click places the caret", async ({ page, context }) => {
+  const stack = await openStack(page, { "links.md": "intro\n\nsee [the site](https://example.com/x) now\n\nend\n" });
+  try {
+    await page.locator(`[data-explorer-row="${stack.repo}/links.md"]`).click();
+    const link = page.locator(".cm-md-link");
+    await expect(link).toHaveText("the site", { timeout: 20_000 });
+    await link.click();
+    await expect(page.locator(".cm-content")).toContainText("[the site](https://example.com/x)");
+    expect(context.pages()).toHaveLength(1);
+    await page.locator(".cm-content").getByText("end").click();
+    await expect(link).toHaveText("the site");
+    const opened = context.waitForEvent("page");
+    await link.click({ modifiers: ["ControlOrMeta"] });
+    expect((await opened).url()).toContain("example.com");
   } finally {
     close(stack);
   }

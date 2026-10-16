@@ -8,6 +8,7 @@
 // only from state.
 
 import { syntaxTree } from "@codemirror/language";
+import type { SyntaxNode } from "@lezer/common";
 import { StateField, type EditorState, type Extension, type Range } from "@codemirror/state";
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from "@codemirror/view";
 import type { FileSource } from "../fileBytes";
@@ -35,6 +36,9 @@ const OUTSIDE: LiveFiles = {
   },
   openPath: () => {},
 };
+
+/** How long an image may stay pending before it falls back to its alt text. */
+const IMAGE_TIMEOUT_MS = 8_000;
 
 /** What a widget draws with: the view's image cache and the files it may name. */
 type Drawing = { images: LiveImages; files: LiveFiles };
@@ -116,6 +120,15 @@ function drawImage(img: HTMLImageElement, src: string, drawing: Drawing, view: E
     { once: true },
   );
   img.addEventListener("error", fail, { once: true });
+  // An address that neither answers nor refuses (offline behind a proxy) ends
+  // in its alt text too, and the request is cancelled.
+  const giveUp = window.setTimeout(() => {
+    if (img.complete && img.naturalWidth > 0) return;
+    img.removeAttribute("src");
+    fail();
+  }, IMAGE_TIMEOUT_MS);
+  img.addEventListener("load", () => window.clearTimeout(giveUp), { once: true });
+  img.addEventListener("error", () => window.clearTimeout(giveUp), { once: true });
   img.referrerPolicy = "no-referrer";
   img.decoding = "async";
   void drawing.images.load(target, base?.source ?? null).then((url) => {
@@ -124,9 +137,8 @@ function drawImage(img: HTMLImageElement, src: string, drawing: Drawing, view: E
   });
 }
 
-/** A link inside drawn HTML: a plain click only places the caret, a modifier-click opens it. */
-function openLink(anchor: HTMLAnchorElement, files: LiveFiles): void {
-  const href = anchor.getAttribute("href") ?? "";
+/** A link's target: http(s) and mailto in the browser, a relative file inside the checkout as a tab, anything else a diagnostic. A plain click only places the caret; a modifier-click opens it. */
+function openLink(href: string, files: LiveFiles): void {
   if (href === "" || href.startsWith("#")) return;
   if (/^(?:https?|mailto):/i.test(href)) {
     files.openUrl(href);
@@ -171,7 +183,7 @@ class HtmlWidget extends WidgetType {
       if (!anchor || !(event.metaKey || event.ctrlKey)) return;
       event.preventDefault();
       event.stopPropagation();
-      openLink(anchor, this.drawing.files);
+      openLink(anchor.getAttribute("href") ?? "", this.drawing.files);
     });
     // A link never navigates the page itself, whichever button pressed it.
     for (const type of ["click", "auxclick"]) {
@@ -316,6 +328,50 @@ export function markdownLive({ reveal = true, files = OUTSIDE }: { reveal?: bool
     provide: (f) => EditorView.decorations.from(f),
   });
   // The image cache lives as long as the view that draws with it.
-  const owner = ViewPlugin.define(() => ({ destroy: () => drawing.images.dispose() }));
-  return [engaged, field, owner];
+  const owner = ViewPlugin.define((view) => {
+    // A block or image at the top of a file changes height once it is drawn
+    // and again when its image arrives, and CodeMirror then keeps the line
+    // below it in place by scrolling the first one away. A view that opened
+    // at the top stays there until the operator scrolls, moves the caret or
+    // types.
+    const scroller = view.scrollDOM;
+    let atTop = scroller.scrollTop === 0;
+    const leave = () => {
+      atTop = false;
+    };
+    const keep = () => {
+      if (atTop && scroller.scrollTop !== 0) scroller.scrollTop = 0;
+    };
+    const operator = ["wheel", "touchstart", "pointerdown", "keydown"];
+    for (const type of operator) scroller.addEventListener(type, leave, { passive: true });
+    scroller.addEventListener("scroll", keep);
+    return {
+      update(update) {
+        if (update.docChanged || update.selectionSet) leave();
+      },
+      destroy() {
+        for (const type of operator) scroller.removeEventListener(type, leave);
+        scroller.removeEventListener("scroll", keep);
+        drawing.images.dispose();
+      },
+    };
+  });
+  const links = EditorView.domEventHandlers({
+    // A Markdown link opens on modifier-click only; a plain click places the caret.
+    mousedown(event, view) {
+      if (!(event.metaKey || event.ctrlKey) || event.button !== 0) return false;
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos === null) return false;
+      for (let node: SyntaxNode | null = syntaxTree(view.state).resolveInner(pos, 1); node; node = node.parent) {
+        if (node.name !== "Link" && node.name !== "Autolink") continue;
+        const url = node.getChild("URL");
+        if (!url) return false;
+        event.preventDefault();
+        openLink(view.state.sliceDoc(url.from, url.to), drawing.files);
+        return true;
+      }
+      return false;
+    },
+  });
+  return [engaged, field, owner, links];
 }
