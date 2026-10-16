@@ -553,8 +553,15 @@ const CLAUDE_COMMANDS: &str = include_str!("../fixtures/claude-commands.jsonl");
 
 /// What the operator asked, in order: a command answered by Claude Code itself
 /// (`/model`, `/usage`) and its output are not requests; a command sent to the
-/// model is one, whatever its name.
-const COMMAND_REQUESTS: [&str; 4] = ["설치하고 재측정해줘", "글 정리해줘", "/ship", "마지막 요청"];
+/// model is one, whatever its name, and so is one Claude Code answers and then
+/// hands to the model, marking its answer as the operator's turn (`/goal`).
+const COMMAND_REQUESTS: [&str; 5] = [
+    "설치하고 재측정해줘",
+    "글 정리해줘",
+    "/ship",
+    "출시 전에 검수 리포트 정리해줘",
+    "마지막 요청",
+];
 
 fn humans(events: &[hide_session::ConversationEvent]) -> Vec<&str> {
     events
@@ -665,7 +672,7 @@ fn a_command_whose_reply_is_past_the_window_edge_is_still_answered_by_it() {
     contents.push_str(lines[3]);
     assert_eq!(contents.len(), edge);
     contents.push_str(lines[4]);
-    contents.push_str(lines[11]);
+    contents.push_str(lines[lines.len() - 1]);
     fs::write(&path, contents).unwrap();
     let mut reader = ConversationCursor::new();
     let mut events = Vec::new();

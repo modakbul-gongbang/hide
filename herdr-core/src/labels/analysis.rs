@@ -2,7 +2,8 @@
 //!
 //! The context carries the operator's requests only (PRD overview-request-view
 //! D-09): the first three and last eight or, once a goal exists, the new ones
-//! and the latest exchange; it is masked and cut at 4000 characters. A turn
+//! and the latest exchange; each section is masked and cut on its own so the
+//! requests survive a long exchange, within 4000 characters. A turn
 //! costs at most two requests, one at its start and one at its end, and one
 //! more only when the end's timed out (D-33); a `goal_changed: false` answer
 //! keeps the goal verbatim.
@@ -273,6 +274,8 @@ fn latest_turn_exchange(events: &[LabelEvent]) -> String {
     render(&conversation[start..])
 }
 
+/// The operator's first three and last eight requests with an explicit
+/// omission marker, joined, or `None` when there is none.
 fn initial_operator_requests(
     events: &[LabelEvent],
     operator: &dyn Fn(&LabelEvent) -> bool,
@@ -300,10 +303,7 @@ fn initial_operator_requests(
             .skip(first_count.saturating_sub(recent_start))
             .map(|event| format!("user: {}", event.text)),
     );
-    let lines = lines.join("\n---\n");
-    Some(format!(
-        "<initial-operator-requests>\n{lines}\n</initial-operator-requests>"
-    ))
+    Some(lines.join("\n---\n"))
 }
 
 /// The initial text handed to the provider: the first three and last eight
@@ -313,12 +313,15 @@ pub(crate) fn analysis_context(
     events: &[LabelEvent],
     operator: &dyn Fn(&LabelEvent) -> bool,
 ) -> String {
-    let Some(initial) = initial_operator_requests(events, operator) else {
+    let Some(requests) = initial_operator_requests(events, operator) else {
         return String::new();
     };
-    let transcript = latest_exchange(events);
-    let combined = format!("{initial}\n<latest-exchange>\n{transcript}\n</latest-exchange>");
-    redact(&strip_code_fences(&combined))
+    bounded_context(
+        "<initial-operator-requests>\n",
+        &requests,
+        "\n</initial-operator-requests>",
+        &latest_exchange(events),
+    )
 }
 
 /// The rolling text for a goal that already exists: the operator's new
@@ -340,11 +343,85 @@ pub(crate) fn rolling_analysis_context(
     } else {
         delta
     };
-    let combined = format!(
-        "<previous-goal>{previous_goal}</previous-goal>\n<new-operator-requests>\n{delta}\n</new-operator-requests>\n<latest-exchange>\n{}\n</latest-exchange>",
-        latest_turn_exchange(events)
+    bounded_context(
+        &format!(
+            "<previous-goal>{}</previous-goal>\n<new-operator-requests>\n",
+            // A goal stored by an earlier build is not bounded by this one's
+            // limits; it may not crowd the new requests out.
+            head(
+                &mask(&strip_code_fences(previous_goal)),
+                MAX_REQUEST_SECTION_CHARS / 4
+            )
+        ),
+        &delta,
+        "\n</new-operator-requests>",
+        &latest_turn_exchange(events),
+    )
+}
+
+/// The share of [`MAX_ANALYSIS_CONTEXT_CHARS`] the requests section may take,
+/// tags included (PRD label-goal-command-context D-09).
+const MAX_REQUEST_SECTION_CHARS: usize = MAX_ANALYSIS_CONTEXT_CHARS / 2;
+/// Where a section was cut.
+const CUT_MARK: char = '…';
+
+/// The requests section, then the latest exchange, each masked on its own
+/// and cut on its own (D-08): the requests keep their head within
+/// [`MAX_REQUEST_SECTION_CHARS`], so the first request always stays, and the
+/// exchange keeps its tail in whatever the whole bound leaves. Cutting the
+/// joined text instead dropped the requests whenever the exchange was long,
+/// as Codex's 6,400-character goal reminder made it.
+fn bounded_context(open: &str, requests: &str, close: &str, exchange: &str) -> String {
+    let requests = format!(
+        "{open}{}{close}",
+        head(
+            &mask(&strip_code_fences(requests)),
+            MAX_REQUEST_SECTION_CHARS.saturating_sub(chars(open) + chars(close)),
+        )
     );
-    redact(&strip_code_fences(&combined))
+    const EXCHANGE_OPEN: &str = "\n<latest-exchange>\n";
+    const EXCHANGE_CLOSE: &str = "\n</latest-exchange>";
+    let room = MAX_ANALYSIS_CONTEXT_CHARS
+        .saturating_sub(chars(&requests) + chars(EXCHANGE_OPEN) + chars(EXCHANGE_CLOSE));
+    format!(
+        "{requests}{EXCHANGE_OPEN}{}{EXCHANGE_CLOSE}",
+        tail(&mask(&strip_code_fences(exchange)), room)
+    )
+}
+
+fn chars(text: &str) -> usize {
+    text.chars().count()
+}
+
+/// The first `max` characters of `text`, the last of them [`CUT_MARK`] when
+/// any were left out.
+fn head(text: &str, max: usize) -> String {
+    if chars(text) <= max {
+        return text.to_owned();
+    }
+    if max == 0 {
+        return String::new();
+    }
+    let mut kept = text.chars().take(max.saturating_sub(1)).collect::<String>();
+    kept.push(CUT_MARK);
+    kept
+}
+
+/// The last `max` characters of `text`, the first of them [`CUT_MARK`] when
+/// any were left out.
+fn tail(text: &str, max: usize) -> String {
+    if chars(text) <= max {
+        return text.to_owned();
+    }
+    if max <= 1 {
+        return head(&CUT_MARK.to_string(), max);
+    }
+    let start = text
+        .char_indices()
+        .rev()
+        .nth(max.saturating_sub(2))
+        .map_or(0, |(index, _)| index);
+    format!("{CUT_MARK}{}", &text[start..])
 }
 
 /// Which of a turn's two boundaries an analysis is answering.
@@ -509,7 +586,22 @@ pub(crate) fn work_context(
     ))
 }
 
+/// [`mask`], then its tail of the last [`MAX_ANALYSIS_CONTEXT_CHARS`] + 1
+/// characters, for a caller that sends one text whole (a pull
+/// request summary, the ledger's side of a request); the label context cuts
+/// its sections itself (`bounded_context`).
 pub(crate) fn redact(text: &str) -> String {
+    let masked = mask(text);
+    let start = masked
+        .char_indices()
+        .rev()
+        .nth(MAX_ANALYSIS_CONTEXT_CHARS)
+        .map_or(0, |(index, _)| index);
+    masked[start..].to_owned()
+}
+
+/// `text` with secrets, email addresses and home accounts masked, trimmed.
+fn mask(text: &str) -> String {
     let masked = SECRET.replace_all(text, "[redacted-secret]");
     let masked = EMAIL.replace_all(&masked, "[redacted-personal]");
     let masked = HOME_PREFIX.replace_all(&masked, |captures: &regex::Captures<'_>| {
@@ -544,13 +636,7 @@ pub(crate) fn redact(text: &str) -> String {
             format!("{boundary}~{}", &home[account_end.len()..])
         }
     });
-    let masked = masked.trim();
-    let start = masked
-        .char_indices()
-        .rev()
-        .nth(MAX_ANALYSIS_CONTEXT_CHARS)
-        .map_or(0, |(index, _)| index);
-    masked[start..].to_owned()
+    masked.trim().to_owned()
 }
 
 pub(crate) fn context_fingerprint(context: &str) -> u64 {
@@ -698,6 +784,85 @@ mod tests {
         assert!(context.contains("<previous-goal>이전 작업 제목</previous-goal>"));
         assert!(context.contains("user: new request"));
         assert!(!context.contains("user: old request"));
+    }
+
+    fn sections(context: &str) -> (&str, &str) {
+        context
+            .split_once("\n<latest-exchange>\n")
+            .expect("the context has both sections")
+    }
+
+    #[test]
+    fn a_long_exchange_never_pushes_the_operators_requests_out() {
+        // Codex's goal reminder alone is about 6,400 characters.
+        let reminder = format!("{}끝", "reminder ".repeat(800));
+        let events = vec![
+            human("첫 요청 문장", 1),
+            assistant(&reminder, 2),
+            human("두 번째 요청", 3),
+            assistant(&reminder, 4),
+        ];
+        let initial = analysis_context(&events, &|_| true);
+        let rolling = rolling_analysis_context("이전 작업 제목", &events[2..3], &events);
+        for (context, kept) in [
+            (&initial, "user: 첫 요청 문장"),
+            (&rolling, "<previous-goal>이전 작업 제목</previous-goal>"),
+        ] {
+            assert_eq!(context.chars().count(), MAX_ANALYSIS_CONTEXT_CHARS);
+            let (requests, exchange) = sections(context);
+            assert!(requests.contains(kept), "{requests}");
+            assert!(requests.contains("user: 두 번째 요청"), "{requests}");
+            assert!(
+                exchange.ends_with("끝\n</latest-exchange>"),
+                "the exchange keeps its tail"
+            );
+        }
+    }
+
+    #[test]
+    fn long_requests_keep_their_head_within_half_the_context() {
+        let paste = format!("첫 요청 머리 {}", "붙여넣은 본문 ".repeat(600));
+        let events = vec![
+            human(&paste, 1),
+            assistant("착수", 2),
+            human("마지막 요청", 3),
+            assistant("마지막 답", 4),
+        ];
+        for context in [
+            analysis_context(&events, &|_| true),
+            rolling_analysis_context("이전 작업 제목", &events, &events),
+        ] {
+            let (requests, exchange) = sections(&context);
+            assert!(requests.chars().count() <= MAX_REQUEST_SECTION_CHARS);
+            assert!(requests.contains("user: 첫 요청 머리"), "{requests}");
+            assert!(
+                requests.ends_with("…\n</initial-operator-requests>")
+                    || requests.ends_with("…\n</new-operator-requests>"),
+                "{requests}"
+            );
+            assert!(exchange.contains("assistant: 마지막 답"));
+        }
+    }
+
+    #[test]
+    fn a_long_stored_goal_cannot_break_the_bound() {
+        let goal = "이전 빌드가 남긴 긴 목표 ".repeat(400);
+        let answer = "긴 답 ".repeat(2_000);
+        let events = vec![human("새 요청", 1), assistant(&answer, 2)];
+        let context = rolling_analysis_context(&goal, &events[..1], &events);
+        assert!(context.chars().count() <= MAX_ANALYSIS_CONTEXT_CHARS);
+        assert!(sections(&context).0.contains("user: 새 요청"));
+    }
+
+    #[test]
+    fn short_requests_leave_the_rest_of_the_bound_to_the_exchange() {
+        let answer = "긴 답 ".repeat(2_000);
+        let events = vec![human("짧은 요청", 1), assistant(&answer, 2)];
+        let context = analysis_context(&events, &|_| true);
+        let (requests, exchange) = sections(&context);
+        assert!(requests.chars().count() < 200);
+        assert_eq!(context.chars().count(), MAX_ANALYSIS_CONTEXT_CHARS);
+        assert!(exchange.chars().count() > MAX_ANALYSIS_CONTEXT_CHARS - 200);
     }
 
     #[test]
