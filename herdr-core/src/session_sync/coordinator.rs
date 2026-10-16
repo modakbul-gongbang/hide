@@ -1637,10 +1637,7 @@ fn take_label_switch(context: &SessionSyncContext, worker: &mut LabelWorker) -> 
             .ok()
             .map(|guard| (guard.labels_asked(), guard.output_language()))
     });
-    taken.is_some_and(|(on, language)| {
-        worker.set_language(language);
-        worker.set_summaries(on, Instant::now())
-    })
+    taken.is_some_and(|(on, language)| worker.follow_core(on, language, Instant::now()))
 }
 
 /// Hands the worker the agents and the complete pane topology the replica

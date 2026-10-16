@@ -159,7 +159,7 @@ pub(crate) struct WorkerConfig {
     /// Where the runtime records the operator's submits (D-19).
     pub(crate) input: Arc<OperatorInput>,
     /// The language labels are asked in when the worker starts; see
-    /// [`LabelWorker::set_language`].
+    /// [`LabelWorker::follow_core`].
     pub(crate) language: hide_ai::OutputLanguage,
 }
 
@@ -711,10 +711,19 @@ impl LabelWorker {
         LabelOverlay::of_records(&self.records, self.generator.shows(), self.summaries)
     }
 
-    /// Takes the core's output language for the requests made from now on;
-    /// a label already shown keeps the language it was asked in (D-09).
-    pub(crate) fn set_language(&mut self, language: hide_ai::OutputLanguage) {
+    /// Takes what the core says labels follow: the operator's agent-summary
+    /// switch (see [`Self::set_summaries`]) and the output language of the
+    /// requests made from now on; a label already shown keeps the language
+    /// it was asked in (D-09). One call, so a caller cannot hand one without
+    /// the other. Returns whether what the projection shows changed.
+    pub(crate) fn follow_core(
+        &mut self,
+        summaries: bool,
+        language: hide_ai::OutputLanguage,
+        now: Instant,
+    ) -> bool {
         self.language = language;
+        self.set_summaries(summaries, now)
     }
 
     /// Takes the operator's agent-summary switch. Off cancels the request

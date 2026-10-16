@@ -8,8 +8,8 @@ use std::time::Duration;
 
 use hide_ai::{
     AiBackend, AiError, AiLogEvent, AiLogSink, AiRequest, AiRouter, AiUsageSink, Availability,
-    CancelToken, CodexAppServerBackend, CodexConfig, ModelTokens, NoopLogSink, ProviderId,
-    RequestId, RouterConfig,
+    CancelToken, CodexAppServerBackend, CodexConfig, ModelTokens, NoopLogSink, OutputLanguage,
+    ProviderId, RequestId, RouterConfig,
 };
 use serde_json::json;
 
@@ -108,6 +108,34 @@ fn the_child_is_started_with_tools_disabled_and_stdio_listen() {
         assert!(args.windows(2).any(|w| w == ["--disable", "shell_tool"]));
         assert!(args.windows(2).any(|w| w == ["--listen", "stdio://"]));
         assert!(!args.iter().any(|a| a == "exec"));
+    });
+}
+
+/// The request's language reaches the thread's base instructions, the
+/// system prompt the server is given.
+#[test]
+fn the_thread_instructions_name_the_requests_language() {
+    with_mode("ok", || {
+        let record =
+            std::env::temp_dir().join(format!("hide-ai-instructions-{}.txt", std::process::id()));
+        unsafe { std::env::set_var("FAKE_INSTRUCTIONS_FILE", &record) };
+        let request = AiRequest {
+            output_language: Some(OutputLanguage::Japanese),
+            ..request(Duration::from_secs(10))
+        };
+        let outcome = backend().execute(&request, &CancelToken::new());
+        unsafe { std::env::remove_var("FAKE_INSTRUCTIONS_FILE") };
+        let instructions = std::fs::read_to_string(&record).unwrap();
+        let _ = std::fs::remove_file(&record);
+        outcome.unwrap();
+        assert!(
+            instructions.starts_with("Answer as JSON."),
+            "{instructions}"
+        );
+        assert!(
+            instructions.contains("Write every text a person reads in Japanese"),
+            "{instructions}"
+        );
     });
 }
 

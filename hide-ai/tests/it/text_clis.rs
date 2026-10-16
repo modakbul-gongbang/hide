@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use hide_ai::{
     AiBackend, AiError, AiRequest, Availability, CancelToken, GeminiCliBackend, GrokCliBackend,
-    ModelCatalog, PiCliBackend, RequestId, TextCliConfig,
+    ModelCatalog, OutputLanguage, PiCliBackend, RequestId, TextCliConfig,
 };
 use serde_json::{Value, json};
 
@@ -127,8 +127,17 @@ fn request() -> AiRequest {
         deadline: Duration::from_secs(30),
         schema_version: "fixture.v1".into(),
         pick: None,
-        output_language: None,
+        output_language: Some(OutputLanguage::Korean),
     }
+}
+
+/// The request's language reaches the CLI inside the system prompt it is
+/// given, not only the prompt the backend was handed.
+fn assert_names_the_language(system: &str) {
+    assert!(
+        system.contains("Write every text a person reads in Korean"),
+        "{system}"
+    );
 }
 
 fn argv(start: &Value) -> Vec<String> {
@@ -194,6 +203,7 @@ fn gemini_asks_in_plan_mode_with_the_transcript_on_stdin_and_the_system_prompt_i
 
     let system = start["files"]["GEMINI_SYSTEM_MD"]["text"].as_str().unwrap();
     assert!(system.starts_with("Summarise the transcript."), "{system}");
+    assert_names_the_language(system);
     assert!(
         system.contains("\"required\":[\"summary\"]"),
         "the schema is in the system prompt"
@@ -320,6 +330,13 @@ fn grok_reads_the_transcript_from_a_private_file_with_every_tool_off() {
         "the prompt file is gone once the request ended"
     );
     assert!(args.windows(2).any(|p| p == ["--tools", ""]), "{args:?}");
+    assert_names_the_language(
+        &args[args
+            .iter()
+            .position(|a| a == "--system-prompt-override")
+            .unwrap()
+            + 1],
+    );
     for flag in ["--no-subagents", "--disable-web-search"] {
         assert!(args.iter().any(|arg| arg == flag), "{flag}");
     }
@@ -437,6 +454,7 @@ fn pi_runs_with_everything_off_and_the_transcript_on_stdin() {
     );
     let system = &args[args.iter().position(|a| a == "--system-prompt").unwrap() + 1];
     assert!(system.starts_with("Summarise the transcript."));
+    assert_names_the_language(system);
     assert!(system.contains("\"required\":[\"summary\"]"));
 }
 

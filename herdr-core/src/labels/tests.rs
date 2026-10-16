@@ -1357,11 +1357,11 @@ fn a_label_request_carries_its_language_and_that_languages_lengths() {
     }
 }
 
-/// B8, B10: each request is asked in the core's language as it stands when
-/// the request is made, a device pane's too, whatever the language the
-/// worker started with.
+/// B8, B10: each request is asked in the language the core last handed the
+/// worker, a device pane's too, whatever the language the worker started
+/// with.
 #[test]
-fn a_label_is_asked_in_the_language_the_core_names_now() {
+fn a_label_is_asked_in_the_language_the_core_last_handed_the_worker() {
     let harness = Harness::new();
     let path = harness.session(
         "device",
@@ -1374,7 +1374,7 @@ fn a_label_is_asked_in_the_language_the_core_names_now() {
     let helper: Arc<dyn crate::node_access::NodeLink> =
         Arc::new(HelperAt(harness.home.path().to_path_buf()));
     let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
-    worker.set_language(hide_ai::OutputLanguage::English);
+    worker.follow_core(true, hide_ai::OutputLanguage::English, Instant::now());
     let idle = agent(&path, "idle", 1);
     observe(&mut worker, &idle);
     settle(&mut worker, &woken);

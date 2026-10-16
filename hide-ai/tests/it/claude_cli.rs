@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use hide_ai::{
     AiBackend, AiError, AiRequest, AiRouter, Availability, CancelToken, ClaudeCliBackend,
-    ClaudeConfig, NoopLogSink, ProviderId, RequestId, RouterConfig,
+    ClaudeConfig, NoopLogSink, OutputLanguage, ProviderId, RequestId, RouterConfig,
 };
 use serde_json::{Value, json};
 
@@ -126,7 +126,10 @@ fn the_child_receives_the_system_prompt_and_the_emptied_tool_and_setting_sources
             std::env::set_var("FAKE_ARGS_FILE", &args_file);
             std::env::set_var("FAKE_STDIN_FILE", &stdin_file);
         }
-        let request = request(Duration::from_secs(30));
+        let request = AiRequest {
+            output_language: Some(OutputLanguage::Korean),
+            ..request(Duration::from_secs(30))
+        };
         backend().execute(&request, &CancelToken::new()).unwrap();
         unsafe {
             std::env::remove_var("FAKE_ARGS_FILE");
@@ -143,15 +146,18 @@ fn the_child_receives_the_system_prompt_and_the_emptied_tool_and_setting_sources
             ClaudeCliBackend::print_arguments(
                 "haiku",
                 None,
-                &request.system,
+                &request.system_prompt(),
                 &request.output_schema
             )
         );
         assert_eq!(args.first().map(String::as_str), Some("-p"));
+        // The system prompt the child gets is the request's with its
+        // language named.
+        let system = &args[args.iter().position(|a| a == "--system-prompt").unwrap() + 1];
+        assert!(system.starts_with(&request.system), "{system}");
         assert!(
-            args.windows(2)
-                .any(|pair| pair == ["--system-prompt", request.system.as_str()]),
-            "{args:?}"
+            system.contains("Write every text a person reads in Korean"),
+            "{system}"
         );
         assert!(
             args.windows(2).any(|pair| pair == ["--tools", ""]),
