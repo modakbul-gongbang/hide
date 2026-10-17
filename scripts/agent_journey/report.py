@@ -58,6 +58,8 @@ def markdown(report):
                          + (f", {agent['session_requests']} in its session files" if "session_requests" in agent else ""))
         if agent.get("quota"):
             lines.append(f"- provider quota exhausted: {text(', '.join(agent['quota']))}")
+        if agent.get("operator_state"):
+            lines.append(f"- in the operator's HOME: {text(agent['operator_state'])}")
         for key in ("spawn", "start_untrusted"):
             if agent.get(key):
                 lines.append(f"- {key} argv: `{text(json.dumps(agent[key]['argv']))}`")
@@ -74,7 +76,7 @@ def markdown(report):
     lines.extend(["## Isolation, operator files and cleanup", "", "```json",
                   json.dumps({key: report[key] for key in ("measured_repository", "created", "repository_cleanup", "leftovers",
                                                "configuration", "operator_trust", "operator_session_folders",
-                                               "leftover_copies", "cleanup", "failures")
+                                               "leftover_copies", "operator_state", "cleanup", "failures")
                                 if key in report},
                              indent=2, default=str), "```", ""])
     return "\n".join(lines)

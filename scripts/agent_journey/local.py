@@ -28,6 +28,8 @@ import tomllib
 
 from agent_live_check.protection import ProtectionError, private_directory, write_private
 
+from . import omp_state
+
 # A Codex login copy older than this is not used: a refresh inside the copy
 # would rotate the operator's token (PRD D-32; Codex was seen refreshing every
 # 8 days, which it does not document).
@@ -121,6 +123,9 @@ ROUTES = {
         "copies": [[".omp/agent/agent.db", "agent.db"], [".omp/agent/config.yml", "config.yml"]],
         "provenance": "A private PI_CODING_AGENT_DIR holding a snapshot of agent.db and config.yml; a refresh stays in the copy.",
         "login": lambda root, status: omp_login_refusal(root / "agent.db"),
+        # Its run state stays in the operator's ~/.omp (omp_state.py).
+        "busy": lambda: omp_state.busy_refusal(omp_state.running()),
+        "operator_state": "omp writes ~/.omp/run and ~/.omp/logs in the operator's HOME; the run removes its own part",
     },
     "agy": {
         # agy 1.4.0 has no variable or flag for its configuration folder and
