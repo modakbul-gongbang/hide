@@ -269,8 +269,6 @@ type UiStore = {
   notice: Notice | null;
   /** The management dialog a sidebar menu opened, or null. */
   workspaceDialog: WorkspaceDialog | null;
-  /** The record's `내 말 보기` button is pressed: the operator's own words show under their tasks. Kept while the app runs, never stored. */
-  sessionRecordWords: boolean;
   /** The pane whose task checklist is pinned open by its chip or ⇧⌘U (PRD task-split-checklist D-06). */
   taskListPane: string | null;
   /**
@@ -348,7 +346,6 @@ type UiStore = {
   setCycle: (cycle: Cycle | null) => void;
   setNotice: (notice: Notice | null) => void;
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
-  setSessionRecordWords: (on: boolean) => void;
   setTaskListPane: (paneId: string | null) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
@@ -404,7 +401,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   cycle: null,
   notice: null,
   workspaceDialog: null,
-  sessionRecordWords: false,
   taskListPane: null,
   watchedTask: null,
   focusWhenListed: null,
@@ -466,7 +462,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setCycle: (cycle) => set({ cycle }),
   setNotice: (notice) => set({ notice }),
   setWorkspaceDialog: (workspaceDialog) => set({ workspaceDialog }),
-  setSessionRecordWords: (sessionRecordWords) => set({ sessionRecordWords }),
   setTaskListPane: (taskListPane) => set({ taskListPane }),
   setWatchedTask: (watchedTask) => set({ watchedTask }),
   setFocusWhenListed: (focusWhenListed) => set({ focusWhenListed }),

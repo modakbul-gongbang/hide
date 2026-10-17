@@ -113,8 +113,8 @@ it.each([[" CLAUDE_CODE ", "claude", "Claude Code"], [" CODEX ", "codex", "Codex
   try {
     useShellStore.setState({ rest: { navigator: { workspaces: [project], devices: [{ agent_scope: emptyScope(), id: "local", kind: "local", label: "Local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null }] } } });
     await act(async () => root.render(<TooltipProvider><LinkTimeline panel={panel} project={project} pr={null} milestones={[]} branchOf={() => "task"} onRetry={() => undefined} actions={actions} /></TooltipProvider>));
-    // The row draws no provider logo and names the product instead (agent-mark-quiet B7, B11).
-    expect(container.querySelector("[data-agent-mark]")).toBeNull();
+    // The row leads with its status mark and the agent's logo, and names the product in its line (PRD record-card-readability D-09, B17).
+    expect(container.querySelector("[data-session-row] [data-agent-mark]")).not.toBeNull();
     expect(container.querySelector("[data-session-row-line]")?.textContent).toBe(`${product} · Done`);
     const button = container.querySelector<HTMLButtonElement>('[data-link-button="resume"]');
     expect(button).not.toBeNull();

@@ -1,6 +1,8 @@
 """What `scripts/ci-flaky-report.py` reads from a report and files as issues."""
+import contextlib
 from datetime import date
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -199,7 +201,7 @@ class Workflows(unittest.TestCase):
                 if re.search(r"ci-flaky-report\.py --(suite|measurement)", step):
                     steps += 1
                     self.assertEqual(step.count("ci-flaky-report.py"), 1, f"{workflow.name}: {step.splitlines()[0]}")
-        self.assertEqual(steps, 10)
+        self.assertEqual(steps, 11)
 
 
 class Annotating(unittest.TestCase):
@@ -449,6 +451,43 @@ class NightlyFailures(unittest.TestCase):
              job(3, "verify / os contract", "cancelled")], issues=issues))
         self.assertEqual(github.closed(), [1])
         self.assertIn("Passed at cccccccccccc", github.writes[0][2]["body"])
+
+    def test_a_lane_that_passed_without_measuring_closes_nothing_and_is_listed(self):
+        lane = "agy contract / agy signed in (macos)"
+        check = "agy_binary::a_signed_in_agy_turn_fires_hide_s_hooks"
+        unmeasured = {"title": "Not measured", "path": ".github", "start_line": 1,
+                      "message": f"{check}\nprovider quota exhausted: GenerateRequestsPerDayPerProjectPerModel-FreeTier"}
+        issues = [{"number": 1, "body": f"<!-- nightly-failure:{lane}:step x -->"},
+                  {"number": 2, "body": "<!-- nightly-failure:agy contract / agy signed in (linux):step x -->"}]
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        summary = Path(folder.name) / "summary.md"
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ["GITHUB_STEP_SUMMARY"] = str(summary)
+        github = nightly(FakeGitHub(
+            [job(1, lane, "success"), job(2, "agy contract / agy signed in (linux)", "success")],
+            annotations={1: [unmeasured]}, issues=issues))
+        self.assertEqual(github.closed(), [2])
+        self.assertIn(f"### Not measured\n\n- `{lane}`: {check}: provider quota exhausted: "
+                      "GenerateRequestsPerDayPerProjectPerModel-FreeTier", summary.read_text())
+
+    def test_a_dry_run_lists_what_passed_without_measuring(self):
+        github = FakeGitHub([job(1, "agy contract / agy signed in (macos)", "success")],
+                            annotations={1: [{"title": "Not measured", "message": "check\nprovider quota exhausted (q)"}]})
+        args = r.argparse.Namespace(repo="o/r", run=str(RUN), attempt=None, lane_input="", dry_run=True)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(r.nightly(args, {}, github), 0)
+        self.assertEqual(out.getvalue(), "nothing to write\n\n### Not measured\n\n"
+                         "- `agy contract / agy signed in (macos)`: check: provider quota exhausted (q)\n")
+        self.assertEqual(github.writes, [])
+
+    def test_a_lane_that_passed_without_measuring_is_no_last_green_nightly(self):
+        github = self.package_failed()
+        github.add_earlier(95, "b" * 40, "2026-10-06T18:00:00Z", [job(12, PACKAGE, "success")])
+        github.annotations[12] = [{"title": "Not measured", "message": "check\nprovider quota exhausted: q"}]
+        (issue,) = nightly(github).opened()
+        self.assertIn(f"Last green nightly of this lane: {GREEN[:12]}", issue["body"])
 
     def test_only_a_hand_run_of_every_lane_closes(self):
         issues = [{"number": 1, "body": "<!-- nightly-failure:desktop e2e (macos full):step x -->"}]

@@ -692,7 +692,8 @@ impl Runtime {
         parents.into_values().collect()
     }
 
-    /// The Projects `hide links` may read, and which one holds the caller's
+    /// The Projects `hide links` may read, this machine's and each device's
+    /// (the record keys them by device), and which one holds the caller's
     /// checkout; none when the record has no home.
     pub(crate) fn links_scope(
         &self,
@@ -703,10 +704,7 @@ impl Runtime {
             .parent()
             .filter(|directory| !directory.as_os_str().is_empty())?;
         let projects = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
+            .link_lineage_workspaces()
             .filter(|workspace| workspace.is_git && !workspace.is_home && !workspace.temporary)
             .map(|workspace| crate::links::query::ScopeProject {
                 key: hide_project::project_id(&workspace.device_id, Path::new(&workspace.path)),
@@ -722,10 +720,7 @@ impl Runtime {
             })
             .collect::<Vec<_>>();
         let caller = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
+            .link_lineage_workspaces()
             .find(|workspace| {
                 workspace.device_id == context.device_id
                     && (workspace.id == context.workspace_id

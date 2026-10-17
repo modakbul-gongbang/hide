@@ -295,10 +295,13 @@ impl LaunchDialect {
 
     /// Whether the agent asks before it works in a folder it has not been
     /// told to trust, so Hide records that trust for a worktree it made
-    /// before it starts the agent there: agy's trust question would otherwise
-    /// hold a started prompt (PRD antigravity-first-class D-08).
+    /// before it starts the agent there: the question would otherwise hold a
+    /// delegated child that nobody is watching (PRD antigravity-first-class
+    /// D-08; Claude Code 2.1.302 and Codex 0.163.0 ask the same, measured
+    /// 2026-10-17; docs/agent-hooks.md, Folder trust for the worktrees Hide
+    /// makes).
     pub const fn trusts_worktrees(self) -> bool {
-        matches!(self, Self::Antigravity)
+        matches!(self, Self::Claude | Self::Codex | Self::Antigravity)
     }
 
     /// Whether an agent that has reported no conversation yet can still
