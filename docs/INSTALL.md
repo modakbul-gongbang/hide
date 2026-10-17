@@ -308,6 +308,7 @@ Everything Hide owns on a machine is under `~/.hide`:
 | `~/.hide/kit` | The kit record and one-release retirement receipt |
 | `~/.hide/agent-hooks` | The hook helper's per-pane counters, each with the hook version, agent and session that wrote it (hided reads them to put a pane's tokens back after a Herdr handoff or restart), the last report, the spawn guard's and the project guardrails' log (`spawn-guard.log`, capped, one older copy) and the lock beside it, and the project guardrails' policy (`guardrails.json`), which the core writes for this machine and the hooks read |
 | `~/.hide/host-helper` | On a device: the `hided` builds that serve it as a node |
+| `~/.hide/ai` | Hide AI's folder for agy: `antigravity-read-only`, the tool-free folder a request runs in, and `antigravity-logs`, the log of the last agy child of each kind Hide started ([AI_PROVIDERS.md](AI_PROVIDERS.md#antigravity)) |
 | `~/.hide/shell-integration` | The zsh and bash startup files a tab Hide makes for an agent starts its shell with, which read your own startup files and then mark the first prompt; one folder per build, another build's removed once unused for an hour |
 
 Every folder Hide makes there is private to your account (0700; on Windows an access list naming only your account).
