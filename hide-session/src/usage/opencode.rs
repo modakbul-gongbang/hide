@@ -1,5 +1,8 @@
 //! Read completed assistant step-finish parts, never message.tokens: OpenCode
 //! replaces those tokens on each step while accumulating message.cost.
+//! OpenCode 2.x has no step-finish parts: it writes one assistant message per
+//! step and sets that message's tokens and cost once, when the step ends, so
+//! a completed assistant message is one usage event.
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Instant;
@@ -9,10 +12,15 @@ use serde::{Deserialize, Serialize};
 
 use super::records::{bounded, required};
 use super::{Checkpoint, Event, PARSER_VERSION, Refusal, Step, Tokens, key};
+use crate::opencode::Schema;
 
 const ROW_BYTES: u64 = 64 * 1024;
 const READ_BYTES: u64 = crate::SESSION_INCREMENT_READ_LIMIT_BYTES;
 const ROWS: usize = 512;
+/// An OpenCode 2.x assistant message row holds its content as well, so one
+/// is read in place by SQLite's JSON functions up to this size; the rest of a
+/// read's cap on a value (`READ_BYTES`) is left for the pieces handed back.
+const ROW_2_BYTES: u64 = READ_BYTES / 2;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Cursor {
@@ -82,12 +90,8 @@ fn cost(value: Option<f64>) -> Result<Option<u64>, &'static str> {
     }
 }
 
-fn event(id: String, bytes: &str, active: &Active) -> Result<Option<Event>, &'static str> {
-    let part: Part = serde_json::from_str(bytes).map_err(|_| "record_invalid")?;
-    if part.kind != "step-finish" {
-        return Ok(None);
-    }
-    let t = part.tokens.ok_or("usage_missing")?;
+/// A step's tokens, with output including reasoning.
+fn usage_tokens(t: &PartTokens) -> Result<Tokens, &'static str> {
     let output = t
         .output
         .checked_add(t.reasoning)
@@ -97,6 +101,22 @@ fn event(id: String, bytes: &str, active: &Active) -> Result<Option<Event>, &'st
         .and_then(|n| n.checked_add(t.cache.read))
         .and_then(|n| n.checked_add(t.cache.write))
         .ok_or("tokens_inconsistent")?;
+    Ok(Tokens {
+        input: t.input,
+        output,
+        cache_read: t.cache.read,
+        cache_write: t.cache.write,
+        cache_write_1h: 0,
+        reasoning: Some(t.reasoning),
+    })
+}
+
+fn event(id: String, bytes: &str, active: &Active) -> Result<Option<Event>, &'static str> {
+    let part: Part = serde_json::from_str(bytes).map_err(|_| "record_invalid")?;
+    if part.kind != "step-finish" {
+        return Ok(None);
+    }
+    let tokens = usage_tokens(&part.tokens.ok_or("usage_missing")?)?;
     let recorded = match part.cost {
         Some(_) => cost(part.cost)?,
         None => active.single_step_cost,
@@ -105,14 +125,7 @@ fn event(id: String, bytes: &str, active: &Active) -> Result<Option<Event>, &'st
         key: key(&[&required(Some(id), 128)?]),
         at_ms: active.completed,
         model: active.model.clone(),
-        tokens: Tokens {
-            input: t.input,
-            output,
-            cache_read: t.cache.read,
-            cache_write: t.cache.write,
-            cache_write_1h: 0,
-            reasoning: Some(t.reasoning),
-        },
+        tokens,
         recorded_cost_micro_usd: recorded,
         session: active.session.clone(),
         cwd: active.cwd.clone(),
@@ -161,13 +174,20 @@ fn active(
 }
 
 pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refusal> {
-    crate::opencode::with_read(home, |db| read_connection(home, db, saved))
-        .map_err(|_| Refusal::Database)?
+    crate::opencode::with_read(home, |db, schema| read_connection(home, db, schema, saved))
+        .map_err(|reason| {
+            if reason == crate::opencode::SCHEMA_UNKNOWN {
+                Refusal::Schema
+            } else {
+                Refusal::Database
+            }
+        })?
 }
 
 fn read_connection(
     home: &Path,
     db: &Connection,
+    schema: Schema,
     saved: Option<Checkpoint>,
 ) -> Result<Step, Refusal> {
     let started = Instant::now();
@@ -178,10 +198,10 @@ fn read_connection(
     let id = hide_platform::fs::identity::file_id(&crate::opencode::database_path(home))
         .map_err(|_| Refusal::Unreadable)?;
     // VACUUM changes schema_version even when it retains the same file id.
-    let schema: u64 = db
+    let version: u64 = db
         .query_row("PRAGMA schema_version", [], |row| row.get(0))
         .map_err(|_| Refusal::Database)?;
-    let witness = format!("{}:{}:{schema}", id.volume(), id.index());
+    let witness = format!("{}:{}:{version}", id.volume(), id.index());
     let mut checkpoint = saved.unwrap_or_default();
     let rescanned = checkpoint.identity.is_some()
         && (checkpoint.identity.as_ref() != Some(&witness)
@@ -193,7 +213,11 @@ fn read_connection(
     checkpoint.parser_version = PARSER_VERSION;
     if checkpoint.database.horizon.is_none() {
         let horizon: Option<u64> = db
-            .query_row("SELECT max(time_updated) FROM message", [], |r| r.get(0))
+            .query_row(
+                &format!("SELECT max(time_updated) FROM {}", schema.messages()),
+                [],
+                |r| r.get(0),
+            )
             .map_err(|_| Refusal::Database)?;
         checkpoint.database.horizon = horizon;
     }
@@ -250,6 +274,12 @@ fn read_connection(
             step.checkpoint.database.after_id = active.id.clone();
             step.checkpoint.database.active = None;
         }
+        if schema == Schema::V2 {
+            if !next_2(db, &mut step, horizon)? {
+                break;
+            }
+            continue;
+        }
         let cursor = &step.checkpoint.database;
         let row: Option<(String, u64, String, Option<String>)> = db
             .query_row(
@@ -291,4 +321,100 @@ fn read_connection(
         step.has_more = true;
     }
     Ok(step)
+}
+
+/// What an OpenCode 2.x assistant message says of its step, as SQLite hands
+/// it back from the row it read in place.
+#[derive(Deserialize)]
+struct Step2 {
+    completed: Option<u64>,
+    model: Option<String>,
+    cost: Option<f64>,
+    tokens: Option<PartTokens>,
+    /// 1 when the step failed, which may end without usage.
+    failed: u8,
+    /// The session's checkout.
+    cwd: Option<String>,
+}
+
+fn event_2(id: String, session: String, step: &str) -> Result<Option<Event>, &'static str> {
+    let step: Step2 = serde_json::from_str(step).map_err(|_| "record_invalid")?;
+    // A step OpenCode is still writing has no completion yet; it is read
+    // again when its row is updated.
+    let Some(completed) = step.completed else {
+        return Ok(None);
+    };
+    let Some(tokens) = step.tokens else {
+        return if step.failed == 1 {
+            Ok(None)
+        } else {
+            Err("usage_missing")
+        };
+    };
+    Ok(Some(Event {
+        key: key(&[&required(Some(id), 128)?]),
+        at_ms: completed,
+        model: required(step.model, 128)?,
+        tokens: usage_tokens(&tokens)?,
+        recorded_cost_micro_usd: cost(step.cost)?,
+        session: required(Some(session), 128)?,
+        cwd: bounded(step.cwd, 4096)?,
+        provider: None,
+        incomplete: false,
+    }))
+}
+
+/// Takes the next assistant message after the cursor as one usage event, or
+/// ends the round when none is left: `false` then, as for the 1.x cursor. The
+/// row is read in place by SQLite's JSON functions up to [`ROW_2_BYTES`];
+/// only the step's own fields come back.
+fn next_2(db: &Connection, step: &mut Step, horizon: u64) -> Result<bool, Refusal> {
+    let cursor = &step.checkpoint.database;
+    let row: Option<(String, u64, String, Option<String>)> = db
+        .query_row(
+            "SELECT CASE WHEN octet_length(id)<=128 THEN id END,time_updated,
+             CASE WHEN octet_length(session_id)<=128 THEN session_id END,
+             CASE WHEN octet_length(data)<=?4 AND json_valid(data) THEN json_object(
+              'completed',json_extract(data,'$.time.completed'),
+              'model',json_extract(data,'$.model.id'),
+              'cost',json_extract(data,'$.cost'),
+              'tokens',json_extract(data,'$.tokens'),
+              'failed',json_extract(data,'$.error') IS NOT NULL,
+              'cwd',(SELECT CASE WHEN length(directory)>0 AND octet_length(directory)<=4096
+                THEN directory END FROM session_v2 WHERE id=message.session_id)) END
+             FROM session_message AS message WHERE type='assistant'
+             AND (time_updated>?1 OR (time_updated=?1 AND id>?2)) AND time_updated<=?3
+             ORDER BY time_updated,id LIMIT 1",
+            params![cursor.after_time, cursor.after_id, horizon, ROW_2_BYTES],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+        )
+        .optional()
+        .map_err(|_| Refusal::Database)?;
+    let Some((id, updated, session, fields)) = row else {
+        // Revisit the boundary timestamp next round: later commits may
+        // insert another id with the same millisecond, in either order.
+        step.checkpoint.database.after_time = horizon;
+        step.checkpoint.database.after_id.clear();
+        step.checkpoint.database.horizon = None;
+        step.has_more = false;
+        return Ok(false);
+    };
+    if id.len() > 128 || session.len() > 128 {
+        return Err(Refusal::Database);
+    }
+    step.read_bytes +=
+        (id.len() + session.len()) as u64 + fields.as_ref().map_or(0, |s| s.len() as u64);
+    step.checkpoint.database.after_time = updated;
+    step.checkpoint.database.after_id = id.clone();
+    step.has_more = true;
+    match fields
+        .as_deref()
+        .ok_or("record_capacity")
+        .and_then(|fields| event_2(id, session, fields))
+    {
+        Ok(Some(event)) => step.events.push(event),
+        Ok(None) => (),
+        Err(reason) => *step.skipped.entry(reason.into()).or_default() += 1,
+    }
+    Ok(true)
 }

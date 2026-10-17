@@ -63,6 +63,8 @@ pub enum Refusal {
     OutsideRoot,
     InvalidCheckpoint,
     Database,
+    /// A database that holds none of the schemas Hide reads.
+    Schema,
 }
 
 impl std::fmt::Display for Refusal {

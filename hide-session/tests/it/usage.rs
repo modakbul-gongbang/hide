@@ -876,3 +876,184 @@ fn usage_opencode_vacuum_rescans_without_changing_native_event_identity() {
     }
     assert_eq!(first, events);
 }
+
+/// OpenCode 2.0.29's own tables in `home`, holding the fixture's sessions and
+/// none of its messages.
+fn opencode_2_fixture(home: &std::path::Path) -> (std::path::PathBuf, rusqlite::Connection) {
+    let path = home.join(".local/share/opencode/opencode.db");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let db = rusqlite::Connection::open(&path).unwrap();
+    db.execute_batch(include_str!(
+        "../fixtures/adapters/opencode-2.0.29/opencode.sql"
+    ))
+    .unwrap();
+    db.execute_batch("DELETE FROM session_message;").unwrap();
+    (path, db)
+}
+
+/// An assistant message, which 2.x writes once per step and gives its
+/// tokens and cost when the step ends; `completed` is absent while it runs.
+fn opencode_2_step(db: &rusqlite::Connection, id: &str, completed: bool, updated: u64, cost: f64) {
+    let mut data = serde_json::json!({"time": {"created": 1790855000000_u64},
+        "agent": "build", "model": {"id": "model-a", "providerID": "p"},
+        "content": [{"type": "text", "text": "PRIVATE_BODY_SENTINEL"}]});
+    if completed {
+        data["time"]["completed"] = 1790856000000_u64.into();
+        data["cost"] = cost.into();
+        data["tokens"] = serde_json::json!({"input": 20, "output": 10, "reasoning": 4,
+            "cache": {"read": 100, "write": 5}});
+    }
+    db.execute(
+        "INSERT INTO session_message VALUES (?1, 'ses_0a1b2c3d4e5f60718293a4b5c6', 'assistant', \
+         (SELECT count(*) FROM session_message) + 1, 1, ?2, ?3)",
+        rusqlite::params![id, updated, data.to_string()],
+    )
+    .unwrap();
+}
+
+#[test]
+fn usage_opencode_2_reads_one_event_per_completed_step_with_its_own_tokens_and_cost() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_2_fixture(home.path());
+    opencode_2_step(&db, "msg-a", true, 100, 0.1);
+    opencode_2_step(&db, "msg-b", true, 100, 0.2);
+    // A step still running has no usage yet; a step that failed may end
+    // without any, and it is no skipped record.
+    opencode_2_step(&db, "msg-c", false, 100, 0.0);
+    opencode_2_step(&db, "msg-d", false, 100, 0.0);
+    db.execute(
+        "UPDATE session_message SET data = json_set(data, '$.time.completed', 1790856000000, \
+         '$.error', json('{\"message\":\"failed\"}')) WHERE id = 'msg-d'",
+        [],
+    )
+    .unwrap();
+    let before = fs::read(&path).unwrap();
+    let (events, checkpoint) = usage_drain(home.path(), Agent::OpenCode, &path, None);
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(events.len(), 2);
+    let first = &events[0];
+    assert_eq!(
+        (
+            first.tokens.input,
+            first.tokens.output,
+            first.tokens.reasoning,
+            first.tokens.cache_read,
+            first.tokens.cache_write
+        ),
+        (20, 14, Some(4), 100, 5)
+    );
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| e.recorded_cost_micro_usd.unwrap())
+            .collect::<Vec<_>>(),
+        [100_000, 200_000]
+    );
+    assert_eq!(first.model, "model-a");
+    assert_eq!(first.session, "ses_0a1b2c3d4e5f60718293a4b5c6");
+    assert_eq!(first.cwd.as_deref(), Some("/work/app"));
+    assert_ne!(first.key, events[1].key);
+    // The running step is read again once it completes, and a completed row
+    // inserted at the same timestamp after the horizon, even with a lexically
+    // earlier id, still arrives in the next cycle.
+    db.execute(
+        "UPDATE session_message SET time_updated = 200, data = json_set(data, \
+         '$.time.completed', 1790856000000, '$.cost', 0.3, '$.tokens', json('{\"input\":1,\
+         \"output\":1,\"reasoning\":0,\"cache\":{\"read\":0,\"write\":0}}')) WHERE id = 'msg-c'",
+        [],
+    )
+    .unwrap();
+    opencode_2_step(&db, "msg-0", true, 100, 0.4);
+    let (next, _) = usage_drain(home.path(), Agent::OpenCode, &path, Some(checkpoint));
+    for cost in [300_000, 400_000] {
+        assert!(
+            next.iter().any(|e| e.recorded_cost_micro_usd == Some(cost)),
+            "{cost}"
+        );
+    }
+    // The boundary timestamp is read again; a repeat keeps its key.
+    assert!(next.iter().any(|e| e.key == first.key));
+}
+
+#[test]
+fn usage_opencode_2_step_without_usage_or_past_the_read_limit_is_skipped_and_the_rest_is_read() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_2_fixture(home.path());
+    opencode_2_step(&db, "msg-a", true, 100, 0.1);
+    // Completed without a failure, yet no usage: a record Hide cannot count.
+    opencode_2_step(&db, "msg-b", false, 101, 0.0);
+    db.execute(
+        "UPDATE session_message SET data = json_set(data, '$.time.completed', 1790856000000) \
+         WHERE id = 'msg-b'",
+        [],
+    )
+    .unwrap();
+    opencode_2_step(&db, "msg-c", true, 102, 0.3);
+    db.execute(
+        "UPDATE session_message SET data = json_set(data, '$.padding', ?1) WHERE id = 'msg-c'",
+        ["x".repeat(hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES as usize / 2)],
+    )
+    .unwrap();
+    opencode_2_step(&db, "msg-d", true, 103, 0.4);
+    let mut saved = None;
+    let mut events = Vec::new();
+    let mut skipped = std::collections::BTreeMap::<String, u64>::new();
+    for _ in 0..100 {
+        let step = usage::read(home.path(), Agent::OpenCode, &path, saved).unwrap();
+        assert!(step.read_bytes <= 1024 * 1024);
+        events.extend(step.events);
+        for (reason, count) in step.skipped {
+            *skipped.entry(reason).or_default() += count;
+        }
+        if !step.has_more {
+            break;
+        }
+        saved = Some(step.checkpoint);
+    }
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| e.recorded_cost_micro_usd.unwrap())
+            .collect::<Vec<_>>(),
+        [100_000, 400_000]
+    );
+    assert_eq!(
+        skipped,
+        [
+            ("record_capacity".to_owned(), 1),
+            ("usage_missing".to_owned(), 1)
+        ]
+        .into()
+    );
+}
+
+#[test]
+fn usage_opencode_2_vacuum_rescans_without_changing_native_event_identity() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_2_fixture(home.path());
+    opencode_2_step(&db, "msg-a", true, 100, 0.1);
+    let (first, checkpoint) = usage_drain(home.path(), Agent::OpenCode, &path, None);
+    db.execute_batch("VACUUM").unwrap();
+    let next = usage::read(home.path(), Agent::OpenCode, &path, Some(checkpoint)).unwrap();
+    assert!(next.rescanned);
+    let mut events = next.events;
+    if next.has_more {
+        events.extend(usage_drain(home.path(), Agent::OpenCode, &path, Some(next.checkpoint)).0);
+    }
+    assert_eq!(first, events);
+}
+
+#[test]
+fn usage_opencode_database_of_neither_schema_is_refused_with_its_own_reason() {
+    let home = tempfile::tempdir().unwrap();
+    let path = home.path().join(".local/share/opencode/opencode.db");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch("CREATE TABLE sample (value);")
+        .unwrap();
+    assert!(matches!(
+        usage::read(home.path(), Agent::OpenCode, &path, None),
+        Err(usage::Refusal::Schema)
+    ));
+}
