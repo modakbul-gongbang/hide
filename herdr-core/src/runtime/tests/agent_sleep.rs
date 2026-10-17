@@ -144,6 +144,7 @@ fn dormant_intent(runtime: &mut Runtime) -> crate::agent_sleep::SleepId {
             transition_started_unix_ms: 1,
             reason: None,
             registration: None,
+            launch: Default::default(),
         })
         .unwrap()
 }

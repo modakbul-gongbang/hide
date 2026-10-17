@@ -256,8 +256,10 @@ impl LaunchDialect {
                 effort: &["--effort", "{}"],
                 efforts: &["low", "medium", "high", "xhigh", "max"],
             },
+            // `-m` is the short form; every model goes as `--model`
+            // (`LaunchDialect::choice_arguments`).
             Self::Codex => LaunchOptions {
-                model: &["-m", "{}"],
+                model: &["--model", "{}"],
                 effort: &["-c", "model_reasoning_effort={}"],
                 efforts: &["minimal", "low", "medium", "high", "xhigh"],
             },
@@ -353,7 +355,66 @@ pub fn valid_model(model: &str) -> bool {
             .all(|byte| byte.is_ascii_alphanumeric() || b"-._:/[]".contains(&byte))
 }
 
+/// The model and reasoning effort an agent was started with; both empty is
+/// the CLI's own default. Hide keeps it with the pane it started the agent in
+/// and with every record a restart is made from, so a wake, a fork or a
+/// reopen starts the agent with the same choice: a CLI resuming a session
+/// does not bring them back by itself (Claude Code 2.1.302 resumes and forks
+/// with its configured effort, Codex 0.163.0 forks with its configured model
+/// and effort; measured 2026-10-18).
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct LaunchChoice {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
+}
+
+impl LaunchChoice {
+    pub fn is_default(&self) -> bool {
+        self.model.is_none() && self.effort.is_none()
+    }
+}
+
+impl LaunchDialect {
+    /// The arguments a start or a restart adds for `choice`: `--model <id>`,
+    /// which every agent Hide starts takes (the start surfaces' model menu
+    /// reaches each one by it), and the effort in the form this dialect
+    /// declares. Refused with the reason for a model that is not a model name
+    /// or an effort this dialect does not declare.
+    pub fn choice_arguments(self, choice: &LaunchChoice) -> Result<Vec<String>, String> {
+        let mut arguments = Vec::new();
+        if let Some(model) = &choice.model {
+            if !valid_model(model) {
+                return Err(format!("model `{model}` is not a model name"));
+            }
+            arguments.extend(["--model".to_owned(), model.clone()]);
+        }
+        if let Some(effort) = &choice.effort {
+            arguments.extend(self.options().effort_arguments(effort)?);
+        }
+        Ok(arguments)
+    }
+}
+
 impl LaunchOptions {
+    fn effort_arguments(self, effort: &str) -> Result<Vec<String>, String> {
+        if self.efforts.is_empty() {
+            return Err("this agent takes no effort at launch".to_owned());
+        }
+        if !self.efforts.contains(&effort) {
+            return Err(format!(
+                "effort `{effort}` is not one of {}",
+                self.efforts.join(", ")
+            ));
+        }
+        Ok(self
+            .effort
+            .iter()
+            .map(|part| part.replace("{}", effort))
+            .collect())
+    }
+
     /// The launch arguments for a model and an effort, refused with the
     /// reason when either is not something this CLI declares.
     pub fn arguments(
@@ -372,16 +433,7 @@ impl LaunchOptions {
             arguments.extend(self.model.iter().map(|part| part.replace("{}", model)));
         }
         if let Some(effort) = effort {
-            if self.efforts.is_empty() {
-                return Err("this agent takes no effort at launch".to_owned());
-            }
-            if !self.efforts.contains(&effort) {
-                return Err(format!(
-                    "effort `{effort}` is not one of {}",
-                    self.efforts.join(", ")
-                ));
-            }
-            arguments.extend(self.effort.iter().map(|part| part.replace("{}", effort)));
+            arguments.extend(self.effort_arguments(effort)?);
         }
         Ok(arguments)
     }

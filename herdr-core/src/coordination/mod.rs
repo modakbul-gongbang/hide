@@ -75,7 +75,15 @@ pub enum Command {
         repo: String,
         branch: String,
         path: Option<String>,
+        /// The agent's own arguments for this start only.
         args: Vec<String>,
+        /// The model and effort the child starts with, which every restart
+        /// Hide makes of it (a wake, a fork, a reopen) starts it with again.
+        #[serde(
+            default,
+            skip_serializing_if = "hide_agent_adapter::LaunchChoice::is_default"
+        )]
+        launch: hide_agent_adapter::LaunchChoice,
         /// What Hide asked the child to do, for the screen to name it. Only
         /// Hide's own identity may give one.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -306,6 +314,13 @@ pub struct SpawnRecord {
     pub branch: String,
     pub requested_path: Option<String>,
     pub args: Vec<String>,
+    /// Part of the intent like `args`; a record written before it existed
+    /// has the CLI's defaults.
+    #[serde(
+        default,
+        skip_serializing_if = "hide_agent_adapter::LaunchChoice::is_default"
+    )]
+    pub launch: hide_agent_adapter::LaunchChoice,
     pub path: Option<String>,
     pub pane: Option<String>,
     /// The Herdr terminal `pane` ran when the spawn recorded it. A pane id
@@ -700,6 +715,7 @@ pub(crate) fn apply(
                 branch,
                 path,
                 args,
+                launch,
                 task,
                 ..
             } = command
@@ -753,6 +769,7 @@ pub(crate) fn apply(
                     || record.requested_path != *path
                     || record.mode != mode
                     || record.args != *args
+                    || record.launch != *launch
                     || !task_agrees
                 {
                     return Err("intent_conflict".into());
@@ -779,6 +796,7 @@ pub(crate) fn apply(
                 branch: branch.clone(),
                 requested_path: path.clone(),
                 args: args.clone(),
+                launch: launch.clone(),
                 path: None,
                 pane: None,
                 terminal: None,
@@ -1414,6 +1432,7 @@ mod tests {
             branch: "topic".into(),
             path: None,
             args: vec!["--model".into(), "fixture model".into()],
+            launch: Default::default(),
             task: None,
         }
     }

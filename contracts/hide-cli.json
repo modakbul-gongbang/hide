@@ -1552,6 +1552,22 @@
                     }
                 },
                 {
+                    "name": "--model",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
+                    "name": "--effort",
+                    "required": false,
+                    "requires": [],
+                    "value": {
+                        "type": "text"
+                    }
+                },
+                {
                     "name": "--help",
                     "required": false,
                     "requires": [],
@@ -1572,6 +1588,7 @@
                 "repository_unavailable",
                 "agent_not_installed",
                 "intent_conflict",
+                "invalid_launch_choice",
                 "shell_starting",
                 "agent_not_started",
                 "worktree_unconfirmed"
@@ -1894,7 +1911,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:435510802d8bc78c0b93c20e4fb1ea2d85bbd3349dcff3474588c679af29a56d",
+    "digest": "sha256:bb9595ee014035f538aee853e892c286621530f8e2c67712caed17bfa75cd4f8",
     "envelopes": {
         "agent": {
             "answer": "value",

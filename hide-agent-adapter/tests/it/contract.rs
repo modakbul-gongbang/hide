@@ -323,7 +323,7 @@ fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_u
             .options()
             .arguments(Some("gpt-5.5"), Some("high"))
             .unwrap(),
-        ["-m", "gpt-5.5", "-c", "model_reasoning_effort=high"]
+        ["--model", "gpt-5.5", "-c", "model_reasoning_effort=high"]
     );
     // agy 1.4.0 takes a model by `--model`; its effort is not declared yet.
     assert_eq!(
@@ -332,6 +332,66 @@ fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_u
             .arguments(Some("gemini-3.8-flash-high"), None)
             .unwrap(),
         ["--model", "gemini-3.8-flash-high"]
+    );
+}
+
+#[test]
+fn a_launch_choice_reaches_every_start_as_one_model_flag_and_the_declared_effort() {
+    use hide_agent_adapter::{LaunchChoice, LaunchDialect};
+    let choice = |model: Option<&str>, effort: Option<&str>| LaunchChoice {
+        model: model.map(str::to_owned),
+        effort: effort.map(str::to_owned),
+    };
+    for row in ADAPTERS.iter().filter(|row| row.start.is_some()) {
+        let dialect = row.start.unwrap();
+        assert_eq!(
+            dialect.choice_arguments(&LaunchChoice::default()).unwrap(),
+            Vec::<String>::new()
+        );
+        // The start surfaces' model menu starts every agent with `--model`,
+        // so a restart of any of them carries it the same way.
+        assert_eq!(
+            dialect
+                .choice_arguments(&choice(Some("some-model"), None))
+                .unwrap(),
+            ["--model", "some-model"],
+            "{}",
+            row.id
+        );
+        for unsafe_model in ["model; rm -rf /", "--yolo", ""] {
+            assert!(
+                dialect
+                    .choice_arguments(&choice(Some(unsafe_model), None))
+                    .is_err(),
+                "{}: {unsafe_model}",
+                row.id
+            );
+        }
+        assert_eq!(
+            dialect
+                .choice_arguments(&choice(None, Some("high")))
+                .is_ok(),
+            dialect.options().efforts.contains(&"high"),
+            "{}",
+            row.id
+        );
+        assert!(
+            dialect
+                .choice_arguments(&choice(None, Some("ultra")))
+                .is_err()
+        );
+    }
+    assert_eq!(
+        LaunchDialect::Claude
+            .choice_arguments(&choice(Some("sonnet"), Some("high")))
+            .unwrap(),
+        ["--model", "sonnet", "--effort", "high"]
+    );
+    assert_eq!(
+        LaunchDialect::Codex
+            .choice_arguments(&choice(Some("gpt-6-luna"), Some("low")))
+            .unwrap(),
+        ["--model", "gpt-6-luna", "-c", "model_reasoning_effort=low"]
     );
 }
 

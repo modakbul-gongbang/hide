@@ -3076,6 +3076,7 @@ impl Runtime {
                     );
                     return true;
                 }
+                let launch = self.launch_choice_of(agent);
                 self.fork_sequence += 1;
                 self.forks_in_flight.insert(
                     pane_id.clone(),
@@ -3087,6 +3088,8 @@ impl Runtime {
                         issued_serial: self.control_lane.issued_serial(),
                         tab_id: None,
                         focused: None,
+                        kind: agent.agent_kind.clone(),
+                        launch: launch.clone(),
                     },
                 );
                 let Some(context) = self.live.as_ref().cloned() else {
@@ -3134,6 +3137,7 @@ impl Runtime {
                     tab_label,
                     placement: payload.placement,
                     codex_daemon: self.codex_daemon_for_pane(&pane_id),
+                    launch,
                 };
                 // Keys typed between the press and the agent's start wait for
                 // the fork's agent rather than reaching the shell that starts
@@ -4145,6 +4149,7 @@ impl Runtime {
                     conversation_pane_ids: current.conversation_pane_ids,
                     pane_read_records: current.pane_read_records,
                     pane_completions: current.pane_completions,
+                    pane_launches: current.pane_launches,
                     request_verbs: current.request_verbs,
                     // `agent_sleep_set` owns the setting and the core owns
                     // the sleep records; a shared save carries both through.

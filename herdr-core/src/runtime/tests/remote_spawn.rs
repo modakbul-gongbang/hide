@@ -368,6 +368,7 @@ impl Spawner {
                 branch: "topic".into(),
                 path: None,
                 args: Vec::new(),
+                launch: Default::default(),
                 task: None,
             },
         )
@@ -751,6 +752,7 @@ fn a_spawn_by_a_device_caller_is_refused_before_anything_is_made() {
                 branch: "topic".into(),
                 path: None,
                 args: Vec::new(),
+                launch: Default::default(),
                 task: None,
             },
         )

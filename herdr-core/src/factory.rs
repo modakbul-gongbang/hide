@@ -2239,6 +2239,10 @@ fn start_worker(
             branch: request.branch.clone(),
             path,
             args,
+            launch: hide_agent_adapter::LaunchChoice {
+                model: request.model.clone(),
+                effort: request.effort.clone(),
+            },
             task: None,
         },
     )

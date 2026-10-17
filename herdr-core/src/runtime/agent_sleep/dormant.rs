@@ -155,6 +155,7 @@ impl Runtime {
                     == hide_agent_adapter::canonical_kind(&agent.agent_kind)
             })
             .map(|pane| pane.worker.clone());
+        let launch = self.launch_choice_of(&agent);
         let record = DormantRecord {
             phase: DormantPhase::SavingClose,
             revision: 1,
@@ -181,6 +182,7 @@ impl Runtime {
             transition_started_unix_ms: now,
             reason: None,
             registration: self.delivery_registration_of(pane_id),
+            launch,
         };
         if let Err(reason) = self.snapshot.ui_state.agent_sleep.admit_dormant(record) {
             // The transition budget frees as the pending ones settle; a full
@@ -657,6 +659,7 @@ impl Runtime {
         let args = crate::recent_closed::resume_arguments(&ClosedAgent {
             kind: record.kind.clone(),
             session_id: Some(record.native_session_id.clone()),
+            ..Default::default()
         });
         if args.is_none()
             || record.validate().is_err()
@@ -964,9 +967,10 @@ impl Runtime {
 
     fn start_saved_dormant_agent(&mut self, id: &SleepId) {
         let record = self.snapshot.ui_state.agent_sleep.dormant[id].clone();
-        let Some(args) = crate::recent_closed::resume_arguments(&ClosedAgent {
+        let Some(mut args) = crate::recent_closed::resume_arguments(&ClosedAgent {
             kind: record.kind.clone(),
             session_id: Some(record.native_session_id.clone()),
+            ..Default::default()
         }) else {
             self.fail_dormant(
                 id,
@@ -974,6 +978,20 @@ impl Runtime {
             );
             return;
         };
+        match crate::runtime::agent_choice::launch_arguments(&record.kind, &record.launch) {
+            Ok(launch) => args.extend(launch),
+            Err(detail) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "agent_sleep", "kind": "agent_sleep.launch_choice_refused",
+                    "sleep_id": id, "provider": record.kind, "detail": detail,
+                }));
+                self.fail_dormant(
+                    id,
+                    "The model or effort it was started with is not one this agent takes",
+                );
+                return;
+            }
+        }
         let Some(context) = self.live.clone() else {
             self.fail_dormant(id, "The sleeping session's connection is unavailable");
             return;
@@ -1008,7 +1026,17 @@ impl Runtime {
             return false;
         }
         match outcome {
-            agent_sleep_herdr::DormantStartOutcome::Started => {}
+            // The woken pane keeps the choice for the agent's next restart.
+            agent_sleep_herdr::DormantStartOutcome::Started => {
+                if let Some(pane_id) = work.record.wake_pane_id.as_deref() {
+                    self.record_pane_launch(
+                        pane_id,
+                        &work.record.kind,
+                        &work.record.launch,
+                        Some(&work.record.native_session_id),
+                    );
+                }
+            }
             agent_sleep_herdr::DormantStartOutcome::NotStarted => self.fail_dormant(
                 &work.id,
                 "The saved conversation could not be resumed. Retry uses the same wake tab.",
