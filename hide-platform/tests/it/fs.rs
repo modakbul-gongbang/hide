@@ -282,6 +282,13 @@ impl Drop for Closed {
 /// `icacls /inheritance:r` in one call with a grant kept what was inherited.
 #[cfg(windows)]
 fn read_only(folder: &Path) {
+    set_access(folder, "D:P(A;;FRFX;;;AU)");
+}
+
+/// Replaces the access list of `folder` with the one an access-list string
+/// spells, as given.
+#[cfg(windows)]
+fn set_access(folder: &Path, list: &str) {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
     use windows_sys::Win32::Security::Authorization::{
@@ -291,7 +298,7 @@ fn read_only(folder: &Path) {
     use windows_sys::Win32::Security::{
         DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
     };
-    let text: Vec<u16> = "D:P(A;;FRFX;;;AU)".encode_utf16().chain([0]).collect();
+    let text: Vec<u16> = list.encode_utf16().chain([0]).collect();
     let name: Vec<u16> = folder.as_os_str().encode_wide().chain([0]).collect();
     let mut descriptor = std::ptr::null_mut();
     // SAFETY: `text` is NUL-terminated and `descriptor` receives a
@@ -541,6 +548,82 @@ fn inspection_accepts_sticky_system_directories_and_reports_system_alias_targets
         );
     }
     assert_eq!(fs::symlink_metadata("/tmp").unwrap().uid(), metadata.uid());
+}
+
+/// The sticky rule: others may add entries of their own to a system folder
+/// above Hide's state, as anyone may to `/tmp` and every signed-in account
+/// may to a Windows drive's root, but a folder that lets them delete,
+/// rename or re-permission what is in it is refused. A drive's root also
+/// hands every signed-in account the right to change a folder made in it,
+/// so such a folder is refused, while Hide's own private folder there,
+/// which inherits nothing, is not.
+#[test]
+fn inspection_lets_others_add_to_a_system_folder_but_not_delete_from_it() {
+    use private::InspectionDirectory::Real;
+
+    #[cfg(unix)]
+    {
+        // `/private/tmp` on macOS, where `/tmp` is the system's alias.
+        let sticky = fs::canonicalize("/tmp").unwrap();
+        assert_eq!(private::inspect_directory_entry(&sticky).unwrap(), Real);
+    }
+    #[cfg(windows)]
+    {
+        let root = PathBuf::from(format!("{}\\", std::env::var("SystemDrive").unwrap()));
+        assert_eq!(
+            private::inspect_directory_entry(&root).unwrap(),
+            Real,
+            "{}",
+            access_list(&root)
+        );
+
+        // A drive's root in small: the system's, every signed-in account
+        // may read it and add a folder, and what is made in it inherits
+        // their right to change it. Handing a folder to the system takes an
+        // administrator, which the Windows runner's account is.
+        let outer = folder();
+        let added = outer.path().join("added");
+        fs::create_dir(&added).unwrap();
+        icacls(&added, &["/setowner", "*S-1-5-18"]);
+        set_access(
+            &added,
+            "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;FRFX;;;AU)(A;;0x4;;;AU)(A;OICIIO;0x1301bf;;;AU)",
+        );
+        let deleted = outer.path().join("deleted");
+        fs::create_dir(&deleted).unwrap();
+        icacls(&deleted, &["/setowner", "*S-1-5-18"]);
+        set_access(
+            &deleted,
+            "D:P(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)(A;;FRFX;;;AU)(A;;0x44;;;AU)",
+        );
+        let handed = added.join("handed");
+        fs::create_dir(&handed).unwrap();
+        let own = added.join("own");
+        private::create_dir(&own).unwrap();
+
+        assert_eq!(
+            private::inspect_directory_entry(&added).unwrap(),
+            Real,
+            "{}",
+            access_list(&added)
+        );
+        assert!(
+            private::inspect_directory_entry(&deleted).is_err(),
+            "{}",
+            access_list(&deleted)
+        );
+        assert!(
+            private::inspect_directory_entry(&handed).is_err(),
+            "{}",
+            access_list(&handed)
+        );
+        assert_eq!(
+            private::inspect_directory_entry(&own).unwrap(),
+            Real,
+            "{}",
+            access_list(&own)
+        );
+    }
 }
 
 #[test]

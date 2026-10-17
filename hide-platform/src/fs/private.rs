@@ -734,8 +734,8 @@ mod sys {
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
-        GetNamedSecurityInfoW, GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT,
-        SetNamedSecurityInfoW, SetSecurityInfo,
+        ConvertStringSidToSidW, GetNamedSecurityInfoW, GetSecurityInfo, SDDL_REVISION_1,
+        SE_FILE_OBJECT, SetNamedSecurityInfoW, SetSecurityInfo,
     };
     use windows_sys::Win32::Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AccessCheck, AclSizeInformation,
@@ -773,6 +773,14 @@ mod sys {
         | 0x0008_0000
         | 0x4000_0000
         | 0x1000_0000;
+
+    /// What others may do to a system folder without touching what is in
+    /// it: add a file or a folder of their own. Every signed-in account may
+    /// do that to a drive's root, as anyone may to `/tmp` on Unix, and only
+    /// deleting, renaming or re-permissioning a folder or an entry in it
+    /// (`DELETE`, `FILE_DELETE_CHILD`, `WRITE_DAC`, `WRITE_OWNER`) or
+    /// rewriting it takes away what a caller relies on: the sticky rule.
+    const ADD_ENTRY: u32 = FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY;
 
     /// The ACE type of an entry that allows access.
     const ACCESS_ALLOWED: u8 = 0;
@@ -826,6 +834,26 @@ mod sys {
         fn same_as(&self, other: PSID) -> bool {
             // SAFETY: both pointers are valid SIDs for the duration of the call.
             unsafe { EqualSid(self.as_psid(), other) != 0 }
+        }
+
+        /// The SID an `S-1-...` string names.
+        fn parse(text: &str) -> io::Result<Self> {
+            let text = U16CString::from_str(text)
+                .map_err(|error| io::Error::new(io::ErrorKind::InvalidInput, error))?;
+            let mut sid = null_mut();
+            // SAFETY: `text` is NUL-terminated and `sid` receives a LocalAlloc
+            // SID freed below.
+            if unsafe { ConvertStringSidToSidW(text.as_ptr(), &mut sid) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            let sid = Local(sid);
+            // SAFETY: the call returned a valid SID, whose length its header
+            // gives.
+            let length = unsafe { windows_sys::Win32::Security::GetLengthSid(sid.0) } as usize;
+            // SAFETY: as above, `length` bytes are readable at the SID.
+            Ok(Self(
+                unsafe { std::slice::from_raw_parts(sid.0.cast::<u8>(), length) }.to_vec(),
+            ))
         }
 
         /// `S-1-5-21-...`, the form an access-list string names an account by.
@@ -1304,11 +1332,22 @@ mod sys {
         let system = [
             Sid::well_known(WinLocalSystemSid)?,
             Sid::well_known(WinBuiltinAdministratorsSid)?,
+            // TrustedInstaller, which owns a system drive's root.
+            Sid::parse("S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464")?,
         ]
         .iter()
         .any(|sid| sid.same_as(security.owner));
-        if !access_of_security(&security, true)? {
-            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+        let alias = metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0;
+        // Others may add their own entries to a system folder (ADD_ENTRY);
+        // a folder that inherited a drive root's grant of change to every
+        // signed-in account still lets them delete, and stays refused.
+        let changes = if system && metadata.is_dir() && !alias {
+            CHANGE & !ADD_ENTRY
+        } else {
+            CHANGE
+        };
+        if !access_of_security(&security, changes)? {
+            if alias {
                 if system && metadata.file_type().is_symlink() {
                     return fs::read_link(path).map(InspectionDirectory::SystemAlias);
                 }
@@ -1325,14 +1364,20 @@ mod sys {
     /// Whether an access list the current account does not own grants `others`
     /// any access (`changes` false) or any access that changes the file.
     pub(super) fn access_of_others(path: &Path, changes: bool) -> io::Result<bool> {
-        access_of_security(&security_of_path(path)?, changes)
+        access_of_security(&security_of_path(path)?, watched(changes))
     }
 
     pub(super) fn handle_access_of_others(handle: &impl Handle, changes: bool) -> io::Result<bool> {
-        access_of_security(&security_of_handle(handle)?, changes)
+        access_of_security(&security_of_handle(handle)?, watched(changes))
     }
 
-    fn access_of_security(security: &Security, changes: bool) -> io::Result<bool> {
+    fn watched(changes: bool) -> u32 {
+        if changes { CHANGE } else { u32::MAX }
+    }
+
+    /// Whether anyone but this account and the system is allowed any of the
+    /// `watched` access.
+    fn access_of_security(security: &Security, watched: u32) -> io::Result<bool> {
         let account = account()?;
         let trusted = [
             account.user,
@@ -1390,7 +1435,7 @@ mod sys {
             if trusted.iter().any(|known| known.same_as(sid)) {
                 continue;
             }
-            if (!changes && allowed.Mask != 0) || allowed.Mask & CHANGE != 0 {
+            if allowed.Mask & watched != 0 {
                 return Ok(true);
             }
         }
