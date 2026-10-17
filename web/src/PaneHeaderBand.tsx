@@ -27,7 +27,7 @@ import { sessionOfAgentOn } from "./sessionWork";
 
 const LABELS: Record<string, MessageKey> = {
   sleeping: "panes.sleep.captionSleeping", waking: "panes.sleep.captionWaking", failed: "panes.sleep.captionFailed", restore_failed: "panes.restore.failed",
-  disconnected: "panes.transport.disconnected", closing: "panes.transport.closing", starting: "panes.transport.starting",
+  disconnected: "panes.transport.disconnected", closing: "panes.transport.closing", starting: "panes.transport.starting", reconnecting: "panes.transport.reconnecting", helper_not_allowed: "panes.transport.helperNotAllowed",
   unavailable: "panes.transport.remoteUnavailable", terminated: "panes.transport.remoteEnded", exit: "agentSessions.exitCode",
   controlled_elsewhere: "panes.transport.scrollElsewhere", device_offline: "panes.transport.disconnected",
   blocked: "agentSessions.tag.blocked", stopped: "agentSessions.tag.stopped",
