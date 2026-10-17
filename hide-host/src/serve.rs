@@ -727,17 +727,20 @@ pub fn label_transcript(
     home: &Path,
     request: &hide_session::label_transcript::LabelTranscriptRequest,
 ) -> HostResult<Value> {
-    let transcript = hide_session::label_transcript::read(home, request).map_err(|reason| {
-        let code = match reason.as_str() {
-            "session_file_missing" => ErrorCode::NotFound,
-            "opencode_db_busy" | "opencode_db_changed" => ErrorCode::Busy,
-            "session_kind_unsupported" => ErrorCode::Unsupported,
-            reason if reason.starts_with("session_capacity:") => ErrorCode::TooLarge,
-            _ => ErrorCode::Io,
-        };
-        HostError::new(code, reason)
-    })?;
+    let transcript = hide_session::label_transcript::read(home, request).map_err(label_refusal)?;
     to_value(transcript)
+}
+
+/// A session reader's refusal, its stable reason code as the message.
+fn label_refusal(reason: String) -> HostError {
+    let code = match reason.as_str() {
+        "session_file_missing" => ErrorCode::NotFound,
+        "opencode_db_busy" | "opencode_db_changed" => ErrorCode::Busy,
+        "session_kind_unsupported" => ErrorCode::Unsupported,
+        reason if reason.starts_with("session_capacity:") => ErrorCode::TooLarge,
+        _ => ErrorCode::Io,
+    };
+    HostError::new(code, reason)
 }
 
 /// Local and remote activity share this path-free, metadata-only answer.
@@ -1369,6 +1372,15 @@ pub fn handle_with_progress(
             scope,
             checkpoint,
         } => {
+            // OpenCode keeps no session file: its database is read by the id
+            // the scope names, proven inside the read, and `path` names nothing.
+            if agent == hide_session::Agent::OpenCode {
+                let home = env.home("sessions_home_unavailable")?;
+                let page =
+                    hide_session::opencode::read_conversation(Path::new(&home), &scope, checkpoint)
+                        .map_err(label_refusal)?;
+                return to_value(page);
+            }
             let path = session_file(env, &[agent], &path)?;
             let home = env.home("sessions_home_unavailable")?;
             let page = hide_session::read_session_file(
