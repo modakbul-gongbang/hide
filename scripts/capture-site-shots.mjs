@@ -2,10 +2,11 @@
 // Regenerates the introduction site's product shots (site/assets/shots/) from
 // the gallery's `landing` scene: the shell's own components over the invented
 // story of the page's one-night timeline, never a capture of anyone's app.
-// Each shot is photographed in Dark and Light at 2x and written as a lossy
-// WebP, so the images can be remade whenever the UI changes:
+// Each shot is photographed in Dark and Light at 2x (the header's close-up at
+// 4x) and written as a lossy WebP, so the images can be remade whenever the UI
+// changes:
 //
-//   node scripts/capture-site-shots.mjs [attention|agents|core ...]
+//   node scripts/capture-site-shots.mjs [hero|attention|agents|header|core ...]
 //
 // It starts this checkout's web dev server and a headless Chromium, both
 // closed on every exit. Encoding needs `cwebp` (libwebp: `brew install webp`,
@@ -22,18 +23,82 @@ const THEMES = ['dark', 'light'];
 const WEBP_QUALITY = '90';
 
 /**
- * One shot: the window it is photographed in, in CSS pixels, and what to do once the scene is up.
+ * One shot: the window it is photographed in, in CSS pixels, what to do once the scene is up, and what to do with the
+ * scene after it is photographed (`placed`, once, in the first theme).
+ * `scale` overrides the pixel ratio for a shot the page shows larger than its window, such as the header's close-up.
  * `narrow` is the phone variant (`<name>-narrow-<theme>.webp`): the key part of the shot alone, at a width a phone shows
  * without sideways scrolling. A shot that already fits a phone has none.
  */
 const SHOTS = {
+  hero: {width: 1456, height: 900, ready: waitForTerminals, placed: placeOwlPeek},
   attention: {width: 428, height: 740},
   agents: {width: 960, height: 840, ready: openLeadTree, narrow: {width: 420, height: 780, ready: scrollProjectIntoView}},
+  header: {width: 440, height: 58, scale: 4},
   core: {width: 1040, height: 640, narrow: {width: 400, height: 660}},
 };
 
 const root = fs.realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], {encoding: 'utf8'}).trim());
 const out = path.join(root, 'site', 'assets', 'shots');
+const owls = path.join(root, 'site', 'assets', 'owls');
+
+/** The hero writes its terminals once each has fitted its pane; the shot waits for that and the frame that draws it. */
+async function waitForTerminals(page) {
+  await page.locator('[data-landing-terminals="written"]').waitFor();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
+
+/**
+ * The hero owl hides behind edges of the hero shot (site/README.md): it pops up over the window's top edge above the
+ * lead's pane and above the PRs tool, leans out from behind the PRs tool's left edge, and rises from behind the
+ * sidebar's footer. Its field is 1200 units wide, the window's width, with the window's top edge 200 units down; this
+ * measures those edges on the scene just photographed and writes them into the loop and its still frame.
+ */
+async function placeOwlPeek(page) {
+  const box = (selector) => page.locator(selector).first().evaluate((element) => element.getBoundingClientRect().toJSON());
+  const [viewport, rail, sidebar, footer, lead, asking, lane] = await Promise.all([
+    page.evaluate(() => ({width: innerWidth, height: innerHeight})),
+    box('[data-device-rail]'), box('[data-sidebar-box]'), box('[data-sidebar-footer]'),
+    box('[data-pane-view="a1"]'), box('[data-pane-view="a3"]'), box('[data-lane="prs"]'),
+  ]);
+  const unit = 1200 / viewport.width;
+  const x = (px) => px * unit;
+  const y = (px) => 200 + px * unit;
+  const n = (value) => value.toFixed(2);
+  const rect = (id, left, top, width, height) => `<clipPath id="${id}"><rect x="${n(left)}" y="${n(top)}" width="${n(width)}" height="${n(height)}"/>`;
+  const bottom = y(viewport.height);
+  // Each stop: where the owl stands, and the region it shows in (`show-`) and grips the edge in (`over-`, 24 units past it).
+  const stops = {
+    lead: {at: [x(lead.left + lead.width / 2), 200]},
+    lane: {
+      at: [x(lane.left) - 7.99, y(asking.top + asking.height * 0.6)],
+      show: [x(sidebar.right), 200, x(lane.left) - x(sidebar.right), bottom - 200],
+      over: [x(sidebar.right), 200, x(lane.left) - x(sidebar.right) + 24, bottom - 200],
+    },
+    sidebar: {
+      at: [x((rail.right + sidebar.right) / 2), y(footer.top)],
+      show: [x(rail.right), 200, x(sidebar.right) - x(rail.right), y(footer.top) - 200],
+      over: [x(rail.right), 200, x(sidebar.right) - x(rail.right), y(footer.top) - 200 + 24],
+    },
+    prs: {at: [x(lane.left + lane.width / 2), 200]},
+  };
+  // The still frame draws only the first stop; it keeps every stop's clip regions with the loop's.
+  for (const [file, drawn] of [['owl-peek.svg', Object.keys(stops)], ['owl-peek-still.svg', ['lead']]]) {
+    const target = path.join(owls, file);
+    let svg = fs.readFileSync(target, 'utf8');
+    const field = Number(svg.match(/viewBox="0 0 1200 ([0-9.]+)"/)?.[1]);
+    if (Math.abs(field - bottom) > 1) throw new Error(`${file} is 1200x${field} but the hero shot's field is 1200x${n(bottom)}; redraw its field for the new shot`);
+    for (const [stop, {at, show, over}] of Object.entries(stops)) {
+      // A stop's parts all stand at its anchor: the first one after its group names it, and every part moves with it.
+      const anchor = svg.match(new RegExp(`(?:class="out-${stop}"|clip-path="url\\(#(?:show|over)-${stop}\\)")><g transform="translate\\(([-0-9.]+ [-0-9.]+)\\) rotate\\(`))?.[1];
+      if (anchor) svg = svg.replaceAll(`translate(${anchor}) rotate(`, `translate(${n(at[0])} ${n(at[1])}) rotate(`);
+      else if (drawn.includes(stop)) throw new Error(`${file} has no ${stop} stop to place`);
+      if (show) svg = svg.replace(new RegExp(`<clipPath id="show-${stop}"><rect[^>]*/>`), rect(`show-${stop}`, ...show));
+      if (over) svg = svg.replace(new RegExp(`<clipPath id="over-${stop}"><rect[^>]*/>`), rect(`over-${stop}`, ...over));
+    }
+    fs.writeFileSync(target, svg);
+    console.log(`${path.relative(root, target)}  placed on the hero's edges`);
+  }
+}
 
 /** The project list scrolls under the raised groups; the agents shot starts at the project whose tree it shows. */
 async function scrollProjectIntoView(page) {
@@ -82,15 +147,17 @@ async function main(names) {
     await server.listen();
     const origin = server.resolvedUrls?.local?.[0]?.replace(/\/$/, '');
     if (!origin) throw new Error('The web dev server did not report an address');
-    const browser = await chromium.launch();
+    // Headless Chromium draws xterm's WebGL canvas blank at 2x, so WebGL is off and the
+    // hero's terminals use xterm's DOM renderer, the one the app falls back to (terminalRenderer.ts).
+    const browser = await chromium.launch({args: ['--disable-3d-apis']});
     cleanup.push(() => browser.close());
 
     fs.mkdirSync(out, {recursive: true});
     const variants = names.flatMap((name) => [[name, '', SHOTS[name]], ...(SHOTS[name].narrow ? [[name, 'narrow', SHOTS[name].narrow]] : [])]);
-    for (const [name, variant, {width, height, ready}] of variants) {
+    for (const [name, variant, {width, height, ready, placed, scale = PIXEL_RATIO}] of variants) {
       const label = variant ? `${name}-${variant}` : name;
       for (const theme of THEMES) {
-        const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: PIXEL_RATIO, reducedMotion: 'reduce'});
+        const context = await browser.newContext({viewport: {width, height}, deviceScaleFactor: scale, reducedMotion: 'reduce'});
         const page = await context.newPage();
         const problems = [];
         page.on('pageerror', (error) => problems.push(error.message));
@@ -111,7 +178,8 @@ async function main(names) {
         await page.screenshot({path: png});
         const webp = path.join(out, `${label}-${theme}.webp`);
         encode(png, webp);
-        console.log(`${path.relative(root, webp)}  ${width * PIXEL_RATIO}x${height * PIXEL_RATIO}  ${(fs.statSync(webp).size / 1024).toFixed(0)} KB`);
+        console.log(`${path.relative(root, webp)}  ${width * scale}x${height * scale}  ${(fs.statSync(webp).size / 1024).toFixed(0)} KB`);
+        if (placed && theme === THEMES[0]) await placed(page);
         await context.close();
       }
     }

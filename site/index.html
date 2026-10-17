@@ -9,12 +9,13 @@
     <meta property="og:type" content="website">
     <meta property="og:title" content="hide · Run more agents. Hold less.">
     <meta property="og:description" content="Every agent your team runs, in one view. Only what needs you comes up. Free and Apache 2.0 licensed. Built on Herdr.">
-    <meta property="og:image" content="https://withhide.dev/assets/hide-workspace.webp">
+    <meta property="og:image" content="https://withhide.dev/assets/shots/hero-dark.webp">
     <meta name="twitter:card" content="summary_large_image">
     <title>hide · Run more agents. Hold less.</title>
     <link rel="icon" type="image/png" href="./assets/hide-mark.png">
     <link rel="preload" as="font" href="./assets/fonts/BricolageGrotesque-Variable.woff2" type="font/woff2" crossorigin>
-    <link rel="preload" as="image" href="./assets/hide-workspace.webp" type="image/webp">
+    <link rel="preload" as="image" href="./assets/shots/hero-dark.webp" type="image/webp" media="not (prefers-color-scheme: light)">
+    <link rel="preload" as="image" href="./assets/shots/hero-light.webp" type="image/webp" media="(prefers-color-scheme: light)">
     <link rel="stylesheet" href="./styles.css">
     <script>document.documentElement.classList.remove("no-js");</script>
     <script type="module" src="./downloads.js"></script>
@@ -58,7 +59,10 @@
         <figure class="stage wrap reveal">
           <img class="peek" src="./assets/owls/owl-peek-still.svg" data-motion="./assets/owls/owl-peek.svg" width="1200" height="942" alt="">
           <div class="window">
-            <img src="./assets/hide-workspace.webp" width="2912" height="1800" alt="The hide window: two agents that need an answer raised above the project tree, Claude Code and Codex side by side, and every session listed by group on the right.">
+            <picture>
+              <source media="(prefers-color-scheme: light)" srcset="./assets/shots/hero-light.webp">
+              <img src="./assets/shots/hero-dark.webp" width="2912" height="1800" alt="The hide window. Two agents that need an answer are raised above the project tree. A lead splitting the work and the agent asking to merge two pull requests run side by side, and the PRs tool lists the two ready to merge above the ones agents are still working on.">
+            </picture>
           </div>
           <figcaption>Two agents need you. They are on top. Everything else keeps working.</figcaption>
         </figure>
@@ -66,7 +70,7 @@
         <div class="agents-strip wrap reveal">
           <p class="label bare">Works with the agents your team already signed in to</p>
           <ul aria-label="Supported agents">
-            <li>Claude Code</li><li>Codex</li><li>OpenCode</li><li>Cursor</li><li>Grok</li><li>Pi</li><li>omp</li>
+            <li>Claude Code</li><li>Codex</li><li>Antigravity</li><li>OpenCode</li><li>Cursor</li><li>Grok</li><li>Pi</li><li>omp</li>
           </ul>
         </div>
       </section>
@@ -84,14 +88,15 @@
               <h3 id="attention-title">Only what needs you comes up.</h3>
               <p>Hide AI reads what each agent did and gives it a title and a one-line summary. Agents sort themselves into four groups, and the ones waiting on you sit on top on every screen.</p>
               <ul>
-                <li>Needs you, Done, Working, Seen. Nothing else to watch.</li>
+                <li>Needs You, Unread, Working, Seen. Nothing else to watch.</li>
+                <li>Each task keeps a record: what it is doing now, and what you asked, ticked off.</li>
                 <li>Runs on the agent CLI you already signed in to. No new API key.</li>
               </ul>
             </div>
             <figure class="shot shot-narrow reveal">
               <picture>
                 <source media="(prefers-color-scheme: light)" srcset="./assets/shots/attention-light.webp">
-                <img src="./assets/shots/attention-dark.webp" width="856" height="1480" alt="hide's sidebar. Two agents wait under Needs You, with a one-line reason each. A finished fix sits under Done. Below them, the project tree shows who is still working." loading="lazy" decoding="async">
+                <img src="./assets/shots/attention-dark.webp" width="856" height="1480" alt="hide's sidebar. Two agents wait under Needs You, with a one-line reason each. A finished fix sits under Unread. Below them, the project tree shows who is still working." loading="lazy" decoding="async">
               </picture>
             </figure>
           </article>
@@ -103,7 +108,7 @@
               <p>A lead can start workers, a worker can start a helper, and they write to each other in letters. Mix vendors freely: one writes, another checks. The tree shows who started whom, on every machine.</p>
               <ul>
                 <li>A child runs in its own tab and reports to its parent, not to you.</li>
-                <li>Built on Herdr, so any agent in a pane can join.</li>
+                <li>A letter reaches a working agent within five minutes, or at its next step when it cannot wait.</li>
               </ul>
             </div>
             <figure class="shot reveal">
@@ -114,11 +119,20 @@
                 <img src="./assets/shots/agents-dark.webp" width="1920" height="1680" alt="A lead agent, Claude Code, open in a pane. Its header shows one child asking and its pull requests, and a popover lists the helpers it started. The sidebar tree beside it shows the lead with Codex workers and an OpenCode helper under them." loading="lazy" decoding="async">
               </picture>
             </figure>
-            <figure class="shot shot-detail reveal">
-              <picture>
-                <source media="(max-width: 600px)" srcset="./assets/shots/pane-header-narrow.webp" width="1200" height="1320">
-                <img src="./assets/shots/pane-header.webp" width="2560" height="1200" alt="The lead's pane header enlarged. Callouts name the agent, what it is doing, and the one child that is asking its parent." loading="lazy" decoding="async">
-              </picture>
+            <figure class="shot-detail reveal">
+              <div class="shot">
+                <picture>
+                  <source media="(prefers-color-scheme: light)" srcset="./assets/shots/header-light.webp">
+                  <img src="./assets/shots/header-dark.webp" width="1760" height="232" alt="The lead's pane header, enlarged: a working ring, the Claude Code mark, its title and its pull requests by state, with a row under it for the one child that is asking." loading="lazy" decoding="async">
+                </picture>
+              </div>
+              <figcaption>
+                <ol class="callouts">
+                  <li><b>Which agent</b>The ring says it is working, the mark that Claude Code runs it.</li>
+                  <li><b>Its pull requests</b>One failed, one pending, two ready to merge, one merged.</li>
+                  <li><b>Its children</b>One is asking its parent. The row says so; it does not wake you.</li>
+                </ol>
+              </figcaption>
             </figure>
           </article>
 
@@ -155,6 +169,21 @@
             <li><b>Open a path</b>The file opens beside the agent that named it.</li>
             <li><b>Read the diff</b>Each checkout's changes, one click from its tab.</li>
             <li><b>Check the page</b>A built-in browser your agents can drive too.</li>
+          </ol>
+        </div>
+      </section>
+
+      <section class="section tight wrap" aria-labelledby="work-title">
+        <div class="band reveal">
+          <div class="band-head">
+            <p class="label">Around the agents</p>
+            <h2 id="work-title">Nothing to keep in your head.</h2>
+            <p>What sessions decided, what is left to start and which pull request waits on you are kept where you will look.</p>
+          </div>
+          <ol>
+            <li><b>Project Memory</b>What one session decided reaches the next agent.</li>
+            <li><b>Backlog</b>Issues and notes in one list. Start one: a worktree, an agent and its first prompt.</li>
+            <li><b>Pull requests</b>Sorted by who acts next. Hand one to an agent.</li>
           </ol>
         </div>
       </section>
@@ -225,7 +254,7 @@
         </div>
         <div class="faq reveal">
           <details open><summary>Is hide free?</summary><p>Yes. The app, every agent, every device, the core and the phone are free and Apache 2.0 licensed. The Software Factory will be a paid plan when it opens.</p></details>
-          <details><summary>Which agents work with it?</summary><p>Claude Code, Codex, OpenCode, Cursor, Grok, Pi and omp, each with its own login. hide reads them all the same way: one status, one title, one place to answer.</p></details>
+          <details><summary>Which agents work with it?</summary><p>Claude Code, Codex, Antigravity, OpenCode, Cursor, Grok, Pi and omp, each with its own login. Every one gets the same status, title and place to answer. Grok and Cursor take letters only while they work and do not use Project Memory yet.</p></details>
           <details><summary>I already use Herdr.</summary><p>hide is built on Herdr and opens on top of your running Herdr server as it is. Your workspaces, panes and agents are there on first launch, and nothing is stopped or replaced. No Herdr yet? hide brings its own.</p></details>
           <details><summary>Does my code leave my machines?</summary><p>Not through hide, which has no hosted service. Agents, the core and Hide AI run on machines you own, with the agent CLIs you already signed in to, so code goes only where those CLIs send it. Your phone reaches your machines over your own Tailscale.</p></details>
           <details><summary>Do I need a second machine?</summary><p>No. Everything runs on one laptop. An always-on Mac lets your agents keep working while the laptop sleeps.</p></details>
