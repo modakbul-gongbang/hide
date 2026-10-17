@@ -12,7 +12,7 @@ import threading
 import time
 import urllib.request
 
-from .processes import MAX_OUTPUT, OwnedProcesses, ProcessError
+from .processes import COMMAND_SECONDS, MAX_OUTPUT, OwnedProcesses, ProcessError
 from .authentication import require_no_login
 from .protection import ProtectionError, beneath, private_directory, validate_isolation, write_private
 from .timing import Deadline
@@ -350,8 +350,9 @@ class Runtime:
                     failures.append(f"workspace close {workspace}: {error}")
             if (self.state / "hided.json").exists():
                 try:
-                    # `hide stop` gives hided 5 s to stop, then kills it and confirms.
-                    self.owner.run([str(self.hide), "stop"], env=self.daemon_env, seconds=20)
+                    # `hide stop` gives hided 5 s to stop, then kills it and confirms;
+                    # a command's longest wait (COMMAND_SECONDS) leaves room for both.
+                    self.owner.run([str(self.hide), "stop"], env=self.daemon_env, seconds=COMMAND_SECONDS)
                 except Exception as error:
                     failures.append(f"hide stop: {error}")
             if self.started:

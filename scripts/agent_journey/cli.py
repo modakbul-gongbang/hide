@@ -566,7 +566,11 @@ def main(argv=None):
                     {**item, "reason": "cleanup_failed: " + str(error)[:200]} for item in report["created"]]}
         # Hide AI's model requests, apart from the agents' budget: none in
         # local mode, where it is off, and counted in CI mode, where it is on.
-        report["hide_ai_requests"] = hide_ai_requests(run / "hided.log")
+        try:
+            report["hide_ai_requests"] = hide_ai_requests(run / "hided.log")
+        except OSError as error:
+            report["hide_ai_requests"] = {}
+            report["failures"].append({"type": "OSError", "reason": f"hided_log_unreadable: {error}"})
         if local and report["hide_ai_requests"]:
             report["failures"].append({"type": "IsolationError", "reason": "hide_ai_ran_in_local_mode: "
                                        + json.dumps(report["hide_ai_requests"])})
