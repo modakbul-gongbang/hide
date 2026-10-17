@@ -82,11 +82,36 @@ fn an_existing_anchor_refuses_links_files_and_modifiable_leaves_without_mutation
 #[test]
 fn an_ancestor_is_passed_over_only_when_the_account_neither_owns_nor_may_add_to_it() {
     let outer = folder();
+
+    // Handing a folder to the system takes an administrator, which the
+    // Windows runner's account is.
+    #[cfg(windows)]
+    {
+        let given = outer.path().join("given");
+        fs::create_dir(&given).unwrap();
+        let anchor = given.join("anchor");
+        private::create_dir(&anchor).unwrap();
+        icacls(&given, &["/setowner", "*S-1-5-18"]);
+        read_only(&given);
+        assert!(!private::owned_by_current_user(&given).unwrap());
+        assert!(!may_add_to(&given), "{}", access_list(&given));
+
+        let canonical = private::establish_dir_durability(&anchor).unwrap();
+
+        assert_eq!(
+            identity::file_id(&canonical).unwrap(),
+            identity::file_id(&anchor).unwrap()
+        );
+        assert!(names(&anchor).is_empty());
+    }
+
     let closed = outer.path().join("closed");
-    private::create_dir(&closed).unwrap();
+    fs::create_dir(&closed).unwrap();
     let anchor = closed.join("anchor");
     private::create_dir(&anchor).unwrap();
     let _closed = Closed::own(&closed);
+    #[cfg(windows)]
+    assert!(!may_add_to(&closed), "{}", access_list(&closed));
 
     let synced = atomic::sync_dir(&open_dir(&closed));
     let established = private::establish_dir_durability(&anchor);
@@ -106,27 +131,6 @@ fn an_ancestor_is_passed_over_only_when_the_account_neither_owns_nor_may_add_to_
         );
     }
     assert!(names(&anchor).is_empty());
-
-    // Handing a folder to the system takes an administrator, which the
-    // Windows runner's account is.
-    #[cfg(windows)]
-    {
-        let given = outer.path().join("given");
-        private::create_dir(&given).unwrap();
-        let anchor = given.join("anchor");
-        private::create_dir(&anchor).unwrap();
-        icacls(&given, &["/setowner", "*S-1-5-18"]);
-        icacls(&given, &["/grant:r", &format!("{}:(RX)", account())]);
-        assert!(!private::owned_by_current_user(&given).unwrap());
-
-        let canonical = private::establish_dir_durability(&anchor).unwrap();
-
-        assert_eq!(
-            identity::file_id(&canonical).unwrap(),
-            identity::file_id(&anchor).unwrap()
-        );
-        assert!(names(&anchor).is_empty());
-    }
 }
 
 /// A folder of the account's that it can read and enter but add nothing
@@ -142,7 +146,7 @@ impl Closed {
         }
         // The owner's implied right to change the access list puts it back.
         #[cfg(windows)]
-        icacls(path, &["/grant:r", &format!("{}:(RX)", account())]);
+        read_only(path);
         Self(path.to_path_buf())
     }
 }
@@ -151,6 +155,43 @@ impl Drop for Closed {
     fn drop(&mut self) {
         private::restrict_to_owner(&self.0).unwrap();
     }
+}
+
+/// Leaves the account only reading and entering `folder`: what it inherited
+/// goes, and so does every right granted to the account before.
+#[cfg(windows)]
+fn read_only(folder: &Path) {
+    icacls(
+        folder,
+        &["/inheritance:r", "/grant:r", &format!("{}:(RX)", account())],
+    );
+}
+
+/// Whether the system lets the account open `folder` to add a file or a
+/// folder to it.
+#[cfg(windows)]
+fn may_add_to(folder: &Path) -> bool {
+    use std::os::windows::fs::OpenOptionsExt;
+    // FILE_ADD_FILE and FILE_ADD_SUBDIRECTORY, each with SYNCHRONIZE, and
+    // FILE_FLAG_BACKUP_SEMANTICS, which a folder takes to open.
+    [0x2, 0x4].into_iter().any(|access| {
+        match fs::OpenOptions::new()
+            .access_mode(access | 0x0010_0000)
+            .custom_flags(0x0200_0000)
+            .open(folder)
+        {
+            Ok(_) => true,
+            Err(error) if error.kind() == ErrorKind::PermissionDenied => false,
+            Err(error) => panic!("opening {} to add to it: {error}", folder.display()),
+        }
+    })
+}
+
+/// The access list of `path` as `icacls` prints it, for a failure message.
+#[cfg(windows)]
+fn access_list(path: &Path) -> String {
+    let output = Command::new("icacls").arg(path).output().unwrap();
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 #[cfg(windows)]
