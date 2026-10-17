@@ -56,7 +56,10 @@ pub enum OwnDir {
 /// one `fs::create_dir_all` made under the process's umask, is restricted to
 /// its owner. A link, anything but a folder, and a folder another account
 /// owns are refused (`PermissionDenied`, naming the path) and left as they
-/// are, never followed or changed.
+/// are, never followed or changed. The folder is opened as the entry itself
+/// and judged and changed through that handle, so a link swapped in at the
+/// name after the look cannot redirect the change. Only the last name is
+/// judged: the folders above it are the caller's to trust.
 pub fn own_dir(path: &Path) -> io::Result<OwnDir> {
     let made = match fs::symlink_metadata(path) {
         Ok(_) => false,
@@ -66,26 +69,34 @@ pub fn own_dir(path: &Path) -> io::Result<OwnDir> {
         }
         Err(error) => return Err(error),
     };
-    // Looked at again when it was just made: another process may have made
-    // it first, the way an earlier build did.
-    let metadata = fs::symlink_metadata(path)?;
     let refused = |why: &str| {
         io::Error::new(
             io::ErrorKind::PermissionDenied,
             format!("{} {why}", path.display()),
         )
     };
+    // Looked at again when it was just made: another process may have made
+    // it first, the way an earlier build did.
+    let metadata = fs::symlink_metadata(path)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(refused("is a link or not a folder"));
     }
-    if !owned_by_current_user(path)? {
+    let folder = match sys::open_entry_dir(path) {
+        Ok(folder) => folder,
+        // Swapped for a link or a file since the look above.
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
+            return Err(refused("is a link or not a folder"));
+        }
+        Err(error) => return Err(error),
+    };
+    if !handle_owned_by_current_user(&folder)? {
         return Err(refused("belongs to another account"));
     }
-    if is_private(path)? {
+    if !sys::handle_access_of_others(&folder, false)? {
         return Ok(if made { OwnDir::Made } else { OwnDir::Private });
     }
-    restrict_to_owner(path)?;
-    if !is_private(path)? {
+    sys::restrict_dir_handle(&folder)?;
+    if sys::handle_access_of_others(&folder, false)? {
         return Err(refused("could not be made private"));
     }
     Ok(OwnDir::Restricted)
@@ -601,6 +612,28 @@ mod sys {
         options.open(path)
     }
 
+    /// The folder entry at `path` itself, open for reading; a link or
+    /// anything but a folder there is `InvalidInput`.
+    pub(super) fn open_entry_dir(path: &Path) -> io::Result<fs::File> {
+        let mut options = fs::OpenOptions::new();
+        options
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_DIRECTORY | libc::O_NONBLOCK);
+        options
+            .open(path)
+            .map_err(|error| match error.raw_os_error() {
+                Some(libc::ELOOP | libc::ENOTDIR) => {
+                    io::Error::new(io::ErrorKind::InvalidInput, "the entry is not a folder")
+                }
+                _ => error,
+            })
+    }
+
+    /// `fchmod` on the open folder: only the folder it names changes.
+    pub(super) fn restrict_dir_handle(folder: &fs::File) -> io::Result<()> {
+        folder.set_permissions(fs::Permissions::from_mode(0o700))
+    }
+
     pub(super) fn restrict_to_owner(path: &Path) -> io::Result<()> {
         let metadata = fs::metadata(path)?;
         // A file that ran for its owner still does.
@@ -671,7 +704,7 @@ mod sys {
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
         GetNamedSecurityInfoW, GetSecurityInfo, SDDL_REVISION_1, SE_FILE_OBJECT,
-        SetNamedSecurityInfoW,
+        SetNamedSecurityInfoW, SetSecurityInfo,
     };
     use windows_sys::Win32::Security::{
         ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
@@ -936,8 +969,8 @@ mod sys {
         Ok(unsafe { fs::File::from_raw_handle(handle) })
     }
 
-    pub(super) fn restrict_to_owner(path: &Path) -> io::Result<()> {
-        let folder = fs::metadata(path)?.is_dir();
+    /// The private access list, in the descriptor that holds it.
+    fn private_acl(folder: bool) -> io::Result<(Descriptor, *mut ACL)> {
         let descriptor = private_descriptor(folder)?;
         let mut present = 0;
         let mut defaulted = 0;
@@ -959,12 +992,73 @@ mod sys {
             // gives everybody everything.
             return Err(io::Error::other("the private access list has no entries"));
         }
+        Ok((descriptor, acl))
+    }
+
+    pub(super) fn restrict_to_owner(path: &Path) -> io::Result<()> {
+        let (_descriptor, acl) = private_acl(fs::metadata(path)?.is_dir())?;
         let name = wide(path)?;
         // SAFETY: `name` is NUL-terminated and `acl` lives in the descriptor
         // that outlives the call.
         let status = unsafe {
             SetNamedSecurityInfoW(
                 name.as_ptr(),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                acl,
+                null(),
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        Ok(())
+    }
+
+    /// The folder entry at `path` itself, a link or junction opened as the
+    /// link; anything but a real folder is `InvalidInput`. Asked for the
+    /// right to change its access list too, which only its owner has
+    /// without an entry granting it; another account's folder is opened to
+    /// be read only, so the caller can say whose it is.
+    pub(super) fn open_entry_dir(path: &Path) -> io::Result<fs::File> {
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES, READ_CONTROL, WRITE_DAC,
+        };
+        let open = |access: u32| {
+            fs::OpenOptions::new()
+                .access_mode(access)
+                .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+                .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+                .open(path)
+        };
+        let folder = match open(READ_CONTROL | WRITE_DAC | FILE_READ_ATTRIBUTES) {
+            Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+                open(READ_CONTROL | FILE_READ_ATTRIBUTES)?
+            }
+            opened => opened?,
+        };
+        // A link or junction opened as itself is not a folder here.
+        if !folder.metadata()?.is_dir() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the entry is not a folder",
+            ));
+        }
+        Ok(folder)
+    }
+
+    /// The private access list set on the open folder, protected from
+    /// what its parent would pass down.
+    pub(super) fn restrict_dir_handle(folder: &fs::File) -> io::Result<()> {
+        let (_descriptor, acl) = private_acl(true)?;
+        // SAFETY: the handle is open for the borrow of `folder` and `acl`
+        // lives in the descriptor that outlives the call.
+        let status = unsafe {
+            SetSecurityInfo(
+                folder.as_raw_handle(),
                 SE_FILE_OBJECT,
                 DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
                 null_mut(),
