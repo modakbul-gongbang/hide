@@ -5,7 +5,7 @@ import { Disclosure, Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { useInterfaceTranslation } from "../i18n/client";
-import { machineName, screenDeviceId, windowFirst } from "../screenMachine";
+import { machineName, windowDeviceId, windowFirst } from "../screenMachine";
 import { useShellStore } from "../store";
 import { agentMachines, checkFailedReason, type AgentMachine } from "./agentRows";
 import { AgentRow, NotInstalledRow } from "./AgentRow";
@@ -25,7 +25,7 @@ export function AgentsTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const remote = useShellStore((s) => s.rest?.status?.remote);
-  const own = useShellStore((s) => screenDeviceId(s.rest));
+  const own = useShellStore((s) => windowDeviceId(s.rest?.navigator?.devices));
   const [selected, setSelected] = useState<string | null>(null);
   useAgentsDemand(actions, true);
   // This Mac first, then the rest as the Devices tab orders them (N1).

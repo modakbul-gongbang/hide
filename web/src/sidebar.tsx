@@ -60,7 +60,7 @@ import type { Digit } from "./shortcuts";
 import { contextAgents, contextAllWorkspaces, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { projectIssueSource, projectRepository, settingsTarget } from "./projectSettings";
-import { machineName, screenDeviceId, windowDeviceId, windowFirst } from "./screenMachine";
+import { machineName, windowDeviceId, windowFirst } from "./screenMachine";
 import { focusedRemoteDevice, localDeviceId, type AgentRow, type Checkout, type HideAiCheckout, type SleepingSession, type SnapshotRest, type Workspace } from "./snapshot";
 import { useStartPanel } from "./startDraft";
 import { HelpMenu } from "./components/help-menu";
@@ -437,7 +437,7 @@ function useFocusRowPane(): string | null {
 function DisconnectedDevice({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const deviceId = useShellStore((s) => frontDeviceId(s.rest));
-  const label = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.id === frontDeviceId(s.rest))?.label ?? frontDeviceId(s.rest));
+  const label = useShellStore((s) => machineName(s.rest?.navigator?.devices, frontDeviceId(s.rest), t));
   return (
     <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-sm px-md text-center" data-device-disconnected={deviceId}>
       <ServerIcon aria-hidden="true" className="size-(--size-icon-lg) text-subtle-foreground" />
@@ -479,7 +479,7 @@ function ListLoading() {
 
 function catalogLineOf(rest: SnapshotRest | null, t: TFunction<"translation">) {
   const context = remoteContext(rest);
-  return context ? deviceCatalogLine(context, t) : null;
+  return context ? deviceCatalogLine(context, rest?.navigator?.devices, t) : null;
 }
 
 /**
@@ -1638,6 +1638,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
   const lines = useMemo(() => sidebarTreeLines(agentRows, shownAll), [agentRows, shownAll]);
   // Which devices are reachable now, as one value, so a reconnect redraws the rows that name one.
   const reachable = useShellStore((s) => [localDeviceId(s.rest), ...(s.rest?.status?.remote ?? []).filter((row) => row.state === "connected").map((row) => row.target_id)].join("\n"));
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   return (
     <ul>
       {lines.map((line) => {
@@ -1657,7 +1658,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
         const hasChildren = context.childrenOf(agent).length > 0;
         const parentDevice = parent?.device_id ?? deviceId;
         const remote = depth > 0 && agent.device_id !== undefined && agent.device_id !== parentDevice
-          ? { label: agent.device_label ?? agent.device_id, reachable: reachable.split("\n").includes(agent.device_id) }
+          ? { label: machineName(devices, agent.device_id, t), reachable: reachable.split("\n").includes(agent.device_id) }
           : null;
         const tree: SidebarTreeSlot = {
           place: line.place,
@@ -1673,7 +1674,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
           <SidebarAgentRow
             key={`${agent.pane_id}:${depth}`}
             agent={agent}
-            device={depth === 0 && agent.device_id !== deviceId ? (agent.device_label ?? null) : null}
+            device={depth === 0 && agent.device_id !== undefined && agent.device_id !== deviceId ? machineName(devices, agent.device_id, t) : null}
             place={null}
             depth={depth}
             tree={tree}
@@ -1698,7 +1699,7 @@ const NO_PANES: ReadonlySet<string> = new Set();
 /** What a row's menu reads from the host when it opens: the OS file manager, and the new-tab chord the registry binds here. */
 function menuHost(): MenuHost {
   const rest = useShellStore.getState().rest;
-  return { reveal: revealHost(), newTabChord: commandLabel("new_tab"), node: localDeviceId(rest), screen: screenDeviceId(rest), editor: editorHost() };
+  return { reveal: revealHost(), newTabChord: commandLabel("new_tab"), node: localDeviceId(rest), screen: windowDeviceId(rest?.navigator?.devices), editor: editorHost() };
 }
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
