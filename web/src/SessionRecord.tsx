@@ -93,6 +93,15 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
     return own?.record ?? null;
   }, [frame.trail, records, own?.record]);
   const parent = frame.trail.length > 0 ? (records.find((record) => record.children.some((child) => shown && workKey(child.session) === workKey(shown.session))) ?? null) : null;
+  // A child opened as its own item carries no parent in its record, so its live row's parent pane names who asked (B24); a string, so an unrelated snapshot leaves it alone.
+  const liveParent = useShellStore((state) => {
+    if (!shown || parent) return null;
+    const key = workKey(shown.session);
+    const localId = localDeviceId(state.rest);
+    const rows = [...everyAgent(state.rest, state.agents).values()];
+    const pane = rows.find((row) => { const session = sessionOfAgentOn(row, localId); return session !== null && workKey(session) === key; })?.lineage_parent_pane_id;
+    return pane ? rows.find((row) => row.pane_id === pane)?.identity_label || null : null;
+  });
   const descendants = useMemo(() => (shown ? recordTree(shown).slice(1) : []), [shown]);
   const wasConnected = useRef(connected);
   const asked = useRef(false);
@@ -122,7 +131,7 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
       <h2 className="flex min-w-0 items-center gap-xs py-sm text-subhead font-semibold"><AgentMark kind={shown.session.agent} /><span className="min-w-0 truncate" title={recordTitle(shown, summaries)}>{recordTitle(shown, summaries)}</span><OutputMarks outputs={titleOutputs(shown, summaries)} actions={actions} /></h2>
       <RecordPlace record={shown} actions={actions} />
       <Work record={shown} descendants={descendants} summaries={summaries} onOpen={open} actions={actions} />
-      <Words record={shown} parent={parent ? recordTitle(parent, summaries) : null} />
+      <Words record={shown} parent={parent ? recordTitle(parent, summaries) : liveParent} />
     </div> : null}
   </div>;
 }

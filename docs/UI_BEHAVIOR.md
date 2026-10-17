@@ -985,7 +985,7 @@ A failed line keeps `무시`, which forgets the failure and closes the line, and
 A missed item goes to the repository the session started in: when the project's connection now names another repository, or the session's original one is not known, it fails with `프로젝트 저장소가 바뀜` and makes nothing.
 A session on a device the core dials, which keeps no backlog, has `무시` alone (B46).
 What was handled, dismissed or sent to the backlog is not drawn, and has no `되돌리기` or `다시 열기`; an item the Overview backlog's `되돌리기` reopens comes back as an open line.
-The record ends with the requests (D-15, B24): `내 말 N`, or `받은 요청 N` when a parent made them, each request's first line after `나` (or the parent's name, `부모` when the record does not hold it) with its time at the right, oldest first, the newest four open and the earlier ones behind `이전 N턴`; the whole request is the line's tooltip.
+The record ends with the requests (D-15, B24): `내 말 N`, or `받은 요청 N` when a parent made them, each request's first line after `나` (or the parent's name: the parent record's above it in the Overview, the live parent row's in the lane, and `부모` when neither is there) with its time at the right, oldest first, the newest four open and the earlier ones behind `이전 N턴`; the whole request is the line's tooltip.
 The agent's own words per turn are not drawn, since the record does not keep them; there is no words button, no bubble under a task and no `그 밖의 말`.
 At narrow Tools widths, Korean text in a task and a missed item wraps between words; titles and requests truncate with their full text in a tooltip.
 Untitled records use the same agent-name fallback as the 태스크 list, including with summaries Off and after the pane ends; native session ids remain identity keys.

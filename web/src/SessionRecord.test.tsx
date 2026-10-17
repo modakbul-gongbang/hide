@@ -136,6 +136,15 @@ it("ends with the requests, the newest four open behind `n earlier`, and no word
     expect(text(delegated.container.querySelector("[data-record-words] h3"))).toBe("Requests received3");
     expect(text(delegated.container.querySelector("[data-record-request]"))).toMatch(/^Parent/);
   } finally { await delegated.unmount(); }
+  // Opened as its own item, a child's record names its asker from the live parent row (B24).
+  useShellStore.setState({ agents: [
+    legacyAgentRow({ pane_id: "p0", agent_kind: "claude", session_id: "lead", identity_label: "Release lead" }),
+    legacyAgentRow({ pane_id: "p1", agent_kind: "claude", session_id: "root", lineage_parent_pane_id: "p0" }),
+  ] });
+  const named = await mount({ ...BASE, requests: BASE.requests.map((one) => ({ ...one, author: "parent" as const })) });
+  try {
+    expect(text(named.container.querySelector("[data-record-request]"))).toMatch(/^Release lead/);
+  } finally { await named.unmount(); }
 });
 
 it("shows the newest unjudged request as Just asked while the session works, and not once it stopped", async () => {
