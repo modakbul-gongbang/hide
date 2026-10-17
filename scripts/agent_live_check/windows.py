@@ -46,8 +46,10 @@ JOB_OBJECT_MSG_JOB_MEMORY_LIMIT = 10
 
 
 def failed(call):
+    """The last Windows error as the OSError subclass Python maps it to
+    (FileExistsError for an existing name, as os.open's O_EXCL raises)."""
     error = ctypes.get_last_error()
-    return OSError(error, f"{call}: {ctypes.FormatError(error).strip()}")
+    return ctypes.WinError(error, f"{call}: {ctypes.FormatError(error).strip()}")
 
 
 class BasicLimit(ctypes.Structure):
