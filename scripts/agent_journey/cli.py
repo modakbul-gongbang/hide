@@ -91,30 +91,52 @@ def leftover_copies(checkout, run):
     return found
 
 
-def measured_repository(checkout):
-    """The main repository of the checkout the journey runs from (PRD D-43)."""
+def measured_source(checkout):
+    """The commit of the checkout the journey runs from, which the measured
+    repository is a clone of (PRD D-43)."""
     common = subprocess.run([git_program(), "-C", str(checkout), "rev-parse", "--path-format=absolute",
                              "--git-common-dir"], capture_output=True, text=True, timeout=15)
     if common.returncode:
         refuse("measured_repository_unreadable: run the journey from a Git checkout")
-    root = Path(common.stdout.strip())
-    if root.name != ".git":
+    if Path(common.stdout.strip()).name != ".git":
         refuse("measured_repository_is_bare: run the journey from a non-bare checkout")
-    return root.parent.resolve()
+    head = subprocess.run([git_program(), "-C", str(checkout), "rev-parse", "--verify", "HEAD"],
+                          capture_output=True, text=True, timeout=15)
+    if head.returncode:
+        refuse("measured_repository_has_no_commit: run the journey from a checkout with a commit")
+    return head.stdout.strip()
 
 
-def journey_leftovers(root, checkout, run):
-    """Branches and worktrees an uncatchable kill left in the measured
-    repository: named for the operator, never reused or removed."""
-    branches = subprocess.run([git_program(), "-C", str(root), "for-each-ref", "--format=%(refname:short)",
-                               "refs/heads/journey/"], capture_output=True, text=True, timeout=15).stdout.split()
-    listed = subprocess.run([git_program(), "-C", str(root), "worktree", "list", "--porcelain"],
-                            capture_output=True, text=True, timeout=15).stdout
-    runs = (checkout / "agents/runs").resolve()
-    worktrees = [line.removeprefix("worktree ") for line in listed.splitlines() if line.startswith("worktree ")
-                 and Path(line.removeprefix("worktree ")).is_relative_to(runs)
-                 and not Path(line.removeprefix("worktree ")).is_relative_to(run.resolve())]
-    return {"branches": branches, "worktrees": worktrees}
+def measured_clone(runtime, checkout, commit):
+    """The measured repository: a shared clone of the checkout's commit in the
+    candidate's HOME, on `main`, as an operator's project is in theirs. Hide
+    adds a project only inside its HOME (hided refuses another as
+    `outside_home`), and a Wake after a Sleep that closed the pane finds the
+    agent's checkout among the registered project's. The clone reads the
+    checkout's objects and writes only its own, so the run's branches and
+    worktrees never reach the operator's repository and go with the probe."""
+    path = runtime.home / "projects/measured"
+    private_directory(path.parent)
+    git(runtime, ["clone", "-q", "--shared", "--no-checkout", str(checkout), str(path)], runtime.home)
+    git(runtime, ["checkout", "-q", "-B", "main", commit], path)
+    return path.resolve()
+
+
+def register_measured(daemon, root):
+    """Adds the measured repository as a project, as Add project does, and
+    waits until the navigator lists it as a registered Git project."""
+    daemon.dispatch("create_workspace", {"path": str(root), "label": "measured", "initialize_git": False})
+    wanted = os.path.normcase(str(root))
+
+    def registered(rest):
+        for project in (rest.get("navigator") or {}).get("workspaces", []):
+            if (os.path.normcase(str(Path(project.get("path") or ""))) == wanted
+                    and project.get("registered") and project.get("is_git")):
+                return project
+        return None
+
+    project = daemon.wait(registered, KIT_SECONDS, "the measured repository added as a project")
+    return {"path": str(root), "checkouts": [checkout.get("path") for checkout in project.get("checkouts") or []]}
 
 
 def check_operator_trust(report, operator, run, when):
@@ -142,85 +164,15 @@ def check_operator_trust(report, operator, run, when):
 
 
 def claude_trusts(operator, root):
-    """Whether the operator's Claude trusts the measured repository, read only."""
+    """Whether the operator's Claude trusts the measured repository, read
+    only: Claude Code 2.1.302 takes a folder's trust from the folder or the
+    nearest one above it that is trusted."""
     try:
         projects = json.loads((operator / ".claude.json").read_text()).get("projects", {})
     except (OSError, ValueError):
         return False
-    return (projects.get(str(root)) or {}).get("hasTrustDialogAccepted") is True
-
-
-def taken_branches(root, branches):
-    """Which of `branches` the measured repository already has."""
-    return [branch for branch in branches
-            if not subprocess.run([git_program(), "-C", str(root), "rev-parse", "--verify", "-q", "refs/heads/" + branch],
-                                  capture_output=True, timeout=15).returncode]
-
-
-def plain_git(env, root, *args):
-    """Git in the measured repository, outside the owner: the repository
-    cleanup runs after the owner closed, and after a stop or the deadline."""
-    result = subprocess.run([git_program(), "-C", str(root), *args], env=env, capture_output=True, text=True,
-                            timeout=15)
-    return result.returncode, result.stdout, result.stderr
-
-
-def registered_worktrees(env, root):
-    """Each registered worktree's path and branch in the measured repository."""
-    code, out, err = plain_git(env, root, "worktree", "list", "--porcelain")
-    if code:
-        raise ProtectionError("worktree_list_failed: " + err.strip()[:200])
-    found, path = {}, None
-    for line in out.splitlines():
-        if line.startswith("worktree "):
-            path = line.removeprefix("worktree ")
-        elif line.startswith("branch ") and path:
-            found[path] = line.removeprefix("branch refs/heads/")
-    return found
-
-
-def remove_created(runtime, root, created, branches):
-    """Deletes the worktrees and branches this run made, each only while its
-    name and start commit still match the run's record; anything else stays
-    and is named. A branch the record lacks a start for (a spawn that raised
-    or was stopped) and one of the run's own `journey/<run_id>-<agent>` names
-    the record lacks are read now: that name is this run's alone."""
-    removed, kept = [], []
-    env = {**runtime.env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
-    worktrees = registered_worktrees(env, root)
-    items = [dict(item) for item in created]
-    for branch in branches:
-        code, _, _ = plain_git(env, root, "rev-parse", "--verify", "-q", "refs/heads/" + branch)
-        if not code and not any(item["branch"] == branch for item in items):
-            path = next((path for path, name in worktrees.items() if name == branch), None)
-            items.append({"branch": branch, "start": None, "worktree": path, "swept": True})
-    probe = runtime.probe.resolve()
-    for item in items:
-        if not item["start"]:
-            code, tip, _ = plain_git(env, root, "rev-parse", "--verify", "-q", "refs/heads/" + item["branch"])
-            if code:
-                continue  # the spawn never made it
-            item.update(start=tip.strip(), start_read_at_cleanup=True)
-        worktree = item["worktree"]
-        registered = worktree and (worktree in worktrees or str(Path(worktree).resolve()) in worktrees)
-        if registered:
-            if not Path(worktree).resolve().is_relative_to(probe):
-                kept.append({**item, "reason": "worktree_outside_the_run"})
-                continue
-            code, _, err = plain_git(env, root, "worktree", "remove", "--force", worktree)
-            if code:
-                kept.append({**item, "reason": "worktree_remove_failed: " + err.strip()[:200]})
-                continue
-        code, tip, _ = plain_git(env, root, "rev-parse", "--verify", "-q", "refs/heads/" + item["branch"])
-        if code:
-            removed.append(item)
-            continue
-        if tip.strip() != item["start"]:
-            kept.append({**item, "reason": "branch_moved_since_the_run_made_it"})
-            continue
-        code, _, err = plain_git(env, root, "branch", "-D", item["branch"])
-        (kept if code else removed).append({**item, **({"reason": err.strip()[:200]} if code else {})})
-    return {"removed": removed, "kept": kept}
+    return any((projects.get(str(folder)) or {}).get("hasTrustDialogAccepted") is True
+               for folder in (root, *root.parents))
 
 
 def git(runtime, args, cwd):
@@ -345,8 +297,9 @@ def prepare_local(runtime, report, table, rows, measured, operator, root, fake):
             ready.append(key)
             continue
         if kind == "claude" and not claude_trusts(operator, root):
-            agent["trust"] = f"the measured repository {root} is not trusted in Claude"
-            cells.settle_agent(table, key, f"the measured repository is not trusted in Claude; open Claude once in {root} and accept")
+            agent["trust"] = f"Claude trusts neither the measured repository {root} nor a folder above it"
+            cells.settle_agent(table, key, "Claude trusts no folder above the measured repository; open Claude once in "
+                               f"{runtime.checkout} and accept")
             continue
         private = runtime.home / entry["config"] if entry["config"] else None
         if entry["copies"]:
@@ -505,13 +458,9 @@ def main(argv=None):
     run = (args.run_dir or checkout / "agents/runs" / slug).absolute()
     if run.exists() or run.is_symlink() or not beneath(run, checkout / "agents/runs"):
         refuse("report_directory_must_be_new_and_local_only")
-    root = measured_repository(checkout)
+    commit = measured_source(checkout)
     run_id = slug.removeprefix("agent-journey-") if not args.run_dir else run.name
     measured = [key for key in selected if key in cells.BUILT_AGENTS and key not in unmeasured]
-    # The cleanup deletes the run's branch names, so none may be there before it starts.
-    taken = taken_branches(root, [f"journey/{run_id}-{key}" for key in measured])
-    if taken:
-        refuse(f"journey_branch_exists: {', '.join(taken)} is in {root}; remove it or choose another --run-dir")
     private_directory(run)
     rows = {row["id"]: row for row in contract}
     table = cells.plan(contract, selected)
@@ -519,8 +468,7 @@ def main(argv=None):
               "herdr": {}, "agents": [], "table": table, "systems": systems(args.mode), "configuration": {},
               **({"fixture_limits": ci.FIXTURE_LIMITS} if fixture_bin else {}),
               **({"fake_model": True, "fake_model_limits": fake_lane.LIMITS} if fake else {}),
-              "leftover_copies": leftover_copies(checkout, run), "measured_repository": str(root),
-              "leftovers": journey_leftovers(root, checkout, run), "created": [],
+              "leftover_copies": leftover_copies(checkout, run), "measured_commit": commit, "created": [],
               "cleanup": {"confirmed": False}, "failures": []}
     for key, reason in unmeasured.items():
         report["agents"].append({"id": key, "unmeasured": reason})
@@ -546,6 +494,8 @@ def main(argv=None):
             if sessions.is_symlink():
                 sessions.unlink()
         launcher(runtime.bin / "hide", [runtime.hide])
+        root = measured_clone(runtime, checkout, commit)
+        report["measured_repository"] = str(root)
         if local or fake:
             # Before hided starts, which reads the file once.
             disable_hide_ai(runtime.home)
@@ -567,6 +517,7 @@ def main(argv=None):
                 # The product's own answer: the agent cannot start as Hide sets it up.
                 cells.settle(table, key, "start", cells.FAIL, "the kit did not install " + "; ".join(pieces))
                 ready.remove(key)
+            report["measured_project"] = register_measured(daemon, root)
             untrusted = repository(runtime, "repo-untrusted")
             for kind in {rows[key]["herdr_kind"] for key in ready} & TRUST.keys():
                 path, write = TRUST[kind]
@@ -643,25 +594,14 @@ def main(argv=None):
                 owner.close()
             except Exception as cleanup_error:
                 report["cleanup"]["failures"].append(str(cleanup_error))
-        if runtime and not report["cleanup"].get("processes_confirmed"):
-            # An agent that may still run keeps its worktree and branch.
-            report["repository_cleanup"] = {"removed": [], "kept": [
-                {**item, "reason": "processes_unconfirmed"} for item in report["created"]]}
-        elif runtime:
-            # After every process ended, so no agent still writes in a worktree.
+        if omp_sessions is not None and report["cleanup"].get("processes_confirmed"):
+            # After every process ended, so no omp still writes its state.
+            projects = [Path(item["worktree"]) for item in report["created"] if item.get("worktree")]
             try:
-                report["repository_cleanup"] = remove_created(runtime, root, report["created"],
-                                                              [f"journey/{run_id}-{key}" for key in measured])
-            except Exception as error:
-                report["repository_cleanup"] = {"removed": [], "failure": str(error), "kept": [
-                    {**item, "reason": "cleanup_failed: " + str(error)[:200]} for item in report["created"]]}
-            if omp_sessions is not None:
-                projects = [Path(item["worktree"]) for item in report["created"] if item.get("worktree")]
-                try:
-                    report["operator_state"] = omp_state.take_back(
-                        operator, list(dict.fromkeys([*projects, *started_in])), omp_sessions, started)
-                except OSError as error:
-                    report["failures"].append({"type": "OSError", "reason": f"omp_state_cleanup_failed: {error}"})
+                report["operator_state"] = omp_state.take_back(
+                    operator, list(dict.fromkeys([*projects, *started_in])), omp_sessions, started)
+            except OSError as error:
+                report["failures"].append({"type": "OSError", "reason": f"omp_state_cleanup_failed: {error}"})
         # Hide AI's model requests, apart from the agents' budget: none in
         # local mode, where it is off, and counted in CI mode, where it is on.
         try:
@@ -684,8 +624,7 @@ def main(argv=None):
     interrupted = owner.cancelled.is_set()
     cells.close(table, interrupted)
     setup_failed = bool(report["failures"] or report["configuration"].get("failures")
-                        or not report["cleanup"].get("confirmed")
-                        or (report.get("repository_cleanup") or {}).get("kept"))
+                        or not report["cleanup"].get("confirmed"))
     # An interrupted run says so with 3 whatever it measured, or 2 when its cleanup is unconfirmed.
     code = (2 if setup_failed else 3) if interrupted else cells.exit_code(table, selected, setup_failed=setup_failed)
     report["budget_failures"] = budget_failures(report["agents"]) if fake or (not local and not fixture_bin) else []

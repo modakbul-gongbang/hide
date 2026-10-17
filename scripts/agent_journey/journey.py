@@ -47,7 +47,7 @@ LETTER_PROMPT = "Reply with exactly the token on the second line of the letter a
 
 def created_branch(runtime, repository, branch, worktree):
     """What a spawn made in the measured repository: the branch, the commit it
-    started at, and its worktree; the cleanup deletes only what still matches."""
+    started at, and its worktree, as evidence; they go with the probe."""
     code, out, _ = runtime.owner.run([git(), "-C", str(repository), "rev-parse", "--verify", "-q",
                                       "refs/heads/" + branch], env=git_env(runtime), check=False)
     return {"branch": branch, "start": out.strip() if not code else None, "worktree": str(worktree)}

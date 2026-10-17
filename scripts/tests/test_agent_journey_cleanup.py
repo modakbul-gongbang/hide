@@ -13,7 +13,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_journey import ci
-from agent_journey.cli import budget_failures, hide_ai_requests, leftover_copies, remove_created, taken_branches
+from agent_journey.cli import budget_failures, claude_trusts, hide_ai_requests, leftover_copies, measured_clone
 from agent_journey.local import claude_session_folders, disable_hide_ai, wrapper
 from agent_journey.report import markdown
 
@@ -27,80 +27,33 @@ def git(root, *args):
                           capture_output=True, text=True).stdout.strip()
 
 
-# The branch names of a run `r1` that measured these agents.
-BRANCHES = ["journey/r1-claude-code", "journey/r1-codex", "journey/r1-pi"]
+class MeasuredRepository(unittest.TestCase):
+    def test_the_clone_is_the_checkouts_commit_and_the_checkout_gains_nothing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            base = Path(folder).resolve()
+            checkout, home = base / "checkout", base / "run/probe/daemon-home"
+            checkout.mkdir()
+            home.mkdir(parents=True)
+            git(checkout, "init", "-q", "-b", "work")
+            git(checkout, "commit", "-q", "--allow-empty", "-m", "base")
+            commit = git(checkout, "rev-parse", "HEAD")
+            before = git(checkout, "for-each-ref")
+            runtime = SimpleNamespace(home=home, env=GIT_ENV, owner=SimpleNamespace(
+                run=lambda argv, env, cwd: subprocess.run(argv, env=env, cwd=cwd, check=True, capture_output=True)))
+            root = measured_clone(runtime, checkout, commit)
+            self.assertTrue(root.is_relative_to(home))
+            self.assertEqual((git(root, "rev-parse", "--abbrev-ref", "HEAD"), git(root, "rev-parse", "HEAD")), ("main", commit))
+            # The run's branches are the clone's; the checkout's refs stay as they were.
+            git(root, "branch", "journey/r1-codex")
+            self.assertEqual(git(checkout, "for-each-ref"), before)
 
-
-class RepositoryCleanup(unittest.TestCase):
-    """The cleanup runs after the run's owner closed, so it takes no owner."""
-
-    def setUp(self):
-        folder = tempfile.TemporaryDirectory()
-        self.addCleanup(folder.cleanup)
-        base = Path(folder.name).resolve()
-        self.root, self.probe, self.elsewhere = base / "repo", base / "run/probe", base / "elsewhere"
-        self.root.mkdir()
-        self.probe.mkdir(parents=True)
-        git(self.root, "init", "-q", "-b", "main")
-        git(self.root, "commit", "-q", "--allow-empty", "-m", "base")
-        self.runtime = SimpleNamespace(env=GIT_ENV, probe=self.probe)
-
-    def worktree(self, branch, path):
-        git(self.root, "worktree", "add", "-q", "-b", branch, str(path))
-        return git(self.root, "rev-parse", branch)
-
-    def branches(self):
-        return git(self.root, "for-each-ref", "--format=%(refname:short)", "refs/heads/").split()
-
-    def test_a_recorded_branch_goes_with_its_worktree(self):
-        start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
-        result = remove_created(self.runtime, self.root, [
-            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
-        self.assertEqual(result["kept"], [])
-        self.assertEqual(self.branches(), ["main"])
-        self.assertNotIn(str(self.probe), git(self.root, "worktree", "list"))
-
-    def test_a_spawn_that_raised_before_its_start_was_read_is_still_removed(self):
-        self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
-        result = remove_created(self.runtime, self.root, [
-            {"branch": "journey/r1-codex", "start": None, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
-        self.assertEqual(result["kept"], [])
-        self.assertTrue(result["removed"][0]["start_read_at_cleanup"])
-        self.assertEqual(self.branches(), ["main"])
-
-    def test_a_branch_of_this_run_the_record_lacks_is_swept_and_another_runs_stays(self):
-        self.worktree("journey/r1-claude-code", self.probe / "worktrees/claude-code")
-        git(self.root, "branch", "journey/r2-codex")
-        # A sibling run whose name begins with this one's.
-        git(self.root, "branch", "journey/r1-2-codex")
-        result = remove_created(self.runtime, self.root, [], BRANCHES)
-        self.assertEqual([item["branch"] for item in result["removed"]], ["journey/r1-claude-code"])
-        self.assertTrue(result["removed"][0]["swept"])
-        self.assertEqual(sorted(self.branches()), ["journey/r1-2-codex", "journey/r2-codex", "main"])
-
-    def test_a_moved_branch_and_a_worktree_outside_the_run_are_kept_and_named(self):
-        start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
-        git(self.probe / "worktrees/codex", "commit", "-q", "--allow-empty", "-m", "someone else's")
-        self.worktree("journey/r1-pi", self.elsewhere)
-        result = remove_created(self.runtime, self.root, [
-            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
-        reasons = {item["branch"]: item["reason"] for item in result["kept"]}
-        self.assertEqual(reasons, {"journey/r1-codex": "branch_moved_since_the_run_made_it",
-                                   "journey/r1-pi": "worktree_outside_the_run"})
-        self.assertTrue(self.elsewhere.is_dir())
-
-    def test_a_rerun_finds_a_branch_an_earlier_run_of_the_same_name_left(self):
-        # The run refuses to start on it, so its cleanup never takes it for its own.
-        git(self.root, "branch", "journey/r1-codex")
-        self.assertEqual(taken_branches(self.root, BRANCHES), ["journey/r1-codex"])
-
-    def test_a_worktree_folder_already_gone_with_the_probe_is_still_unregistered(self):
-        start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
-        subprocess.run(["/bin/rm", "-r", str(self.probe / "worktrees")], check=True)
-        result = remove_created(self.runtime, self.root, [
-            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
-        self.assertEqual(result["kept"], [])
-        self.assertEqual(self.branches(), ["main"])
+    def test_claude_trust_comes_from_the_folder_or_one_above_it(self):
+        with tempfile.TemporaryDirectory() as folder:
+            operator = Path(folder)
+            (operator / ".claude.json").write_text(json.dumps({"projects": {
+                "/work": {"hasTrustDialogAccepted": True}, "/other": {"hasTrustDialogAccepted": False}}}))
+            self.assertTrue(claude_trusts(operator, Path("/work/run/probe/daemon-home/projects/measured")))
+            self.assertFalse(claude_trusts(operator, Path("/other/measured")))
 
 
 class Redaction(unittest.TestCase):

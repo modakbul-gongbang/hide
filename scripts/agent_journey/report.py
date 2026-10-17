@@ -74,7 +74,7 @@ def markdown(report):
         lines.extend(f"- {text(finding)}" for finding in report["product_findings"])
         lines.append("")
     lines.extend(["## Isolation, operator files and cleanup", "", "```json",
-                  json.dumps({key: report[key] for key in ("measured_repository", "created", "repository_cleanup", "leftovers",
+                  json.dumps({key: report[key] for key in ("measured_repository", "measured_commit", "measured_project", "created",
                                                "configuration", "operator_trust", "operator_session_folders",
                                                "leftover_copies", "operator_state", "cleanup", "failures")
                                 if key in report},

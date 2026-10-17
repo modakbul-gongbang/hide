@@ -56,9 +56,6 @@ def judge(report, lane):
         passed = False
         notes.append(annotation("error", "agent journey cleanup", "cleanup unconfirmed: "
                                 + ("; ".join(map(str, cleanup.get("failures", []))) or "no receipt")))
-    for item in (report.get("repository_cleanup") or {}).get("kept", []):
-        passed = False
-        notes.append(annotation("error", "agent journey cleanup", f"kept {item.get('branch')}: {item.get('reason')}"))
     for failure in report.get("budget_failures", []):
         passed = False
         notes.append(annotation("error", "agent journey budget", failure))
