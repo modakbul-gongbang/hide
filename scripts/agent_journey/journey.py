@@ -138,23 +138,19 @@ class Journey:
         return {"session": self.session if kind == "path" else value, "path": answer["path"],
                 "events": answer["events"]}
 
-    def wait_turn(self, seconds=TURN_SECONDS, before=None):
-        """The row's activity until it went working and then stopped."""
-        activities = list(before or [])
-
-        def ended(_rest):
-            row = self.daemon.row(self.pane)
-            value = row.get("activity") if row else None
-            if not activities or activities[-1] != value:
-                activities.append(value)
-            return cells.turn_verdict(activities)[0] == cells.PASS
+    def wait_turn(self, since=0, seconds=TURN_SECONDS):
+        """The row's activity from `since` in its history until it went
+        working and then stopped; the history holds every activity the
+        daemon's frames carried, so a turn that ended before this wait
+        began is still read."""
         try:
-            self.daemon.wait(ended, seconds, "the turn to end")
+            self.daemon.wait(lambda _rest: cells.turn_verdict(self.daemon.activities(self.pane, since))[0] == cells.PASS,
+                             seconds, "the turn to end")
         except ProcessError as error:
             if self.runtime.owner.cancelled.is_set():
                 raise
             self.record.setdefault("waits", []).append(str(error))
-        return activities
+        return self.daemon.activities(self.pane, since)
 
     # Cells ----------------------------------------------------------------
 
@@ -236,6 +232,7 @@ class Journey:
         # second line and only the letter Hide hands over can carry it.
         before = len(self.conversation().get("events", []))
         value = token()
+        since = self.daemon.mark(self.pane)
         sent = self.controller.hide(["request", "send", self.agent, "--intent", "journey-letter-" + self.id,
                                      "--kind", "report", "--body",
                                      "Reply with exactly the token on the next line of this letter.\n" + value])
@@ -257,7 +254,7 @@ class Journey:
             if self.runtime.owner.cancelled.wait(3):
                 raise ProcessError("run_cancelled")
         if shown.get("bell_line"):
-            record["activities"] = self.wait_turn()
+            record["activities"] = self.wait_turn(since)
         read = self.conversation()
         record["read"] = {**read, "events": read.get("events", [])[before:]} if "events" in read else read
         self.settle("letter", cells.letter_verdict(shown, record["read"], self.session, value),
@@ -325,11 +322,12 @@ class Journey:
         events = len(self.conversation().get("events", []))
         value = token()
         record["token"] = value
+        since = self.daemon.mark(self.pane)
         if not self.type_prompt(record, prompt(value)):
             self.settle("resume", (cells.FAIL, "the pane's terminal never took this screen's keys (transport "
                                    + " -> ".join(map(str, record["terminal"])) + ")"), self.evidence("resume", record))
             return
-        record["activities"] = self.wait_turn()
+        record["activities"] = self.wait_turn(since)
         native = self.herdr_agent() or {}
         after = (native.get("agent_session") or {}).get("value")
         record["session_after"] = after

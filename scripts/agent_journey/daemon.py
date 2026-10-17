@@ -19,6 +19,7 @@ from agent_live_check.processes import ProcessError
 # A snapshot of a private daemon with a few agents is well under this.
 MAX_FRAME = 32 * 1024 * 1024
 CONNECT_SECONDS = 10
+HISTORY_CAP = 512
 
 
 class Frames:
@@ -72,6 +73,10 @@ class Daemon:
         self.rest = None
         self.revision = 0
         self.errors = []
+        # Every activity each pane's row read, in the order the frames
+        # carried them, so a turn shorter than the wait for its action's
+        # answer is still seen; a run makes a few turns per pane.
+        self.history = {}
         self.closed = None
         self.sock = socket.create_connection(("127.0.0.1", self.port), timeout=CONNECT_SECONDS)
         key = base64.b64encode(os.urandom(16)).decode()
@@ -127,6 +132,7 @@ class Daemon:
                         self.rest = rest if frame["type"] == "snapshot" else {
                             **(self.rest or {}), **rest, "workspace_view": rest.get("workspace_view")}
                         self.revision += 1
+                        self.record_activities()
                     elif frame.get("type") == "error":
                         self.errors.append(frame.get("message") or frame.get("payload"))
                     self.lock.notify_all()
@@ -134,6 +140,25 @@ class Daemon:
             with self.lock:
                 self.closed = str(error)
                 self.lock.notify_all()
+
+    def record_activities(self):
+        """Appends each row's activity when it changed; called under the lock."""
+        for agent in (self.rest.get("navigator") or {}).get("agents", []):
+            seen = self.history.setdefault(agent.get("pane_id"), [])
+            if not seen or seen[-1] != agent.get("activity"):
+                if len(seen) >= HISTORY_CAP:
+                    self.closed = f"activity_history_over_cap: {agent.get('pane_id')} changed {HISTORY_CAP} times"
+                    return
+                seen.append(agent.get("activity"))
+
+    def mark(self, pane):
+        """Where the pane's activity history stands, for a turn about to start."""
+        with self.lock:
+            return len(self.history.get(pane, []))
+
+    def activities(self, pane, since=0):
+        with self.lock:
+            return list(self.history.get(pane, [])[since:])
 
     def dispatch(self, kind, payload):
         if self.closed:
