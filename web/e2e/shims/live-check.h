@@ -100,6 +100,7 @@ static int live_check(int argc, char **argv) {
    app-server stand-in `codex app-server` runs, and `hook <event> <command>`.
    Never a real model. */
 #ifndef _WIN32
+#include <poll.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -107,6 +108,8 @@ static int live_check(int argc, char **argv) {
 #define JOURNEY_HOOKS 64
 #define JOURNEY_OUTPUT (64 * 1024)
 #define JOURNEY_BOOT_SECONDS 5
+/* A hook that has not ended by then is killed and logged as timed out. */
+#define JOURNEY_HOOK_SECONDS 30
 static char journey_config[1 << 16];
 static const char *journey_shell, *journey_index, *journey_log, *journey_app_server;
 static const char *journey_events[JOURNEY_HOOKS], *journey_commands[JOURNEY_HOOKS];
@@ -181,6 +184,12 @@ static int journey_folders(char *path) {
 
 /* Runs every command installed for `event` with `payload` on its stdin, as
    the agent runs its hooks, and keeps what they printed. */
+static long journey_elapsed_ms(const struct timespec *since) {
+  struct timespec now;
+  clock_gettime(CLOCK_MONOTONIC, &now);
+  return (now.tv_sec - since->tv_sec) * 1000L + (now.tv_nsec - since->tv_nsec) / 1000000L;
+}
+
 static void journey_hooks(const char *event, const char *payload, char *output, size_t capacity) {
   size_t used = 0;
   output[0] = 0;
@@ -193,38 +202,63 @@ static void journey_hooks(const char *event, const char *payload, char *output, 
     if (log) { fprintf(log, "%s hook %d\n", event, i); fflush(log); }
     pid_t child = fork();
     if (child == 0) {
+      signal(SIGPIPE, SIG_DFL);
       dup2(in[0], 0);
       dup2(out[1], 1);
-      if (log) dup2(fileno(log), 2);
+      if (log) { dup2(fileno(log), 2); close(fileno(log)); }
       close(in[0]); close(in[1]); close(out[0]); close(out[1]);
       execl(journey_shell, journey_shell, "-c", journey_commands[i], (char *)NULL);
       _exit(127);
     }
     close(in[0]);
     close(out[1]);
-    if (child > 0) {
-      size_t left = strlen(payload);
-      const char *at = payload;
-      while (left) {
-        ssize_t wrote = write(in[1], at, left);
-        if (wrote <= 0) break;
-        at += wrote;
-        left -= (size_t)wrote;
+    if (child < 0) {
+      close(in[1]);
+      close(out[0]);
+      if (log) { fprintf(log, "%s hook %d fork failed\n", event, i); fclose(log); }
+      continue;
+    }
+    /* The payload is written while the output is read, so a hook that
+       answers before it reads its input never blocks on a full pipe. */
+    fcntl(in[1], F_SETFL, fcntl(in[1], F_GETFL) | O_NONBLOCK);
+    const char *at = payload;
+    size_t left = strlen(payload);
+    int writing = in[1], reading = out[0], timed_out = 0;
+    struct timespec started;
+    clock_gettime(CLOCK_MONOTONIC, &started);
+    if (!left) { close(writing); writing = -1; }
+    char sink[4096];
+    while (reading >= 0) {
+      long remaining = JOURNEY_HOOK_SECONDS * 1000L - journey_elapsed_ms(&started);
+      if (remaining <= 0) { timed_out = 1; break; }
+      struct pollfd fds[2] = {{reading, POLLIN, 0}, {writing, POLLOUT, 0}};
+      int ready = poll(fds, writing >= 0 ? 2 : 1, (int)remaining);
+      if (ready < 0 && errno == EINTR) continue;
+      if (ready <= 0) { timed_out = ready == 0; break; }
+      if (writing >= 0 && fds[1].revents) {
+        ssize_t wrote = (fds[1].revents & POLLOUT) ? write(writing, at, left) : -1;
+        if (wrote > 0) { at += wrote; left -= (size_t)wrote; }
+        else if (wrote < 0 && (errno == EAGAIN || errno == EINTR)) { /* poll again */ }
+        else left = 0; /* the hook closed its input */
+        if (!left) { close(writing); writing = -1; }
+      }
+      if (fds[0].revents) {
+        int room = used + 1 < capacity;
+        ssize_t got = read(reading, room ? output + used : sink, room ? capacity - 1 - used : sizeof sink);
+        if (got > 0) { if (room) used += (size_t)got; }
+        else if (got < 0 && (errno == EAGAIN || errno == EINTR)) { /* poll again */ }
+        else { close(reading); reading = -1; }
       }
     }
-    close(in[1]);
-    ssize_t got;
-    char sink[4096];
-    while ((got = read(out[0], used + 1 < capacity ? output + used : sink,
-                       used + 1 < capacity ? capacity - 1 - used : sizeof sink)) > 0) {
-      if (used + 1 < capacity) used += (size_t)got;
-    }
-    close(out[0]);
+    if (writing >= 0) close(writing);
+    if (reading >= 0) close(reading);
     output[used] = 0;
+    if (timed_out) kill(child, SIGKILL);
     int status = 0;
-    if (child > 0) waitpid(child, &status, 0);
+    while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
     if (log) {
-      fprintf(log, "%s hook %d exit %d\n", event, i, child > 0 && WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+      if (timed_out) fprintf(log, "%s hook %d timed out after %d s\n", event, i, JOURNEY_HOOK_SECONDS);
+      else fprintf(log, "%s hook %d exit %d\n", event, i, WIFEXITED(status) ? WEXITSTATUS(status) : -1);
       fclose(log);
     }
   }
@@ -402,6 +436,8 @@ static int journey_open_session(int resumed) {
 
 static int journey(int argc, char **argv) {
   journey_codex = run_as_codex(argv[0]);
+  /* A hook that exits without reading its input must not end the stand-in. */
+  signal(SIGPIPE, SIG_IGN);
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--version") == 0) { puts("journey fixture 1"); return 0; }
     /* No print mode: Hide AI's own calls get a refusal, not a session. */

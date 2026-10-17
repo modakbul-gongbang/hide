@@ -137,9 +137,10 @@ class Daemon:
                     elif frame.get("type") == "error":
                         self.errors.append(frame.get("message") or frame.get("payload"))
                     self.lock.notify_all()
-        except (OSError, ConnectionError, ValueError, ProcessError) as error:
+        except Exception as error:
+            # Any reader failure, a malformed frame included, ends the connection by name.
             with self.lock:
-                self.closed = str(error)
+                self.closed = f"{type(error).__name__}: {error}"
                 self.lock.notify_all()
 
     def record_activities(self):

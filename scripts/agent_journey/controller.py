@@ -95,6 +95,9 @@ class Controller:
         status = runtime.wait(lambda: self.completed.is_file() and self.completed.read_text().strip(), seconds)
         text = self.response.read_text() if self.response.is_file() else ""
         try:
-            return json.loads(text)
+            answer = json.loads(text)
         except ValueError:
+            answer = None
+        if not isinstance(answer, dict):
             return {"ok": False, "reason": "unreadable_answer", "exit": status, "stdout": text[:500]}
+        return answer
