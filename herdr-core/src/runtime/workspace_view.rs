@@ -22,15 +22,37 @@ use crate::workspace_views::{self, Tool, WorkspaceView, WorkspaceViews};
 /// A Workspace's identity: the device and the checkout path.
 pub(super) type WorkspaceKey = (String, String);
 
+/// A device request that chooses a Workspace, until the device's front
+/// lands there. It lives as long as the request does and no longer, so what
+/// rides on it (a Memory visit, a reveal) never runs for a click the device
+/// let go of: a refusal or a lost answer, a later choice, the device
+/// leaving, the device's front moving to a third checkout, or its deadline
+/// each drop it.
 struct PendingChoice {
     device_id: String,
     request_id: String,
     key: WorkspaceKey,
+    /// The checkout the device had in front when the request left; a move
+    /// to any other than this one or `key` is a choice made elsewhere.
+    device_front: Option<String>,
+    /// Each stage, the answer and then the front landing, gets
+    /// `CLOSE_STAGE_TIMEOUT_MS`, as a Herdr-owned mutation's does (PRD D-08).
+    deadline_at_unix_ms: u64,
     memory_project: Option<String>,
-    memory_acknowledged: bool,
+    acknowledged: bool,
     /// A path the operator clicked in the chosen checkout, revealed once it
     /// is in front (`Runtime::reveal_when_in_front`).
     reveal: Option<super::RevealPathPayload>,
+}
+
+impl PendingChoice {
+    fn carries(&self) -> &'static str {
+        match (&self.memory_project, &self.reveal) {
+            (Some(_), _) => "memory",
+            (None, Some(_)) => "reveal",
+            (None, None) => "choice",
+        }
+    }
 }
 
 pub(super) struct WorkspaceViewStore {
@@ -400,16 +422,45 @@ impl Runtime {
         request_id: &str,
         key: WorkspaceKey,
     ) {
+        let device_front = self.device_front_path(device_id);
         if let Some(store) = self.workspace_views.as_mut() {
             store.pending_choice = Some(PendingChoice {
                 device_id: device_id.to_owned(),
                 request_id: request_id.to_owned(),
                 key,
+                device_front,
+                deadline_at_unix_ms: unix_milliseconds().saturating_add(CLOSE_STAGE_TIMEOUT_MS),
                 memory_project: None,
-                memory_acknowledged: false,
+                acknowledged: false,
                 reveal: None,
             });
         }
+    }
+
+    /// The request a waiting device choice belongs to.
+    #[cfg(test)]
+    pub(super) fn pending_choice_request(&self) -> Option<&str> {
+        let pending = self.workspace_views.as_ref()?.pending_choice.as_ref()?;
+        Some(pending.request_id.as_str())
+    }
+
+    /// The path of the checkout a connected device's Herdr has in front.
+    fn device_front_path(&self, device_id: &str) -> Option<String> {
+        let session = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device_id && status.state == "connected")?
+            .session
+            .as_ref()?;
+        let focused = session.focused_checkout_id.as_deref()?;
+        session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .find(|checkout| checkout.id == focused)
+            .map(|checkout| checkout.path.clone())
     }
 
     /// A newer explicit visit supersedes the outstanding Memory visit;
@@ -462,18 +513,46 @@ impl Runtime {
         true
     }
 
-    pub(super) fn acknowledge_memory_navigation(&mut self, device: &str, request: &str) {
+    /// The device accepted the request that made the choice: the front
+    /// landing gets its own stage, and a Memory visit may now go ahead.
+    pub(super) fn acknowledge_choice(&mut self, device: &str, request: &str) {
         if let Some(pending) = self
             .workspace_views
             .as_mut()
             .and_then(|store| store.pending_choice.as_mut())
             && pending.device_id == device
             && pending.request_id == request
-            && pending.memory_project.is_some()
         {
-            pending.memory_acknowledged = true;
-            self.sync_workspace_view();
+            pending.acknowledged = true;
+            pending.deadline_at_unix_ms =
+                unix_milliseconds().saturating_add(CLOSE_STAGE_TIMEOUT_MS);
+            if pending.memory_project.is_some() {
+                self.sync_workspace_view();
+            }
         }
+    }
+
+    /// A choice whose request outlived its stage is dropped: the device
+    /// never answered, or its front never landed, so a later visit to the
+    /// same checkout is the operator's own and runs nothing for the click.
+    pub(super) fn expire_pending_choice(&mut self, now_unix_ms: u64) -> bool {
+        let Some(pending) = self.workspace_views.as_mut().and_then(|store| {
+            store
+                .pending_choice
+                .take_if(|pending| pending.deadline_at_unix_ms <= now_unix_ms)
+        }) else {
+            return false;
+        };
+        self.push_diagnostic(
+            "workspace.choice_expired",
+            format!(
+                "The {} request {} on {} did not land within its deadline; nothing runs for it",
+                pending.carries(),
+                pending.request_id,
+                pending.device_id
+            ),
+        );
+        true
     }
 
     pub(super) fn show_project_memory_at(&mut self, key: &WorkspaceKey, workspace: String) {
@@ -678,9 +757,11 @@ impl Runtime {
     /// the front key, one comparison of the editor's tabs, a copy of the
     /// published scalars, and the front Workspace's tree built again: one map
     /// of the editor's tabs and one root check, then a map lookup per display,
-    /// of which there are at most 64. The Agent tab bookmark pass adds a
-    /// comparison of the shown tabs and area fronts against what it saw last,
-    /// in a few small vectors and with no write.
+    /// of which there are at most 64. While a device choice waits, finding
+    /// that device's front adds one pass over its session's checkouts. The
+    /// Agent tab bookmark pass adds a comparison of the shown tabs and area
+    /// fronts against what it saw last, in a few small vectors and with no
+    /// write.
     pub(super) fn sync_workspace_view(&mut self) {
         // The recent list follows the front checkout wherever the layout
         // store exists or not, and writes only when the front moved.
@@ -688,31 +769,37 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_ref() else {
             return;
         };
-        let memory_device = store
-            .pending_choice
+        // The device's front moved to a checkout other than the one it had
+        // and the one asked for: someone chose that one, so the request's
+        // landing, should it still come, is no longer the operator's click.
+        let elsewhere = store.pending_choice.as_ref().and_then(|pending| {
+            let front = self.device_front_path(&pending.device_id)?;
+            (Some(&front) != pending.device_front.as_ref() && front != pending.key.1).then(|| {
+                (
+                    pending.carries(),
+                    pending.request_id.clone(),
+                    pending.device_id.clone(),
+                )
+            })
+        });
+        if let Some((carries, request, device)) = elsewhere {
+            if let Some(store) = self.workspace_views.as_mut() {
+                store.pending_choice = None;
+            }
+            self.push_diagnostic(
+                "workspace.choice_dropped",
+                format!("The {carries} request {request} on {device} was dropped: the device's front moved elsewhere"),
+            );
+        }
+        let memory_device = self
+            .workspace_views
             .as_ref()
-            .filter(|pending| pending.memory_project.is_some() && pending.memory_acknowledged)
-            .and_then(|pending| {
-                self.snapshot
-                    .status
-                    .remote
-                    .iter()
-                    .find(|status| {
-                        status.target_id == pending.device_id && status.state == "connected"
-                    })
-                    .and_then(|status| status.session.as_ref())
-                    .and_then(|session| {
-                        let focused = session.focused_checkout_id.as_deref()?;
-                        session
-                            .workspaces
-                            .iter()
-                            .flat_map(|workspace| &workspace.checkouts)
-                            .any(|checkout| {
-                                checkout.id == focused && checkout.path == pending.key.1
-                            })
-                            .then(|| pending.device_id.clone())
-                    })
-            });
+            .and_then(|store| store.pending_choice.as_ref())
+            .filter(|pending| pending.memory_project.is_some() && pending.acknowledged)
+            .filter(|pending| {
+                self.device_front_path(&pending.device_id).as_ref() == Some(&pending.key.1)
+            })
+            .map(|pending| pending.device_id.clone());
         if let Some(device) = memory_device
             && !self.device_in_front(&device)
         {
@@ -731,7 +818,7 @@ impl Runtime {
                 .and_then(|store| store.pending_choice.as_ref())
                 .is_some_and(|pending| {
                     &pending.key == key
-                        && (pending.memory_project.is_none() || pending.memory_acknowledged)
+                        && (pending.memory_project.is_none() || pending.acknowledged)
                 })
         {
             let (memory_project, reveal) = self

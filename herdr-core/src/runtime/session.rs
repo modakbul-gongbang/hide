@@ -5536,9 +5536,9 @@ impl Runtime {
     /// as a path clicked on the Overview names: the device's Herdr is asked
     /// to bring the checkout forward, with the device, and the reveal runs
     /// once the sync sees it land (`attach_reveal`), so the click ends where
-    /// one on this machine's checkout does. A refusal, a later choice or the
-    /// device leaving drops it; without View areas nothing waits, and the
-    /// reveal is refused before anything moves.
+    /// one on this machine's checkout does. It dies with the request
+    /// (`PendingChoice`); without View areas nothing waits, and the reveal is
+    /// refused before anything moves.
     fn reveal_when_in_front(&mut self, device: String, payload: RevealPathPayload) {
         if !self.separate_view_areas() {
             self.set_error(

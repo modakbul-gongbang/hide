@@ -1583,7 +1583,7 @@ fn an_explicit_file_visit_supersedes_a_delayed_memory_visit() {
         "file_focus",
         serde_json::json!({"tab_id": tab}),
     ));
-    runtime.acknowledge_memory_navigation(crate::node::TEST_NODE, "old-memory");
+    runtime.acknowledge_choice(crate::node::TEST_NODE, "old-memory");
     runtime.sync_workspace_view();
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
     assert_ne!(
