@@ -1,4 +1,4 @@
-// hide-opencode-plugin@6 sha256=aa86182bb5ffa1ab7cc8537869fa3d2dc09744b09d40277de19fa5b69ce9e038
+// hide-opencode-plugin@6 sha256=af3b423678f1546b1cecd136e2742e5ecf83f606cfecd91f2810bfcbd7bf2699
 // Hide's OpenCode 1.x plugin, written by Hide's install kit (hide-agent-hooks).
 // An edit is kept and shown as edited in Settings; Reinstall puts Hide's back.
 // Outside a Herdr pane Hide manages, or when its helper is gone, it does nothing.
@@ -459,8 +459,10 @@ async function onTool(state, sessionID, directory, input, output) {
     if (typeof command !== "string") return null;
     const launch = !state.guardOnly && (command.includes("herdr") || command.includes("HERDR_BIN_PATH"));
     if (!launch && !guardrailsOn(state)) return null;
+    // OpenCode runs a relative `workdir` in the session's folder, not where this process started.
     const workdir = output.args.workdir;
-    request = { session_id: sessionID, tool, command, cwd: typeof workdir === "string" && workdir ? workdir : directory };
+    const cwd = typeof workdir === "string" && workdir ? (typeof directory === "string" ? path.resolve(directory, workdir) : workdir) : directory;
+    request = { session_id: sessionID, tool, command, cwd };
   } else if (FILE_TOOLS.has(tool)) {
     if (!guardrailsOn(state)) return null;
     request = { session_id: sessionID, tool, args: fileArgs(output?.args), cwd: directory };

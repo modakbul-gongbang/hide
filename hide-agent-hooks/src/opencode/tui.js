@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 
 import {
   ANSWER_MARGIN_MS,
+  ATTACH_RENEW_MS,
   COUNT_BUDGET_MS,
   RPC,
   SESSION_LIMIT,
@@ -20,8 +21,6 @@ import {
 } from "./server.js";
 
 const ROUTE_POLL_MS = 250;
-// Attaching again now and then gives the server half back a terminal it stopped asking after a missed answer.
-const ATTACH_RENEW_MS = 15_000;
 const OPERATIONS = new Set(["prompt", "tool", "letters", "confirm"]);
 
 /**
@@ -100,6 +99,7 @@ function onEvent(state, api, event) {
 /**
  * The context for a root session's prompt: on the session's first prompt this pane sees, the start guidance and the
  * session-start Memory (with no answer neither is given, and the next prompt asks again); Memory and the letters due.
+ * The guidance comes apart from the rest, which the server half leaves out when it carries a letter Hide took.
  */
 async function prompt(state, api, input, budgetMs) {
   const deadline = Date.now() + budgetMs;
@@ -108,15 +108,18 @@ async function prompt(state, api, input, budgetMs) {
   const answer = await helper(state, "prompt", { ...input, first }, budgetMs, state.pane);
   // After the prompt's own helper, so the report never shares its budget: each turn's start reports again.
   void publishCounts(state, api, true);
-  const sections = [];
+  let guidance = "";
   if (first && answer !== null) {
-    const guidance = await withBudget(state.guidance, Math.max(0, deadline - Date.now()));
-    if (typeof guidance?.context === "string" && guidance.context) sections.push(guidance.context);
+    const start = await withBudget(state.guidance, Math.max(0, deadline - Date.now()));
+    if (typeof start?.context === "string") guidance = start.context;
     // Guidance still on its way is given to the next prompt instead.
     if (state.started) remember(state, state.guided, session);
   }
-  if (typeof answer?.context === "string" && answer.context) sections.push(answer.context);
-  return { context: sections.join("\n\n"), letters: Array.isArray(answer?.letters) ? answer.letters : [] };
+  return {
+    guidance,
+    context: typeof answer?.context === "string" ? answer.context : "",
+    letters: Array.isArray(answer?.letters) ? answer.letters : [],
+  };
 }
 
 function setup(api) {
@@ -146,19 +149,20 @@ function setup(api) {
   // The root's own place: OpenCode routes a call to the plugin of the folder it names.
   let place;
   const at = (location) => (typeof location?.directory === "string" ? { location: { directory: location.directory } } : undefined);
-  const attach = () => {
-    if (state.root) rpc.attach({ root: state.root, client }, at(place)).catch(() => {});
+  const attach = (renew) => {
+    if (state.root) rpc.attach({ root: state.root, client, renew }, at(place)).catch(() => {});
   };
-  // The pane's root is the last session it showed: the home screen or a subagent's session keeps it.
+  // The pane answers for the root of the session it shows, a subagent's included, and for nothing once it shows
+  // none, as on the home screen.
   const select = () => {
     const route = api.ui.router.current();
-    if (route?.type !== "session") return;
-    const root = api.data.session.root(route.sessionID);
-    if (typeof root !== "string" || !root || root === state.root) return;
+    const shown = route?.type === "session" ? api.data.session.root(route.sessionID) : null;
+    const root = typeof shown === "string" && shown ? shown : null;
+    if (root === state.root) return;
     if (state.root) rpc.detach({ root: state.root, client }, at(place)).catch(() => {});
     state.root = root;
-    place = api.data.session.get(root)?.location;
-    attach();
+    place = root ? api.data.session.get(root)?.location : undefined;
+    attach(false);
     void publishCounts(state, api, true);
   };
   const offAsk = rpc.events.on("ask", (event) => {
@@ -169,7 +173,9 @@ function setup(api) {
       if (data.client !== null) return;
       select();
     }
-    if (data.root !== state.root || !data.input || typeof data.input !== "object") return;
+    // A question names the session it is for, which may be a subagent's the server half could not place.
+    const asked = typeof data.root === "string" ? (api.data.session.root(data.root) ?? data.root) : null;
+    if (!state.root || asked !== state.root || !data.input || typeof data.input !== "object") return;
     void (async () => {
       const budget = Math.max(0, Number(data.budget_ms) - ANSWER_MARGIN_MS);
       let output = null;
@@ -191,7 +197,7 @@ function setup(api) {
   select();
   if (state.root === null) void publishCounts(state, api, true);
   const poll = setInterval(select, ROUTE_POLL_MS);
-  const renew = setInterval(attach, ATTACH_RENEW_MS);
+  const renew = setInterval(() => attach(true), ATTACH_RENEW_MS);
   return () => {
     clearInterval(poll);
     clearInterval(renew);

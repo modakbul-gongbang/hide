@@ -22,6 +22,10 @@ export const COUNT_BUDGET_MS = 2000;
 export const LETTERS_BUDGET_MS = 1500;
 // What the TUI half keeps of a question's budget for the answer's way back.
 export const ANSWER_MARGIN_MS = 150;
+// A terminal attaches again this often while it shows a session, and one that has not for two of those is gone (a
+// killed terminal says nothing on its way out); a slow answer alone never detaches it.
+export const ATTACH_RENEW_MS = 5_000;
+const ATTACH_LEASE_MS = 2 * ATTACH_RENEW_MS;
 const LOOKUP_BUDGET_MS = 300;
 const OUTPUT_LIMIT = 64 * 1024;
 // Far inside the helper's 256 KiB input, so a pasted log never costs a prompt its letters.
@@ -118,7 +122,7 @@ export function helper(state, operation, input, budgetMs, env = process.env) {
   }
   // A call skipped at the cap or given up on reaches Hide's diagnostic through the next one.
   if (state.lost > 0) {
-    input = { ...input, lost: state.lost };
+    input = { ...input, lost: (Number(input.lost) || 0) + state.lost };
     state.lost = 0;
   }
   return new Promise((resolve) => {
@@ -228,6 +232,12 @@ function letterIds(answer) {
   return Array.isArray(answer?.letters) ? answer.letters.filter((letter) => typeof letter === "string") : [];
 }
 
+/** A shell call's folder: OpenCode runs a relative `workdir` in the session's folder, never the server's own. */
+function workingFolder(workdir, directory) {
+  if (typeof workdir !== "string" || !workdir) return directory;
+  return typeof directory === "string" ? path.resolve(directory, workdir) : workdir;
+}
+
 /** The environment of a helper this half starts: the server's, without a pane it is not. */
 function serverEnv() {
   const env = { ...process.env };
@@ -262,18 +272,39 @@ async function rootOf(state, ctx, sessionID) {
   return undefined;
 }
 
+/** The terminal attached to `root` while its lease holds, or null; one past its lease is forgotten. */
+function terminalOf(state, root) {
+  const entry = state.attached.get(root);
+  if (!entry) return null;
+  if (Date.now() - entry.at > ATTACH_LEASE_MS) {
+    state.attached.delete(root);
+    return null;
+  }
+  return entry.client;
+}
+
+function attachTerminal(state, root, client) {
+  remember(state, state.attached, root, { client, at: Date.now() });
+}
+
 /**
  * Asks the terminal attached to `root` (or, with `anyone`, any terminal showing it) and waits at most `budgetMs`
- * for its answer: the answer's output, or null when none came. A terminal that never answers is attached no more.
+ * for its answer: the answer's output, or null when none came. A question the attached terminal left unanswered
+ * reaches Hide's diagnostic through the next helper call; the terminal stays attached while it renews.
  */
 function ask(state, registration, root, operation, input, budgetMs, anyone = false) {
-  const client = state.attached.get(root) ?? null;
+  const client = terminalOf(state, root);
   if (!client && !anyone) return Promise.resolve(null);
+  if (state.lost > 0) {
+    input = { ...input, lost: state.lost };
+    state.lost = 0;
+  }
   const id = randomUUID();
   return new Promise((resolve) => {
     const timer = setTimeout(() => {
       state.questions.delete(id);
-      if (client && state.attached.get(root) === client) state.attached.delete(root);
+      // Only an attached terminal was expected to answer: a session no terminal shows (`opencode run`) has none.
+      if (client) state.lost += 1;
       resolve(null);
     }, budgetMs);
     // Null when OpenCode disposed of the plugin before the answer came.
@@ -283,7 +314,7 @@ function ask(state, registration, root, operation, input, budgetMs, anyone = fal
         resolve(null);
         return;
       }
-      if (typeof answer.client === "string" && answer.client) remember(state, state.attached, root, answer.client);
+      if (typeof answer.client === "string" && answer.client) attachTerminal(state, root, answer.client);
       resolve(answer.output && typeof answer.output === "object" ? answer.output : {});
     });
     registration.events.emit("ask", { id, client, root, operation, input, budget_ms: budgetMs }).catch(() => {});
@@ -315,14 +346,18 @@ function holdReceipt(state, key, entry) {
   state.receipts.set(key, { ...entry, at: now });
 }
 
-/** Confirms the letters OpenCode wrote; a letter Hide did not take stays pending there and rides the next ask. */
+/**
+ * Confirms the letters OpenCode wrote; a letter Hide did not take stays pending there and rides the next ask. The
+ * promise settles once Hide answered, or the confirmation's budget ran out.
+ */
 function confirm(state, registration, receipt) {
-  state.confirming.add(receipt.root);
-  void ask(state, registration, receipt.root, "confirm", { session_id: receipt.root, letters: receipt.letters }, CONFIRM_BUDGET_MS).then((answer) => {
-    state.confirming.delete(receipt.root);
+  const input = { session_id: receipt.root, letters: receipt.letters };
+  const confirming = ask(state, registration, receipt.root, "confirm", input, CONFIRM_BUDGET_MS).then((answer) => {
+    if (state.confirming.get(receipt.root) === confirming) state.confirming.delete(receipt.root);
     const confirmed = Array.isArray(answer?.confirmed) ? answer.confirmed : [];
     for (const letter of receipt.letters) if (confirmed.includes(letter)) remember(state, state.confirmed, letter);
   });
+  state.confirming.set(receipt.root, confirming);
 }
 
 function toolKey(sessionID, callID) {
@@ -332,34 +367,44 @@ function toolKey(sessionID, callID) {
 /**
  * A root session's prompt: the context the terminal showing it gives (the start guidance and Memory on the
  * session's first prompt, Memory and the letters due), written as a synthetic message OpenCode admits ahead of the
- * prompt. The letters are confirmed once OpenCode delivered that message into the session.
+ * prompt. The letters are confirmed once OpenCode delivered that message into the session; a confirmation still on
+ * its way is waited for first, so the letters it takes are not handed over again.
  */
 async function onPrompt(state, ctx, registration, event) {
+  const deadline = Date.now() + PROMPT_BUDGET_MS;
   const sessionID = event?.sessionID;
   const text = event?.prompt?.text;
   if (typeof sessionID !== "string" || typeof text !== "string") return;
   // A subagent's prompt is no one's turn.
   if ((await parentOf(state, ctx, sessionID)) !== null) return;
+  if (state.confirming.has(sessionID)) await withBudget(state.confirming.get(sessionID), Math.max(0, deadline - Date.now()));
   const answer = await ask(
     state,
     registration,
     sessionID,
     "prompt",
     { session_id: sessionID, prompt: clip(text), cwd: ctx.location?.directory },
-    PROMPT_BUDGET_MS,
+    Math.max(0, deadline - Date.now()),
     true,
   );
-  if (typeof answer?.context !== "string" || !answer.context) return;
+  if (!answer) return;
+  let letters = letterIds(answer);
+  const sections = [answer.guidance];
+  // A letter Hide already took is never written twice: the prompt then carries the guidance alone, and the letters
+  // that came with it stay pending in Hide for the next ask.
+  if (letters.some((letter) => state.confirmed.has(letter))) letters = [];
+  else sections.push(answer.context);
+  const context = sections.filter((section) => typeof section === "string" && section).join("\n\n");
+  if (!context) return;
   const admitted = await ctx.session.synthetic({
     sessionID,
-    text: reminder(answer.context),
+    text: reminder(context),
     description: "Hide",
     metadata: { source: "hide" },
     delivery: event.delivery,
     resume: false,
   });
   const id = (admitted?.data ?? admitted)?.id;
-  const letters = letterIds(answer);
   if (letters.length === 0 || typeof id !== "string") return;
   if (state.delivered.has(id)) confirm(state, registration, { root: sessionID, letters });
   else holdReceipt(state, id, { root: sessionID, letters });
@@ -378,7 +423,7 @@ async function onTool(state, ctx, registration, event) {
   if (tool === "shell") {
     const command = input?.command;
     if (typeof command !== "string") return null;
-    request = { tool, command, cwd: typeof input.workdir === "string" && input.workdir ? input.workdir : directory };
+    request = { tool, command, cwd: workingFolder(input.workdir, directory) };
   } else if (FILE_TOOLS.has(tool)) {
     request = { tool, args: fileArgs(input), cwd: directory };
   } else if (tool === "question") {
@@ -386,16 +431,20 @@ async function onTool(state, ctx, registration, event) {
   } else {
     return null;
   }
-  const root = await rootOf(state, ctx, event.sessionID);
+  // A session whose line OpenCode did not tell in time is taken as its own root, as the 1.x plugin takes it; any
+  // terminal showing that session's root is then asked.
+  const known = await rootOf(state, ctx, event.sessionID);
+  const root = known ?? event.sessionID;
   const guarded = tool !== "question" && policyOn();
   // A shell call that can start an agent through Herdr is the spawn guard's.
   const launch = tool === "shell" && (request.command.includes("herdr") || request.command.includes("HERDR_BIN_PATH"));
   // The terminal is asked for what only a pane can judge, and then judges the guardrails too; a missing or
-  // unreadable policy is judged there, where the helper records why.
-  if (root !== undefined && state.attached.has(root) && (tool === "question" || launch || guarded !== false)) {
+  // unreadable policy is judged there, where the helper records why. A question no terminal answered in time lets
+  // the call run, as a timed-out helper does in the 1.x plugin, and reaches the diagnostic.
+  if ((known === undefined || terminalOf(state, root)) && (tool === "question" || launch || guarded !== false)) {
     // The core knows the pane by the root session Herdr's integration reports, also for a subagent's call.
     const session_id = tool === "question" ? root : event.sessionID;
-    const answer = await ask(state, registration, root, "tool", { ...request, session_id }, TOOL_BUDGET_MS);
+    const answer = await ask(state, registration, root, "tool", { ...request, session_id }, TOOL_BUDGET_MS, known === undefined);
     if (answer !== null) return typeof answer.deny === "string" && answer.deny ? answer.deny : null;
   }
   if (!guarded || tool === "question") return null;
@@ -412,7 +461,7 @@ async function onToolResult(state, ctx, registration, event) {
   const sessionID = event?.sessionID;
   const key = toolKey(sessionID, event?.id);
   if (!key || event.status !== "completed" || !Array.isArray(event.result?.content)) return;
-  if (!state.attached.has(sessionID) || (await parentOf(state, ctx, sessionID)) !== null) return;
+  if (!terminalOf(state, sessionID) || (await parentOf(state, ctx, sessionID)) !== null) return;
   if (handoverOpen(state, sessionID)) return;
   const answer = await ask(state, registration, sessionID, "letters", { session_id: sessionID }, LETTERS_BUDGET_MS);
   if (typeof answer?.context !== "string" || !answer.context) return;
@@ -462,23 +511,27 @@ async function setup(ctx) {
     running: new Set(),
     lost: 0,
     closed: false,
-    // The terminal attached to each root session, by the id it attached with.
+    // The terminal attached to each root session, by the id it attached with, and when it last attached.
     attached: new Map(),
     questions: new Map(),
     parents: new Map(),
     receipts: new Map(),
     delivered: new Set(),
-    // The roots whose letters wait for Hide's confirmation, and the letters Hide took.
-    confirming: new Set(),
+    // The confirmation each root's letters wait for, and the letters Hide took.
+    confirming: new Map(),
     confirmed: new Set(),
   };
   const registration = await ctx.rpc.register(RPC, {
+    // A terminal that opens a session takes it over; one that only renews never takes it from another terminal
+    // still attached, so of two terminals showing a session the one that opened it last answers.
     attach: async (input) => {
-      if (typeof input?.root === "string" && typeof input.client === "string") remember(state, state.attached, input.root, input.client);
+      if (typeof input?.root !== "string" || typeof input.client !== "string") return {};
+      const current = terminalOf(state, input.root);
+      if (input.renew !== true || current === null || current === input.client) attachTerminal(state, input.root, input.client);
       return {};
     },
     detach: async (input) => {
-      if (typeof input?.root === "string" && state.attached.get(input.root) === input.client) state.attached.delete(input.root);
+      if (typeof input?.root === "string" && state.attached.get(input.root)?.client === input.client) state.attached.delete(input.root);
       return {};
     },
     answer: async (input) => {

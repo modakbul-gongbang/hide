@@ -83,7 +83,7 @@ class OpenCode {
   /** The server half's instance for `directory`, started as OpenCode starts one. */
   async instance(directory) {
     const instance = { directory, hooks: {}, handlers: null };
-    const ctx = {
+    const ctx = (instance.ctx = {
       location: { directory },
       rpc: {
         register: async (definition, handlers) => {
@@ -115,7 +115,7 @@ class OpenCode {
         },
       },
       event: { subscribe: ({ signal }) => this.subscribe(signal) },
-    };
+    });
     this.cleanups.push(await server.setup(ctx));
     this.instances.set(directory, instance);
     return instance;
@@ -300,6 +300,7 @@ test("each terminal answers for the session it shows, in its own pane, whichever
   assert.equal(confirm.env.HERDR_PANE_ID, "w1:p2");
 
   // The guidance goes with a session's first prompt only.
+  answer({ prompt: { context: "MEMORY" } });
   const [again] = await host.prompt("ses_b", "and the test");
   assert.doesNotMatch(again.payload.text, /HIDE-GUIDANCE/);
   await host.prompt("ses_a");
@@ -369,16 +370,37 @@ test("the spawn and Factory guards run in the pane showing the session, a subage
   const [launch] = await until("tool");
   assert.deepEqual(launch.input, { tool: "shell", command: "herdr agent start --kind claude", cwd: "/w", session_id: "ses_a" });
   assert.equal(launch.env.HERDR_PANE_ID, "w1:p1");
+  // OpenCode runs a relative workdir in the session's folder, never where the shared server started.
+  await host.tool("ses_a", "shell", { command: "herdr agent start --kind claude", workdir: "sub" });
+  const [, relative] = await until("tool", 2);
+  assert.equal(relative.input.cwd, path.join(PROJECT, "sub"));
 
   assert.equal(await host.tool("ses_child", "question", { questions: [] }), "Not run: use hide agent spawn");
-  const [, question] = await until("tool", 2);
+  const [, , question] = await until("tool", 3);
   assert.deepEqual(question.input, { tool: "question", session_id: "ses_a" });
 
   // With no protection on, any other call runs without asking.
   assert.equal(await host.tool("ses_a", "shell", { command: "cargo test" }), null);
   assert.equal(await host.tool("ses_a", "read", { path: ".env" }), null);
   await sleep(100);
-  assert.equal(calls("tool").length, 2);
+  assert.equal(calls("tool").length, 3);
+});
+
+test("a subagent whose line OpenCode cannot tell in time is asked of the terminal showing its root", async (t) => {
+  answer({ tool: { deny: "Not run: use hide agent spawn" } });
+  const host = await opencode(t);
+  host.create("ses_a");
+  const view = host.terminal("w1:p1", { type: "session", sessionID: "ses_a" });
+  await attached(view, "ses_a");
+  // Created before this instance started, and its lookup never answers: the server half cannot place it.
+  host.sessions.set("ses_late", { id: "ses_late", parentID: "ses_a", location: { directory: PROJECT } });
+  const lookups = host.instances.get(PROJECT);
+  const get = lookups.ctx.session.get;
+  lookups.ctx.session.get = async ({ sessionID }) => (sessionID === "ses_late" ? new Promise(() => {}) : get({ sessionID }));
+  assert.equal(await host.tool("ses_late", "question", { questions: [] }), "Not run: use hide agent spawn");
+  const [question] = await until("tool");
+  assert.equal(question.env.HERDR_PANE_ID, "w1:p1");
+  assert.deepEqual(question.input, { tool: "question", session_id: "ses_late" });
 });
 
 test("with no terminal for the session the server half only guards a protected project, outside any pane", async (t) => {
@@ -406,27 +428,87 @@ test("with no terminal for the session the server half only guards a protected p
   assert.equal(call.env.HERDR_PANE_ID, undefined);
 });
 
-test("a terminal that went away without a word is asked once more, and its project's guardrails still hold", async (t) => {
+test("a terminal that misses an answer is still asked, and the miss reaches the diagnostic", async (t) => {
+  answer({ tool: { deny: "Not run: use hide agent spawn" } });
+  const host = await opencode(t);
+  host.create("ses_a");
+  const view = host.terminal("w1:p1", { type: "session", sessionID: "ses_a" });
+  await attached(view, "ses_a");
+  const launch = { command: "herdr agent start --kind claude" };
+
+  // Its answer is lost: the call runs, as a timed-out helper's does in the 1.x plugin.
+  view.gone = true;
+  assert.equal(await host.tool("ses_a", "shell", launch), null);
+  view.gone = false;
+  assert.equal(await host.tool("ses_a", "shell", launch), "Not run: use hide agent spawn");
+  const tools = await until("tool", 2);
+  assert.equal(tools[1].env.HERDR_PANE_ID, "w1:p1");
+  assert.equal(tools[1].input.lost, 1);
+});
+
+test("a terminal that went away without a word is let go once it stops attaching, and the guardrails still hold", async (t) => {
   answer({ tool: { deny: "Not run: guarded" } });
   const host = await opencode(t);
   host.create("ses_a");
   const view = host.terminal("w1:p1", { type: "session", sessionID: "ses_a" });
   await attached(view, "ses_a");
-  policy({ files: true, paths: [".env"] });
+  policy({ files: true, paths: [".env"], worktree_folder: false });
   t.after(() => policy({}));
   host.kill(view);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
 
-  // The question goes unanswered for its budget; the guardrails are then judged outside any pane.
+  // Still attached: the question goes unanswered for its budget, then the guardrails are judged outside any pane.
   assert.equal(await host.tool("ses_a", "read", { path: ".env" }), "Not run: guarded");
   assert.equal(host.asks.length, 1);
-  assert.equal(await host.tool("ses_a", "read", { path: ".env" }), "Not run: guarded");
-  assert.equal(host.asks.length, 1, "the terminal is attached no more");
-  const tools = calls("tool");
+  // Two renewals missed: it is asked no more.
+  t.mock.timers.setTime(Date.now() + 10_001);
+  assert.equal(await host.tool("ses_a", "read", { path: ".env", workdir: "x" }), "Not run: guarded");
+  assert.equal(host.asks.length, 1);
+  const tools = calls("tool").filter((call) => call.input.guard_only);
   assert.equal(tools.length, 2);
-  for (const call of tools) {
-    assert.equal(call.input.guard_only, true);
-    assert.equal(call.env.HERDR_PANE_ID, undefined);
-  }
+  for (const call of tools) assert.equal(call.env.HERDR_PANE_ID, undefined);
+});
+
+test("a pane that left a session answers for it no more, and a renewal never takes a session from the terminal that opened it", async (t) => {
+  answer({ prompt: { context: "MEMORY" } });
+  const host = await opencode(t);
+  host.create("ses_a");
+  const a = host.terminal("w1:p1", { type: "session", sessionID: "ses_a" });
+  await attached(a, "ses_a");
+  a.route = { type: "home" };
+  await sleep(400);
+  const b = host.terminal("w1:p2", { type: "session", sessionID: "ses_a" });
+  await attached(b, "ses_a");
+  // The first terminal renewing, as a terminal still showing the session does every few seconds.
+  await host.instances.get(PROJECT).handlers.attach({ root: "ses_a", client: a.attached[0].client, renew: true });
+
+  const [item] = await host.prompt("ses_a");
+  assert.match(item.payload.text, /MEMORY/);
+  b.route = { type: "home" };
+  await sleep(400);
+  // No terminal shows it now: nothing answers, the home screen's pane included.
+  assert.deepEqual(await host.prompt("ses_a"), []);
+  const prompts = calls("prompt");
+  assert.deepEqual(prompts.map((call) => call.env.HERDR_PANE_ID), ["w1:p2"]);
+});
+
+test("a letter Hide is confirming is not written again by the next prompt", async (t) => {
+  const letter = "Hide letter letter-1 from lead (claude) [request]\nBODY-1\n";
+  answer({
+    prompt: { context: `MEMORY\n${letter}`, letters: ["letter-1"] },
+    confirm: { confirmed: ["letter-1"], delay_ms: 400 },
+  });
+  const host = await opencode(t);
+  host.create("ses_a");
+  const view = host.terminal("w1:p1", { type: "session", sessionID: "ses_a" });
+  await attached(view, "ses_a");
+  const [first] = await host.prompt("ses_a");
+  host.publish("session.inbox.delivered", { sessionID: "ses_a", inboxID: first.id });
+  await until("confirm");
+  // The pull this prompt makes answers before the confirmation lands, still handing the letter over.
+  await host.prompt("ses_a", "and the test");
+  const written = host.synthetic.filter((item) => item.payload.text.includes("letter-1"));
+  assert.equal(written.length, 1, JSON.stringify(host.synthetic.map((item) => item.payload.text)));
 });
 
 test("a subagent's run moves the counts of the pane showing its root, and the root's rest reports them again", async (t) => {

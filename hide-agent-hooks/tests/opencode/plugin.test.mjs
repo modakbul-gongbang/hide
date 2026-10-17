@@ -117,6 +117,10 @@ test("outside a Herdr pane the plugin only guards a protected project's tools", 
     const [call] = await until("tool");
     assert.deepEqual(call.input.args, { filePath: ".env" });
     assert.equal(call.env.HERDR_PANE_ID, undefined);
+    // OpenCode runs a relative workdir in the session's folder, not where OpenCode started.
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "ses_a" }, { args: { command: "cat .env", workdir: "sub" } }).catch(() => {});
+    const [, shell] = await until("tool", 2);
+    assert.equal(shell.input.cwd, "/checkouts/fixture/sub");
   } finally {
     policy({});
   }
