@@ -38,9 +38,38 @@ impl DaemonState {
 }
 
 /// The state folder, and any parent made with it such as `~/.hide`, is made
-/// private: it holds the daemon's token. An existing folder keeps its mode.
+/// private: it holds the daemon's token, and the delivery ledger refuses a
+/// folder others can read. One this account owns that an earlier build left
+/// open (a device helper's bridge folder made `~/.hide/state` with the
+/// umask's mode) is restricted here, where `hide connect`, every daemon role
+/// and the core a move starts open it, before any store reads it; a link or
+/// another account's folder is refused, and no daemon starts on it.
 fn create_private_dir(dir: &Path) -> io::Result<()> {
-    private::create_dir_all(dir)
+    match private::own_dir(dir) {
+        Ok(private::OwnDir::Restricted) => {
+            let record = serde_json::json!({
+                "component": "hided",
+                "kind": "state.made_private",
+                "state_dir": dir.display().to_string(),
+            });
+            // On disk at once: this runs before the daemon's log is open.
+            let core_state = dir.join(herdr_core::node_migration::CORE_STATE);
+            if let Err(error) = herdr_core::diagnostics::record_now(&core_state, record) {
+                eprintln!("the state folder's repair could not be logged: {error}");
+            }
+            Ok(())
+        }
+        Ok(private::OwnDir::Made | private::OwnDir::Private) => Ok(()),
+        Err(error) => {
+            herdr_core::diagnostic!(serde_json::json!({
+                "component": "hided",
+                "kind": "state.not_private",
+                "state_dir": dir.display().to_string(),
+                "message": error.to_string(),
+            }));
+            Err(error)
+        }
+    }
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {
