@@ -1769,3 +1769,92 @@ fn hide_memory_refuses_a_disconnected_or_unknown_caller_and_a_changed_checkout()
         Some("caller_context_changed")
     );
 }
+
+#[test]
+fn hide_memory_reads_a_person_only_in_a_pane_no_agent_runs_in() {
+    // PRD memory-stale-cards D-10 as amended: a release gives a card's report
+    // back only for a person, so neither Herdr nor the ledger may name an
+    // agent in the caller's pane, and a caller outside every pane is no one
+    // Hide can name.
+    use crate::memory_command::{MemoryCaller, MemoryCommand};
+    let (mut runtime, _dir) = caller_fixture();
+    let expected = runtime
+        .workspace_control_query(crate::node::TEST_NODE, "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let caller = |runtime: &Runtime, id: &str| {
+        runtime
+            .prepare_memory(
+                crate::node::TEST_NODE,
+                id,
+                &expected,
+                MemoryCommand::Release { number: 1 },
+            )
+            .unwrap()
+            .caller
+    };
+    assert_eq!(caller(&runtime, "pane-b"), MemoryCaller::Person);
+    assert_eq!(
+        caller(
+            &runtime,
+            &crate::workspace_control::checkout_caller_id("k1", "/checkouts/b")
+        ),
+        MemoryCaller::Checkout,
+        "a terminal outside every pane may be Codex's shared daemon"
+    );
+
+    let mut ledger = crate::delivery::ledger::Ledger::default();
+    ledger.agents.push(crate::coordination::AgentRecord {
+        id: "agent-1".into(),
+        name: None,
+        machine: crate::node::TEST_NODE.into(),
+        host_scope: "scope".into(),
+        native_machine: "fixture-machine".into(),
+        session: "native".into(),
+        instance: "pane-b".into(),
+        pane: "pane-b".into(),
+        parent: None,
+        origin: None,
+        project: None,
+        actor: crate::delivery::Actor {
+            pane_id: "pane-b".into(),
+            name: "agent-1".into(),
+            kind: "claude".into(),
+            device_id: crate::node::TEST_NODE.into(),
+            session: None,
+        },
+        ended: false,
+        forked: false,
+    });
+    runtime.delivery_ledger = Ok(Arc::new(ledger.clone()));
+    assert_eq!(
+        caller(&runtime, "pane-b"),
+        MemoryCaller::Agent(None),
+        "an agent the ledger names before Herdr lists it"
+    );
+    ledger.agents[0].ended = true;
+    runtime.delivery_ledger = Ok(Arc::new(ledger));
+    assert_eq!(caller(&runtime, "pane-b"), MemoryCaller::Person);
+
+    let mut row = project_agents(
+        crate::sidebar::owned_label_fixture(serde_json::json!({
+            "agents": [{"id": "a", "pane_id": "pane-b", "agent": "claude", "agent_status": "idle",
+                "state_change_seq": 1, "tokens": {"task": "Work"}}],
+        }))
+        .unwrap(),
+    )
+    .agents
+    .remove(0);
+    runtime.snapshot.navigator.agents = vec![row.clone()];
+    assert_eq!(
+        caller(&runtime, "pane-b"),
+        MemoryCaller::Agent(None),
+        "an agent whose session Herdr has not said"
+    );
+    row.session_id = Some("s1".to_owned());
+    runtime.snapshot.navigator.agents = vec![row];
+    assert_eq!(
+        caller(&runtime, "pane-b"),
+        MemoryCaller::Agent(Some(("claude".to_owned(), "s1".to_owned())))
+    );
+}

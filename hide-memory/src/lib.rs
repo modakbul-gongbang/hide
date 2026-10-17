@@ -27,7 +27,9 @@ pub use reconcile::{
     COMPARISON_EXCERPT_BYTES, DocumentAuthority, DocumentComparison, PROMOTION_BATCH_LIMIT,
 };
 pub use redaction::{RedactedText, redact};
-pub use store::hold::{CardHold, EndedHold, StaleOutcome, StaleRefusal, StaleReporter};
+pub use store::hold::{
+    CardHold, EndedHold, ReleasedReport, StaleOutcome, StaleRefusal, StaleReporter,
+};
 pub use store::{
     AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateKind, CandidateOutcome,
     CandidateRelation, CardEvidence, ComparisonCard, CursorReader, DeleteProjectOutcome,

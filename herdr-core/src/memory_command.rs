@@ -180,6 +180,40 @@ pub fn parse_card(value: &str) -> Option<u64> {
     hide_memory::parse_card_name(value).filter(|number| *number > 0)
 }
 
+/// Who runs a `hide memory` command, as its credential and the core's agent
+/// rows say; a release gives the revision's report back only for a person
+/// (PRD memory-stale-cards D-10 as amended).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum MemoryCaller {
+    /// A Herdr pane no agent runs in: a person at its shell.
+    Person,
+    /// A Herdr pane an agent runs in, with the agent's Memory provider and
+    /// session when Herdr knows them.
+    Agent(Option<(String, String)>),
+    /// A caller bound by its working folder: a terminal outside every pane,
+    /// or a tool shell of Codex's shared app-server daemon, which Hide cannot
+    /// tell apart.
+    Checkout,
+}
+
+impl MemoryCaller {
+    /// The calling agent's Memory provider and session, when Hide knows them.
+    fn session(&self) -> Option<(&str, &str)> {
+        match self {
+            Self::Agent(Some((provider, session))) => Some((provider, session)),
+            _ => None,
+        }
+    }
+
+    fn code(&self) -> &'static str {
+        match self {
+            Self::Person => "person",
+            Self::Agent(_) => "agent",
+            Self::Checkout => "checkout",
+        }
+    }
+}
+
 /// What one command needs, taken under the core's lock.
 pub struct PreparedMemory {
     pub(crate) command: MemoryCommand,
@@ -193,9 +227,7 @@ pub struct PreparedMemory {
     pub(crate) ai_usage: Arc<dyn hide_ai::AiUsageSink>,
     pub(crate) database: PathBuf,
     pub(crate) checkout_path: String,
-    /// The calling agent's Memory provider and session, when the caller is
-    /// an agent pane Herdr knows the session of.
-    pub(crate) reader: Option<(String, String)>,
+    pub(crate) caller: MemoryCaller,
     /// Hide AI's settings while it is on.
     pub(crate) settings: Option<AiSettings>,
     /// The core's output language, which an `add`'s cards are written in.
@@ -260,12 +292,8 @@ impl PreparedMemory {
         let now = crate::runtime::memory::now_ms();
         match self.command.clone() {
             MemoryCommand::Show { number } => {
-                let reader = self
-                    .reader
-                    .as_ref()
-                    .map(|(provider, session)| (provider.as_str(), session.as_str()));
                 let item = store
-                    .show(&identity.id, number, reader, now)
+                    .show(&identity.id, number, self.caller.session(), now)
                     .map_err(|error| store_failure(&identity.id, &error))?
                     .ok_or("memory_card_not_found")?;
                 if item.lifecycle == MemoryLifecycle::Tombstoned {
@@ -326,7 +354,7 @@ impl PreparedMemory {
                 }))
             }
             MemoryCommand::Stale { number, reason } => {
-                let Some((runtime, session_id)) = self.reader.as_ref() else {
+                let Some((runtime, session_id)) = self.caller.session() else {
                     stale_refused(&identity.id, number, None, "memory_stale_session_required");
                     return Err("memory_stale_session_required".into());
                 };
@@ -378,8 +406,15 @@ impl PreparedMemory {
                     .item_by_number(&identity.id, number)
                     .map_err(|error| store_failure(&identity.id, &error))?
                     .ok_or("memory_card_not_found")?;
+                // Only a person undoes a false report; an agent's release, and
+                // one Hide cannot tell from an agent's, leaves it spent.
+                let report = if self.caller == MemoryCaller::Person {
+                    hide_memory::ReleasedReport::GivenBack
+                } else {
+                    hide_memory::ReleasedReport::Spent
+                };
                 let ended = store
-                    .release_hold(&identity.id, item.number, now)
+                    .release_hold(&identity.id, item.number, now, report)
                     .map_err(|error| store_failure(&identity.id, &error))?
                     .ok_or("memory_card_not_held")?;
                 crate::diagnostic!(json!({
@@ -390,13 +425,20 @@ impl PreparedMemory {
                     "runtime": ended.runtime,
                     "session_id": ended.session_id,
                     "cause": "release",
-                    "caller": self.reader.as_ref().map(|(runtime, session)| json!({
+                    "caller": self.caller.code(),
+                    "caller_session": self.caller.session().map(|(runtime, session)| json!({
                         "runtime": runtime,
                         "session_id": session,
                     })),
+                    "report": report.code(),
                 }));
                 self.report(&identity.id, MemoryChange::Other);
-                Ok(json!({"card": card_name(number), "outcome": "released"}))
+                Ok(json!({
+                    "card": card_name(number),
+                    "outcome": "released",
+                    "caller": self.caller.code(),
+                    "report": report.code(),
+                }))
             }
             MemoryCommand::Placed { number, path } => {
                 let promotion = self.own_promotion(&store, &identity.id, number)?;
@@ -702,7 +744,7 @@ fn utc(unix_ms: u64) -> String {
 }
 
 /// A refused report, by card, session and refusal; never the reason given.
-fn stale_refused(project_id: &str, number: u64, reporter: Option<(&String, &String)>, code: &str) {
+fn stale_refused(project_id: &str, number: u64, reporter: Option<(&str, &str)>, code: &str) {
     crate::diagnostic!(json!({
         "component": "memory",
         "kind": "stale.refused",
@@ -836,7 +878,7 @@ pub fn next_action(code: &str) -> &'static str {
             "Only an agent whose session Hide knows can report a card; run it from the agent's own pane"
         }
         "memory_stale_already_reported" => {
-            "This card's text was reported once already and is not held again; hide memory show <card> says whether it is held"
+            "This card's text has its one report already; tell the operator instead, and hide memory show <card> says whether it is held"
         }
         "memory_stale_not_received" => {
             "Only a session a prompt gave this card to can report it; if one did just now, retry after Hide reads this conversation, within a minute"
@@ -1011,19 +1053,18 @@ mod tests {
                 ai,
                 branches,
                 branch_checkouts,
-                Some(("claude".to_owned(), "caller-session".to_owned())),
+                MemoryCaller::Agent(Some(("claude".to_owned(), "caller-session".to_owned()))),
             )
         }
 
-        /// Runs `command` for the agent session `reader`, or for a caller
-        /// Hide knows no session of.
+        /// Runs `command` for `caller`.
         fn run_as(
             &self,
             command: MemoryCommand,
             ai: bool,
             branches: Option<Vec<String>>,
             branch_checkouts: Vec<(String, String)>,
-            reader: Option<(String, String)>,
+            caller: MemoryCaller,
         ) -> Result<Value, String> {
             let backend: Arc<dyn AiBackend> = self.backend.clone();
             PreparedMemory {
@@ -1034,7 +1075,7 @@ mod tests {
                 ai_usage: crate::usage_ledger::ai_usage::AiUsageQueue::new(),
                 database: self.database.clone(),
                 checkout_path: self.root.clone(),
-                reader,
+                caller,
                 settings: ai.then(AiSettings::default),
                 language: hide_ai::OutputLanguage::English,
                 caller_agents: vec!["agent-9".to_owned()],
@@ -1064,46 +1105,71 @@ mod tests {
         }
     }
 
-    #[test]
-    fn a_card_a_prompt_gave_the_caller_is_held_shown_held_and_released_once() {
-        // PRD memory-stale-cards B1-B3, B5, B11.
-        let fixture = Fixture::new();
-        let stale = || {
-            fixture.run(
+    impl Fixture {
+        fn stale(&self, caller: MemoryCaller) -> Result<Value, String> {
+            self.run_as(
                 MemoryCommand::Stale {
                     number: 1,
                     reason: "The operator now says api_key=super-secret-value-123 is gone"
                         .to_owned(),
                 },
                 false,
+                None,
+                Vec::new(),
+                caller,
             )
-        };
-        assert_eq!(stale(), Err("memory_stale_not_received".into()));
-        assert_eq!(
-            fixture.run_as(
-                MemoryCommand::Stale {
-                    number: 1,
-                    reason: "x".to_owned()
-                },
+        }
+
+        fn release(&self, caller: MemoryCaller) -> Result<Value, String> {
+            self.run_as(
+                MemoryCommand::Release { number: 1 },
                 false,
                 None,
                 Vec::new(),
-                None,
-            ),
-            Err("memory_stale_session_required".into())
-        );
-        fixture
-            .store()
-            .record_receipt(
-                &fixture.project_id,
-                "claude",
-                "caller-session",
-                "event:40",
-                "m1@1",
-                crate::runtime::memory::now_ms(),
+                caller,
             )
-            .unwrap();
-        let held = stale().unwrap();
+        }
+
+        /// A prompt gave `session` card `m1` as it is now.
+        fn give(&self, session: &str) {
+            self.store()
+                .record_receipt(
+                    &self.project_id,
+                    "claude",
+                    session,
+                    "event:40",
+                    "m1@1",
+                    crate::runtime::memory::now_ms(),
+                )
+                .unwrap();
+        }
+    }
+
+    fn agent(session: &str) -> MemoryCaller {
+        MemoryCaller::Agent(Some(("claude".to_owned(), session.to_owned())))
+    }
+
+    #[test]
+    fn a_card_a_prompt_gave_the_caller_is_held_shown_and_an_agents_release_spends_its_report() {
+        // PRD memory-stale-cards B1-B3, B5, B11, D-10 as amended.
+        let fixture = Fixture::new();
+        let caller = || agent("caller-session");
+        assert_eq!(
+            fixture.stale(caller()),
+            Err("memory_stale_not_received".into())
+        );
+        for nobody in [
+            MemoryCaller::Person,
+            MemoryCaller::Agent(None),
+            MemoryCaller::Checkout,
+        ] {
+            assert_eq!(
+                fixture.stale(nobody),
+                Err("memory_stale_session_required".into())
+            );
+        }
+        fixture.give("caller-session");
+        let held = fixture.stale(caller()).unwrap();
         assert_eq!(held["card"], "m1");
         assert_eq!(held["outcome"], "held");
         let shown = fixture
@@ -1112,17 +1178,24 @@ mod tests {
         let reason = shown["hold"]["reason"].as_str().unwrap();
         assert!(reason.starts_with("The operator now says"));
         assert!(!reason.contains("super-secret"), "{reason}");
-        assert_eq!(stale(), Err("memory_stale_already_reported".into()));
-
         assert_eq!(
-            fixture
-                .run(MemoryCommand::Release { number: 1 }, false)
-                .unwrap()["outcome"],
-            "released"
+            fixture.stale(caller()),
+            Err("memory_stale_already_reported".into())
+        );
+
+        let released = fixture.release(caller()).unwrap();
+        assert_eq!(
+            (
+                &released["outcome"],
+                &released["caller"],
+                &released["report"]
+            ),
+            (&json!("released"), &json!("agent"), &json!("spent"))
         );
         assert_eq!(
-            fixture.run(MemoryCommand::Release { number: 1 }, false),
-            Err("memory_card_not_held".into())
+            fixture.release(MemoryCaller::Person),
+            Err("memory_card_not_held".into()),
+            "a released card holds nothing a person could give back"
         );
         assert_eq!(
             fixture
@@ -1130,7 +1203,10 @@ mod tests {
                 .unwrap()["hold"],
             Value::Null
         );
-        assert_eq!(stale(), Err("memory_stale_already_reported".into()));
+        assert_eq!(
+            fixture.stale(caller()),
+            Err("memory_stale_already_reported".into())
+        );
         assert_eq!(
             fixture.run(MemoryCommand::Release { number: 7 }, false),
             Err("memory_card_not_found".into())
@@ -1152,6 +1228,38 @@ mod tests {
                 "{code} tells the agent what to do"
             );
         }
+    }
+
+    #[test]
+    fn only_a_release_from_a_pane_with_no_agent_gives_the_report_back() {
+        // D-10 as amended: a person at a Hide shell undoes a false report; a
+        // terminal outside every pane may be Codex's shared daemon, so its
+        // release leaves the report spent.
+        let fixture = Fixture::new();
+        fixture.give("first");
+        fixture.give("second");
+        fixture.stale(agent("first")).unwrap();
+        let released = fixture.release(MemoryCaller::Person).unwrap();
+        assert_eq!(
+            (&released["caller"], &released["report"]),
+            (&json!("person"), &json!("given_back"))
+        );
+
+        assert_eq!(fixture.stale(agent("second")).unwrap()["outcome"], "held");
+        assert_eq!(
+            fixture.stale(agent("first")),
+            Err("memory_stale_already_reported".into()),
+            "the report given back is one report again"
+        );
+        let released = fixture.release(MemoryCaller::Checkout).unwrap();
+        assert_eq!(
+            (&released["caller"], &released["report"]),
+            (&json!("checkout"), &json!("spent"))
+        );
+        assert_eq!(
+            fixture.stale(agent("first")),
+            Err("memory_stale_already_reported".into())
+        );
     }
 
     #[test]

@@ -486,7 +486,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::agent_cli::USAGE);
         println!("{}", hide_factory::command::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--request-id <id>]\nhide diff open <path> [--beside] [--request-id <id>]\nhide browser open <url-or-path> [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason> | stale <card> <reason> | release <card>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader."
+            "hide workspace info\nhide file open <path> [--beside] [--request-id <id>]\nhide diff open <path> [--beside] [--request-id <id>]\nhide browser open <url-or-path> [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nhide memory show <card> | search <words> | add <text> | forget <card> | undo <card> | placed <card> <path> | building <card> <branch> <path> | unbuilt <card> <reason> | outdated <card> <reason> | skipped <card> <reason> | stale <card> <reason> | release <card>\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given. hide memory reads, adds to and forgets from the caller's Project Memory, which the core keeps in one store for the Projects of its own machine and every registered linked device with a Memory reader. hide memory release ends a hold an agent's stale report put on a card; run in a Hide shell pane with no agent, it also lets that card's text be reported stale once more."
         );
         return Ok(());
     }
@@ -780,7 +780,19 @@ fn memory_text(
             )
         }
         MemoryCommand::Release { .. } => {
-            format!("Released {}; Hide gives it again.\n", text(&result["card"]))
+            let card = text(&result["card"]);
+            match (result["report"].as_str(), result["caller"].as_str()) {
+                (Some("given_back"), _) => format!(
+                    "Released {card}; Hide gives it again, and it may be reported stale once more.\n"
+                ),
+                (Some("spent"), Some("checkout")) => format!(
+                    "Released {card}; Hide gives it again. Hide cannot tell a terminal outside its panes from an agent, so this text is not reported stale again; a release run in a Hide shell pane with no agent gives the report back.\n"
+                ),
+                (Some("spent"), _) => format!(
+                    "Released {card}; Hide gives it again. An agent released it, so this text is not reported stale again.\n"
+                ),
+                _ => format!("Released {card}; Hide gives it again.\n"),
+            }
         }
         MemoryCommand::Placed { .. } => format!(
             "{} points at {} once its pull request merges.\n",
@@ -2969,12 +2981,24 @@ mod tests {
             ),
             "Held m5: Hide stops giving it until this conversation is analyzed, at the latest 2026-10-24 09:00 UTC. Release: hide memory release m5\n"
         );
-        assert_eq!(
+        let released = |caller: &str, report: &str| {
             memory_text(
                 &MemoryCommand::Release { number: 5 },
-                &serde_json::json!({"card": "m5", "outcome": "released"})
-            ),
-            "Released m5; Hide gives it again.\n"
+                &serde_json::json!({"card": "m5", "outcome": "released", "caller": caller, "report": report}),
+            )
+        };
+        assert_eq!(
+            released("person", "given_back"),
+            "Released m5; Hide gives it again, and it may be reported stale once more.\n"
+        );
+        assert_eq!(
+            released("agent", "spent"),
+            "Released m5; Hide gives it again. An agent released it, so this text is not reported stale again.\n"
+        );
+        assert!(
+            released("checkout", "spent")
+                .contains("a release run in a Hide shell pane with no agent gives the report back"),
+            "a person at an outside terminal learns where a release gives the report back"
         );
         let shown = memory_text(
             &MemoryCommand::Show { number: 5 },

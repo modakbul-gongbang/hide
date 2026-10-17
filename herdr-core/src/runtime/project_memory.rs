@@ -103,8 +103,9 @@ impl Runtime {
     /// Checks a `hide memory` caller and takes what the command needs
     /// (B16, D-22): a caller on any linked machine is answered, its Project
     /// read by its own node (PRD
-    /// core-host-node-move B14), and an agent pane's own session is the one a
-    /// `show` is recorded for.
+    /// core-host-node-move B14), an agent pane's own session is the one a
+    /// `show` is recorded for, and only a pane no agent runs in is a person,
+    /// whose `release` gives a card's report back.
     pub(crate) fn prepare_memory(
         &self,
         device: &str,
@@ -121,19 +122,6 @@ impl Runtime {
         if context != *expected {
             return Err("caller_context_changed".into());
         }
-        // The pane's agent on the caller's own machine: a node's pane is
-        // found among that node's agents, never this machine's.
-        let reader = match crate::workspace_control::Caller::parse(caller) {
-            crate::workspace_control::Caller::Pane(pane) => self
-                .machine_agents(device)
-                .iter()
-                .find(|agent| agent.pane_id == pane)
-                .and_then(|agent| {
-                    let provider = hide_session::Agent::from_kind(&agent.agent_kind)?;
-                    Some((provider.as_str().to_owned(), agent.session_id.clone()?))
-                }),
-            crate::workspace_control::Caller::Checkout { .. } => None,
-        };
         let caller_agents = match crate::workspace_control::Caller::parse(caller) {
             crate::workspace_control::Caller::Pane(pane) => self
                 .delivery_state()
@@ -149,6 +137,30 @@ impl Runtime {
                 })
                 .unwrap_or_default(),
             crate::workspace_control::Caller::Checkout { .. } => Vec::new(),
+        };
+        // The pane's agent on the caller's own machine: a node's pane is
+        // found among that node's agents, never this machine's. A pane is a
+        // person's only while neither Herdr nor the delivery ledger names an
+        // agent in it, so an agent Herdr has not listed yet is never one.
+        let caller_kind = match crate::workspace_control::Caller::parse(caller) {
+            crate::workspace_control::Caller::Pane(pane) => match self
+                .machine_agents(device)
+                .iter()
+                .find(|agent| agent.pane_id == pane)
+            {
+                Some(agent) => crate::memory_command::MemoryCaller::Agent(
+                    hide_session::Agent::from_kind(&agent.agent_kind).and_then(|provider| {
+                        Some((provider.as_str().to_owned(), agent.session_id.clone()?))
+                    }),
+                ),
+                None if !caller_agents.is_empty() => {
+                    crate::memory_command::MemoryCaller::Agent(None)
+                }
+                None => crate::memory_command::MemoryCaller::Person,
+            },
+            crate::workspace_control::Caller::Checkout { .. } => {
+                crate::memory_command::MemoryCaller::Checkout
+            }
         };
         let repository = self.catalog_project_of(device, &context.checkout_path);
         // A device's catalog carries no branch list, and an empty one was
@@ -174,7 +186,7 @@ impl Runtime {
             ai_usage: self.ai_usage(),
             database: self.memory_database_path(),
             checkout_path: context.checkout_path,
-            reader,
+            caller: caller_kind,
             settings: self.ai_active().then(|| self.ai_settings.clone()).flatten(),
             language: self.output_language(),
             caller_agents,
