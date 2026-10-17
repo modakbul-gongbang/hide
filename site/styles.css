@@ -269,6 +269,7 @@ code, .mono { font-family: var(--font-mono); }
 
 /* Sections */
 .section { padding-top: var(--space-section); }
+.section.tight { padding-top: 24px; }
 .section-head { max-width: 760px; }
 .section-head h2 { margin-top: 24px; }
 .section-head p { max-width: 620px; margin-top: 20px; font-size: var(--t-lead); line-height: var(--lh-lead); color: var(--muted); }
@@ -297,15 +298,16 @@ code, .mono { font-family: var(--font-mono); }
 .shot { margin: 0; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
 .shot img { display: block; width: 100%; height: auto; }
 .shot-narrow { width: min(100%, 440px); justify-self: center; }
-.shot-detail { margin-top: 24px; }
+/* The header close-up spans the pillar: the enlarged header in the copy's column, its callouts in the shot's. */
+.shot-detail { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 64px; align-items: center; margin: 0; }
 
 /* Still an IDE */
 .band { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); gap: 48px; align-items: center; padding: 40px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--bg-raised); }
 .band-head h2 { margin-top: 18px; font-size: 28px; }
 .band-head p:last-child { margin-top: 14px; font-size: var(--t-small); color: var(--muted); }
-.band ol { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.band li { padding: 14px; border-radius: var(--radius-sm); background: var(--surface); font-size: var(--t-small); color: var(--muted); }
-.band li b { display: block; margin-bottom: 4px; font-family: var(--font-mono); font-size: var(--t-label); font-weight: var(--w-medium); color: var(--ink); }
+.band ol, .callouts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.band li, .callouts li { padding: 14px; border-radius: var(--radius-sm); background: var(--surface); font-size: var(--t-small); color: var(--muted); }
+.band li b, .callouts li b { display: block; margin-bottom: 4px; font-family: var(--font-mono); font-size: var(--t-label); font-weight: var(--w-medium); color: var(--ink); }
 
 /* Software Factory (Soon) */
 .factory { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 40px; align-items: center; }
@@ -391,6 +393,7 @@ select { width: 100%; min-height: 48px; padding: 0 40px 0 14px; border: 1px soli
 @media (max-width: 1000px) {
   :root { --space-section: 112px; }
   .pillar, .download, .band, .factory { grid-template-columns: minmax(0, 1fr); gap: 40px; }
+  .shot-detail { grid-template-columns: minmax(0, 1fr); gap: 12px; }
   .pillar { padding-block: 56px; }
   .site-header nav .nav-extra { display: none; }
   .plans { grid-template-columns: minmax(0, 1fr); }
@@ -413,7 +416,7 @@ select { width: 100%; min-height: 48px; padding: 0 40px 0 14px; border: 1px soli
   .closing { padding-block: 88px; }
   .closing-head { margin-bottom: 56px; }
   .band { padding: 24px; }
-  .band ol { grid-template-columns: minmax(0, 1fr); }
+  .band ol, .callouts { grid-template-columns: minmax(0, 1fr); }
   .factory .owl { width: 130px; }
   .factory .button { border-radius: var(--radius-lg); }
   .closing .owl-rest { width: 150px; }
