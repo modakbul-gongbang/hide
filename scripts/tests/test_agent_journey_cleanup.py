@@ -56,6 +56,14 @@ class MeasuredRepository(unittest.TestCase):
             self.assertFalse(claude_trusts(operator, Path("/other/measured")))
 
 
+class ProviderKeys(unittest.TestCase):
+    def test_a_provider_key_in_the_shell_reaches_no_agent(self):
+        from agent_live_check.runtime import clean_env
+        shell = {"GEMINI_API_KEY": "g", "OPENROUTER_API_KEY": "o", "ANTHROPIC_AUTH_TOKEN": "a", "PATH": "/usr/bin"}
+        with mock.patch.dict(os.environ, shell, clear=True):
+            self.assertEqual(clean_env(), {"PATH": "/usr/bin"})
+
+
 class Redaction(unittest.TestCase):
     def test_each_key_and_the_tail_claude_shows_of_it_are_replaced(self):
         key = "sk-ant-" + "a1b2c3d4" * 6

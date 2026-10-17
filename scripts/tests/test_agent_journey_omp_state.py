@@ -46,12 +46,15 @@ class TakeBack(unittest.TestCase):
             logs = operator / ".omp/logs"
             (logs / "omp.2026-10-18.1.log").write_text(f"cwd {run.resolve()}/probe/worktrees/omp\n")
             (logs / "omp.2026-10-18.2.log").write_text(f"cwd {other}\n")
+            (logs / "http-400-requests").mkdir()
+            (logs / "http-400-requests/1-a.json").write_text("{}")
             state = omp_state.take_back(operator, [project], ["ours-1"], time.time() - 60)
             self.assertEqual(sorted(Path(path).name for path in state["removed"]), sorted([ours.name, "ours-1.lock"]))
             self.assertTrue(theirs.is_dir())
             self.assertTrue((owners / "theirs-2.lock").is_file())
-            # A log names only a pid: listed, never removed.
-            self.assertEqual(len(state["logs_left"]), 2)
+            # A log or a dump names only a pid or a time: listed, never removed.
+            self.assertEqual(len(state["logs_left"]), 3)
+            self.assertTrue((logs / "http-400-requests/1-a.json").is_file())
             self.assertTrue((logs / "omp.2026-10-18.1.log").is_file())
 
     def test_another_omp_running_is_a_reason_not_to_start(self):

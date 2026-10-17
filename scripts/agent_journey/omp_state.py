@@ -4,10 +4,12 @@ takes back its own part of it.
 omp 18.7.0 keeps run state under `~/.omp` whatever its agent folder:
 `run/daemons/<wyhash of the resolved project folder>` per project,
 `run/session-owners/<session id>.lock` per session and `logs/omp.<date>.<pid>.log`
-per process. The journey removes only what it can prove is its own: a daemon
-folder whose name is the hash of a folder the run made and a lock named by a
-session in the run's private agent folder. A log names only a pid, so the
-logs written during the run are listed, never removed.
+per process, with `logs/http-400-requests/` dumps of refused provider
+requests and shared caches under `cache/`. The journey removes only what it
+can prove is its own: a daemon folder whose name is the hash of a folder the
+run made and a lock named by a session in the run's private agent folder. A
+log, a dump or a cache names no session, so what changed there during the
+run is listed, never removed.
 An omp of the operator's in another folder never shares a run's daemon, as
 the name is the folder's hash. omp itself refuses to start beside another
 omp (Project Memory m163), so the journey measures it only when none runs.
@@ -105,6 +107,8 @@ def take_back(operator, projects, session_ids, since):
         if lock.is_file() and not lock.is_symlink():
             lock.unlink()
             removed.append(str(lock))
-    logs = [str(log) for log in sorted((operator / ".omp/logs").glob("omp.*.log"))
-            if not log.is_symlink() and log.stat().st_mtime >= since]
-    return {"removed": removed, "logs_left": logs}
+    # Its logs, the request dumps it writes under logs/ and its shared caches
+    # name no session or project, so what changed during the run is listed.
+    left = [str(path) for folder in (".omp/logs", ".omp/cache") for path in sorted((operator / folder).rglob("*"))
+            if path.is_file() and not path.is_symlink() and path.stat().st_mtime >= since]
+    return {"removed": removed, "logs_left": left}

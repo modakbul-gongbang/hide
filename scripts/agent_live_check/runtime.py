@@ -18,9 +18,18 @@ from .system import READY, WINDOWS, PaneShell, exe, git, home_env, remove_tree, 
 from .timing import Deadline
 
 
+# A provider's key in the operator's shell would reach every agent the run
+# starts, which then calls that provider outside the run's login or the fake
+# model: omp 18.7.0 sent its background requests to Google with the shell's
+# GEMINI_API_KEY (2026-10-18). Each agent gets only the key its route gives it.
+PROVIDER_KEYS = ("ANTHROPIC_AUTH_TOKEN", "GOOGLE_APPLICATION_CREDENTIALS", "AWS_ACCESS_KEY_ID",
+                 "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN")
+
+
 def clean_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items()
             if not key.startswith(("HERDR_", "HIDE_", "HCOORD_"))
+            and not key.endswith("_API_KEY") and key not in PROVIDER_KEYS
             and key not in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "PI_CODING_AGENT_DIR",
                             "PI_CODING_AGENT_SESSION_DIR", "OPENCODE_CONFIG",
                             "OPENCODE_CONFIG_DIR", "OPENCODE_CONFIG_CONTENT", "PI_CONFIG_DIR",
