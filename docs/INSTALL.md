@@ -388,7 +388,7 @@ Phones scan the core machine's QR once again in Settings > Mobile.
 If a step fails, the core starts again here and the window shows which step failed.
 If the other machine stops answering after it may have taken the core, the window waits for it and offers **Stop waiting**: this Mac's core starts again as it was, and once this Mac reaches the other machine it stops that machine's core of the move and sets its state aside rather than merging it.
 If the other machine is only cut off, not gone, its core keeps running until this Mac reaches it.
-Moving the core back works the same way: if the core's machine does not answer once the copy is here, the window offers **Take it here**, and this Mac's core starts from that copy while the other machine's core stays stopped until this Mac reaches it and retires it.
+Moving the core back checks this Mac the same way, including that the agent the core's Hide AI asks is signed in here; if the core's machine does not answer once the copy is here, the window offers **Take it here**, and this Mac's core starts from that copy while the other machine's core stays stopped until this Mac reaches it and retires it.
 A move back whose copy has not reached this Mac yet only waits: while the core's machine never returns, this Mac runs no core.
 A move back that fails waits the same way until the core's machine says its core runs again, keeping the copy it placed here; when that machine answers but cannot start its core, the window shows Waiting with the reason, and the move back goes on once that reason is fixed.
 A machine the core moved back from runs no hided afterwards: its `core-handover.json` says the core retired there, so every start of its state folder, by the login item, a window or `hide connect`, ends at once and successfully.
@@ -406,7 +406,7 @@ What the move leaves on each machine:
 | The machine giving the core | `~/.hide/state/core-move-abandoned.json` | The moves you stopped waiting for whose other machine has not been reached yet to stop or retire its core, at most 8; present only while one is left |
 | The core machine | `~/.hide/state/core-handover.json` | Whether its core waits for the move's first link, runs, or stopped or retired for a move back |
 | The core machine | `~/Library/LaunchAgents/dev.withhide.core.plist` | The login item that runs `hided core-login` at login and keeps the core running |
-| The core machine | `~/.hide/state/Logs/core.log` | What the login item's core prints, set aside as `core.log.1` at a start once it passes 1 MiB, replacing the one before |
+| The core machine | `~/.hide/state/Logs/core.log` | What the login item's core prints, set aside as `core.log.1` once it passes 1 MiB, replacing the one before; the running core looks at its size every minute and goes on in a new file |
 | The core machine | `~/.hide/state/move-incoming/` | A copy being received; empty once the move ends |
 | The core machine | `~/.hide/state/moved-out/<move>/` | The state of the core of a move you stopped waiting for, set aside there when this Mac reached it |
 
@@ -486,7 +486,7 @@ Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/App
 If the app connects but no workspace, terminal, or agent can start, no `herdr server` is running on the socket hided uses.
 The packaged app starts one on launch, Retry, a second launch or a Dock click; the host log records `herdr.server_started`, or `herdr.status_failed` or `herdr.server_start_failed` with the reason it could not.
 A development host, or a launch with `HERDR_BIN_PATH` set as an explicit override, starts none; run that Herdr once to start its server.
-The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then PATH.
+The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then that `herdr` runs from a new terminal of the same account, whose login shell's `PATH` the daemon searches too.
 When `HERDR_BIN_PATH` names a file that no longer exists, `hide connect` and the daemon refuse to start and print that path: the Herdr server was started from an app bundle that has since been replaced, and every pane it opens still carries the old path.
 The packaged app replaces that pane value with its own bundled `herdr`, but the `hide` CLI run directly in such a pane, and an unpackaged development host, still inherit it; unset `HERDR_BIN_PATH` there, or hand the server off to the new bundle's `herdr`.
 
