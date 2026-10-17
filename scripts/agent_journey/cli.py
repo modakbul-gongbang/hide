@@ -366,6 +366,9 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
                 agent["login"] = refusal
                 cells.settle_agent(table, key, refusal)
                 continue
+        # The kit installs an agent's hooks only where its own folder is, as
+        # a CLI that has run once leaves it; a new runner has none.
+        private_directory(runtime.home / ci.HOME_FOLDERS[kind])
         ready.append(key)
     return ready
 

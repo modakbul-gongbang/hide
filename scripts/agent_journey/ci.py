@@ -28,6 +28,9 @@ LOGINS = {
     "codex": {"secret": "HIDE_CODEX_API_KEY", "key_env": None},
 }
 
+# Each CLI's own folder in its HOME, which says to the kit that it is set up.
+HOME_FOLDERS = {"claude": ".claude", "codex": ".codex"}
+
 # A stand-in asks no folder question, so its start anywhere says nothing of one.
 FIXTURE_UNTRUSTED = "not measured: a stand-in has no folder question; the login lane measures it"
 
