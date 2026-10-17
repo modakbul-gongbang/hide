@@ -271,6 +271,31 @@ fn an_owned_folder_is_made_private_whatever_an_earlier_program_left() {
     }
 }
 
+/// Its mode changes only through an open descriptor, which a folder closed
+/// to its own owner does not give: it is refused with the fix, unchanged.
+#[cfg(unix)]
+#[test]
+fn an_owned_folder_closed_to_its_owner_is_refused_with_its_fix() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let outer = folder();
+    let closed = outer.path().join("state");
+    fs::create_dir(&closed).unwrap();
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o000)).unwrap();
+    let refused = private::own_dir(&closed);
+    let mode = fs::metadata(&closed).unwrap().permissions().mode() & 0o777;
+    // Opened again so the folder can be removed with its owner.
+    fs::set_permissions(&closed, fs::Permissions::from_mode(0o700)).unwrap();
+    let error = refused.unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+    assert!(
+        error.to_string().starts_with(&closed.display().to_string())
+            && error.to_string().contains("`chmod 700`"),
+        "{error}"
+    );
+    assert_eq!(mode, 0o000, "the refused folder was changed");
+}
+
 #[test]
 fn a_link_or_a_file_where_an_owned_folder_belongs_is_refused_and_left_as_it_is() {
     let outer = folder();

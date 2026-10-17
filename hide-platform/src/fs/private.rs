@@ -61,13 +61,16 @@ pub enum OwnDir {
 /// name after the look cannot redirect the change. Only the last name is
 /// judged: the folders above it are the caller's to trust.
 pub fn own_dir(path: &Path) -> io::Result<OwnDir> {
+    // Every failure names the folder, so a caller can show it as it is.
+    let at =
+        |error: io::Error| io::Error::new(error.kind(), format!("{}: {error}", path.display()));
     let made = match fs::symlink_metadata(path) {
         Ok(_) => false,
         Err(error) if error.kind() == io::ErrorKind::NotFound => {
-            create_dir_all(path)?;
+            create_dir_all(path).map_err(at)?;
             true
         }
-        Err(error) => return Err(error),
+        Err(error) => return Err(at(error)),
     };
     let refused = |why: &str| {
         io::Error::new(
@@ -77,7 +80,7 @@ pub fn own_dir(path: &Path) -> io::Result<OwnDir> {
     };
     // Looked at again when it was just made: another process may have made
     // it first, the way an earlier build did.
-    let metadata = fs::symlink_metadata(path)?;
+    let metadata = fs::symlink_metadata(path).map_err(at)?;
     if metadata.file_type().is_symlink() || !metadata.is_dir() {
         return Err(refused("is a link or not a folder"));
     }
@@ -87,16 +90,25 @@ pub fn own_dir(path: &Path) -> io::Result<OwnDir> {
         Err(error) if error.kind() == io::ErrorKind::InvalidInput => {
             return Err(refused("is a link or not a folder"));
         }
-        Err(error) => return Err(error),
+        // A folder this account may not open: another account's, or its
+        // own closed even to it, which only its owner can open again.
+        Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
+            return Err(match owned_by_current_user(path) {
+                Ok(false) => refused("belongs to another account"),
+                Ok(true) => refused(sys::CLOSED_TO_ITS_OWNER),
+                Err(_) => refused("cannot be read by this account"),
+            });
+        }
+        Err(error) => return Err(at(error)),
     };
-    if !handle_owned_by_current_user(&folder)? {
+    if !handle_owned_by_current_user(&folder).map_err(at)? {
         return Err(refused("belongs to another account"));
     }
-    if !sys::handle_access_of_others(&folder, false)? {
+    if !sys::handle_access_of_others(&folder, false).map_err(at)? {
         return Ok(if made { OwnDir::Made } else { OwnDir::Private });
     }
-    sys::restrict_dir_handle(&folder)?;
-    if sys::handle_access_of_others(&folder, false)? {
+    sys::restrict_dir_handle(&folder).map_err(at)?;
+    if sys::handle_access_of_others(&folder, false).map_err(at)? {
         return Err(refused("could not be made private"));
     }
     Ok(OwnDir::Restricted)
@@ -612,6 +624,11 @@ mod sys {
         options.open(path)
     }
 
+    /// Why [`super::own_dir`] refuses a folder of this account it cannot
+    /// open, and the fix.
+    pub(super) const CLOSED_TO_ITS_OWNER: &str =
+        "is this account's but closed to it; `chmod 700` it so Hide can use it";
+
     /// The folder entry at `path` itself, open for reading; a link or
     /// anything but a folder there is `InvalidInput`.
     pub(super) fn open_entry_dir(path: &Path) -> io::Result<fs::File> {
@@ -1016,6 +1033,10 @@ mod sys {
         }
         Ok(())
     }
+
+    /// Why [`super::own_dir`] refuses a folder of this account it cannot
+    /// open, and the fix.
+    pub(super) const CLOSED_TO_ITS_OWNER: &str = "is this account's but closed to it; give the account full control of it so Hide can use it";
 
     /// The folder entry at `path` itself, a link or junction opened as the
     /// link; anything but a real folder is `InvalidInput`. Asked for the

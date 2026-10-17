@@ -301,8 +301,9 @@ fn connect_closes_a_state_folder_an_earlier_build_left_open() {
     assert!(hide_platform::fs::private::is_private(&state).unwrap());
 }
 
-/// A state folder that is a link is refused before any state is written
-/// through it, so no daemon starts on it, and `hide connect` names it.
+/// A state folder that is a link is refused before anything is written
+/// through it, its log included, so no daemon starts on it, and `hide
+/// connect` names it.
 #[test]
 fn connect_refuses_a_state_folder_that_is_a_link_and_starts_no_daemon() {
     let dir = tempfile::tempdir().unwrap();
@@ -325,7 +326,7 @@ fn connect_refuses_a_state_folder_that_is_a_link_and_starts_no_daemon() {
             .is_some_and(|detail| detail.contains("is a link or not a folder")),
         "{refused}"
     );
-    for name in ["connect.lock", "hided.lock", "hided.json"] {
+    for name in ["connect.lock", "hided.lock", "hided.json", "Logs"] {
         assert!(
             !target.join(name).exists(),
             "{name} was written through the link"
