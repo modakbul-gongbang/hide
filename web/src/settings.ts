@@ -243,6 +243,18 @@ export function deviceProblemLine(problem: string | null | undefined, alias: str
   }
 }
 
+/**
+ * What a screen showing a device's last state says while the device is away:
+ * the machine's name and that it is not connected, and for a refused trust or
+ * sign-in its class, with what to do in the hint. The words the connection
+ * failed with are the device row's and the diagnostic log's, never this sentence.
+ */
+export function deviceAwayLine(device: Device, name: string, t: Translate): { text: string; hint: string | null } {
+  const problem = deviceProblemLine(device.problem, device.ssh_alias, t);
+  if (!problem) return { text: t("panes.workspace.stale", { device: name }), hint: null };
+  return { text: t("panes.workspace.staleProblem", { device: name, problem: problem.headline }), hint: problem.action };
+}
+
 /** The helper line a device row carries: whether file and Git work may run there, and why not. */
 export function hostLine(host: DeviceHost | undefined, t: Translate): { text: string; tone: "ok" | "warn" | "pending" | "muted" | "local" } {
   if (!host || host.consent === "this_machine") return { text: t("devices.helper.local"), tone: "local" };

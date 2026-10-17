@@ -6,7 +6,7 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { RemotePaneCanvas } from "./PaneGrid";
 import { remoteTabView, remoteView } from "./remote";
-import { canRetryDevice, deviceLine } from "./settings";
+import { canRetryDevice, deviceAwayLine, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
 import { awayDevice, machineName, windowDeviceId } from "./screenMachine";
 import { useShellStore } from "./store";
@@ -343,6 +343,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
   const view = useMemo(() => remoteView(session), [session]);
   if (!device) return null;
   const connected = status?.state === "connected";
+  const away = deviceAwayLine(device, name, t);
   if (!view) {
     const line = deviceLine(device, status ?? undefined, t);
     return (
@@ -350,11 +351,12 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
         <h2 className="text-title font-semibold text-foreground">
           {name} <span className="font-mono text-caption text-muted-foreground">{device.ssh_alias}</span>
         </h2>
-        <p>{connected ? t("panes.workspace.connectedEmpty", { device: name }) : status?.message ? t("panes.workspace.remoteStateMessage", { device: name, state: line.text, message: status.message }) : t("panes.workspace.remoteState", { device: name, state: line.text })}</p>
+        <p>{connected ? t("panes.workspace.connectedEmpty", { device: name }) : t("panes.workspace.remoteState", { device: name, state: line.text })}</p>
+        {away.hint ? <p className="text-caption text-muted-foreground">{away.hint}</p> : null}
         <div className="flex gap-sm">
           {canRetryDevice(device, status ?? undefined) ? (
             <Button variant="secondary" onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
-              {t("common.retry")}
+              {t("sidebar.reconnect")}
             </Button>
           ) : null}
           {device.id === own ? null : (
@@ -372,20 +374,16 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
         // A lost connection keeps the last session on screen, but the host
         // takes no command until it is back (`remote.control.not_connected`).
         <div role="status" className="flex items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-warning" data-remote-stale={device.id}>
-          {status?.message ? (
-            <Hint label={status.message} reveals>
-              <span className="min-w-0 flex-1 truncate">
-                {t("panes.workspace.staleMessage", { device: name, message: status.message })}
-              </span>
+          {away.hint ? (
+            <Hint label={away.hint} reveals>
+              <span className="min-w-0 flex-1 truncate">{away.text}</span>
             </Hint>
           ) : (
-            <span className="min-w-0 flex-1 truncate">
-              {t("panes.workspace.stale", { device: name })}
-            </span>
+            <span className="min-w-0 flex-1 truncate">{away.text}</span>
           )}
           {canRetryDevice(device, status ?? undefined) ? (
             <Button variant="secondary" onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
-              {t("common.retry")}
+              {t("sidebar.reconnect")}
             </Button>
           ) : null}
         </div>

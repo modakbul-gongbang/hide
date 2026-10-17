@@ -1991,6 +1991,9 @@ impl Runtime {
                 ),
             );
         }
+        // The machine answers again: its helper link does not wait out a
+        // retry that doubled while it was away.
+        let reachable_again = session_ok && !was_connected;
         // The row's line holds only while the server it is about still
         // answers with the release it was left on: a server restarted on
         // another release ends it without waiting for the next kit pass (B8).
@@ -2054,6 +2057,15 @@ impl Runtime {
                 if status.state != error.state()
                     || status.message.as_deref() != Some(error.message())
                 {
+                    // The operator sees the plain row; the words the
+                    // connection failed with go to the log.
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "remote_session_sync",
+                        "kind": "remote.session_unavailable",
+                        "target": target_id,
+                        "state": error.state(),
+                        "message": error.message(),
+                    }));
                     status.state = error.state().to_owned();
                     status.message = Some(error.message().to_owned());
                     changed = true;
@@ -2078,6 +2090,9 @@ impl Runtime {
         {
             device.agent_count = agent_count;
             changed = true;
+        }
+        if reachable_again {
+            changed |= self.device_reachable_again(target_id);
         }
         changed |= self.refresh_device_snapshots();
         if observed_session.is_some() {

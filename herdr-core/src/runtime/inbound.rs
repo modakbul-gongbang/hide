@@ -112,7 +112,11 @@ impl Runtime {
         if self.remote_connections.contains_key(node) {
             let focused_device = self.snapshot.navigator.focused_device_id.clone();
             let persisted_focus = self.snapshot.ui_state.focused_device_id.clone();
-            self.disconnect_remote_device(node);
+            // The node dialed in again under the id it had: a fresh row for
+            // its new link, since no state of the old link means anything
+            // to a node that reconnects by itself (only a dialed device's
+            // Reconnect keeps its last state).
+            self.disconnect_remote_device(node, super::devices::Retiring::Removed);
             self.snapshot.navigator.focused_device_id = focused_device;
             self.snapshot.ui_state.focused_device_id = persisted_focus;
         }

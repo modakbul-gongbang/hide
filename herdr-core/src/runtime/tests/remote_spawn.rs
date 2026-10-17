@@ -21,13 +21,17 @@ const DEVICE: &str = "mini";
 const WORKTREE: &str = "/srv/repo.worktrees/topic";
 
 /// A device node that answers the two checks a spawn makes before it creates
-/// anything.
+/// anything, and records the agent's folder trust of the worktree it made.
 struct Node {
     repository: AtomicBool,
     installed: AtomicBool,
     /// Whether the node writes the shell integration, so its panes run
     /// Hide's launch of zsh.
     integrated: AtomicBool,
+    /// The folder trusts the node recorded, as `(agent, path)`.
+    trusted: Mutex<Vec<(String, String)>>,
+    /// Whether the node fails to record the next trust.
+    trust_fails: AtomicBool,
     /// How many checks the spawn has asked this node.
     calls: AtomicUsize,
 }
@@ -51,6 +55,20 @@ impl NodeLink for Node {
             // A device whose node writes no shell integration: its panes
             // start plain, and a start is confirmed after typing.
             Call::ShellIntegration => json!({}),
+            Call::AgentTrust { .. } if self.trust_fails.swap(false, Ordering::SeqCst) => {
+                return Err(LinkError::Refused(hide_node_link::HostError::new(
+                    hide_node_link::ErrorCode::Io,
+                    "Codex marks /srv/repo untrusted",
+                )));
+            }
+            Call::AgentTrust {
+                agent,
+                path,
+                trusted: true,
+            } => {
+                self.trusted.lock().unwrap().push((agent, path));
+                Value::Null
+            }
             other => panic!("unexpected call {other:?}"),
         }))
     }
@@ -213,6 +231,8 @@ fn spawner() -> Spawner {
         repository: AtomicBool::new(true),
         installed: AtomicBool::new(true),
         integrated: AtomicBool::new(false),
+        trusted: Mutex::new(Vec::new()),
+        trust_fails: AtomicBool::new(false),
         calls: AtomicUsize::new(0),
     });
     {
@@ -380,6 +400,12 @@ fn a_delegated_spawn_makes_the_child_on_the_device_under_the_caller() {
     assert_eq!(child["watch"]["parent"]["pane_id"], "sender");
     assert_eq!(spawner.count("worktree.create"), 1);
     assert_eq!(spawner.count("agent.start"), 1);
+    // Codex's trust of the worktree the spawn made is recorded on the
+    // device, where Codex runs.
+    assert_eq!(
+        *spawner.node.trusted.lock().unwrap(),
+        [("codex".to_owned(), WORKTREE.to_owned())]
+    );
     let ledger = spawner.ledger();
     let record = ledger
         .agents
@@ -406,6 +432,25 @@ fn a_delegated_spawn_makes_the_child_on_the_device_under_the_caller() {
         .clone();
     assert_eq!(tokens["parent_pane"], "sender");
     assert_eq!(tokens["parent_machine"], "machine-local");
+}
+
+/// A device that cannot record Codex's trust of the worktree refuses the
+/// spawn before Codex starts there, with the device's reason, so no child
+/// waits on its trust question.
+#[test]
+fn a_device_that_cannot_record_the_worktree_trust_starts_no_agent_there() {
+    let spawner = spawner();
+    spawner.node.trust_fails.store(true, Ordering::SeqCst);
+    let refused = spawner
+        .spawn(Some("here"), Some(DEVICE), "untrusted")
+        .expect_err("refused");
+    assert!(
+        refused.contains("agent_trust_failed: Codex's trust of /srv/repo.worktrees/topic")
+            && refused.contains("Codex marks /srv/repo untrusted"),
+        "{refused}"
+    );
+    assert_eq!(spawner.count("agent.start"), 0);
+    assert!(spawner.node.trusted.lock().unwrap().is_empty());
 }
 
 /// B4: without `--parent` the device's agent is the operator's, unwatched,
