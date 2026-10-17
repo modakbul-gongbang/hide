@@ -195,8 +195,11 @@ impl Fixture {
         for (name, script) in STAND_INS {
             stand_in(&preflight.join(name), script)?;
         }
-        stand_in(&target_env.home.join(".local/bin/claude"), CLAUDE)?;
+        // The agent answers as signed in on both machines: the target's for
+        // a move there, this machine's for a move back.
         for environment in [&source_env, &target_env] {
+            fs::create_dir_all(environment.home.join(".local/bin"))?;
+            stand_in(&environment.home.join(".local/bin/claude"), CLAUDE)?;
             fs::create_dir_all(environment.home.join("bin"))?;
             stand_in(&environment.home.join("bin/gh"), GH)?;
         }
@@ -224,6 +227,9 @@ impl Fixture {
             command.args(args);
             successful(command)?;
         }
+        let mut command = source_env.command(source_env.home.join(".local/bin/claude"));
+        command.args(["auth", "status"]);
+        successful(command)?;
         target_env.set("HIDE_PREFLIGHT_PROGRAMS", preflight.into_os_string());
         let settings = hide_platform::host::state_dir_under(&source_env.home).join("hide/ai.json");
         fs::create_dir_all(settings.parent().context("settings folder")?)?;
@@ -353,6 +359,13 @@ impl Fixture {
             fs::write(preflight.join(format!("{name}.fail")), "")?;
         }
         fs::write(self.target.home().join(".local/bin/claude.fail"), "")?;
+        Ok(())
+    }
+
+    /// Signs this machine's agent out, which a move back's check of the
+    /// core's Hide AI finds.
+    pub fn sign_out_here(&self) -> Result<()> {
+        fs::write(self.source.home().join(".local/bin/claude.fail"), "")?;
         Ok(())
     }
 

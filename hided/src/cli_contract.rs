@@ -158,7 +158,7 @@ pub const COMMANDS: &[Spec] = &[
             switch("--check"),
             optional("--machine", Text),
             required("--host-scope", Text),
-            required("--session", Text),
+            required("--session", Session),
             required("--instance", Text),
             required("--name", Text),
             required("--pane", Text),
@@ -235,6 +235,7 @@ pub const COMMANDS: &[Spec] = &[
             "worktree_unconfirmed",
             "native_identity_unavailable",
             "identity_waits_full",
+            "session_too_long",
         ],
     },
     spec(

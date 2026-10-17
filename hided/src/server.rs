@@ -1284,6 +1284,9 @@ pub(crate) fn delivery_next_action(code: &str) -> &'static str {
         "identity_waits_full" => {
             "Too many agents Hide started are waiting to report their session; give one of them a first prompt or close its pane, then run the same command again"
         }
+        "session_too_long" => {
+            "The agent names its session by a file path longer than 4096 bytes; spawn it with a new intent in a checkout with a shorter path"
+        }
         _ => "Check the current agent pane and retry the same intent",
     }
 }
@@ -4471,6 +4474,7 @@ mod tests {
             "shell_starting",
             "native_identity_unavailable",
             "identity_waits_full",
+            "session_too_long",
         ] {
             let (reason, next) = refusal_answer(code.to_owned(), delivery_next_action(code));
             assert_eq!(reason, code);

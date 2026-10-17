@@ -379,6 +379,30 @@ class NamedPaths(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertEqual(self.lanes(path), want)
 
+    def test_the_journey_and_its_stand_ins_plan_the_journey_lane(self):
+        for path in ("scripts/agent_journey/cells.py", "scripts/agent-journey-check.py", "scripts/agent-journey-lane.py",
+                     "contracts/agent-journey.json", ".github/workflows/agent-journey.yml"):
+            with self.subTest(path=path):
+                self.assertEqual(self.lanes(path), {"policy", "agent-journey"})
+        for path in ("web/e2e/shims/claude-shim.c", "web/e2e/shims/live-check.h", "web/e2e/shims/spawn-provider.c"):
+            with self.subTest(path=path):
+                self.assertEqual(self.lanes(path), {"policy", "checks", "web-e2e", "windows-e2e", "desktop-e2e",
+                                                    "windows-desktop", "windows-check", "agent-journey"})
+        for path in ("hide-session/examples/journey_conversation.rs", "hide-memory/examples/journey_memory.rs",
+                     "hide-agent-hooks/tests/fixtures/fake-codex.py"):
+            with self.subTest(path=path):
+                self.assertIn("agent-journey", self.lanes(path))
+                self.assertIn("rust", self.lanes(path))
+        # The live check the journey runs and the web e2e drives, and its
+        # Windows forms' test, which only the journey's Windows job runs.
+        for path in ("scripts/agent_live_check/processes.py", "scripts/agent_live_check/windows.py",
+                     "scripts/agent-live-check.py"):
+            with self.subTest(path=path):
+                self.assertEqual(self.lanes(path), {"policy", "web-e2e", "agent-journey"})
+        self.assertEqual(self.lanes("scripts/tests/test_agent_live_windows.py"), {"policy", "agent-journey"})
+        self.assertEqual(self.lanes("scripts/tests/test_agent_live_protection.py"), {"policy"})
+        self.assertNotIn("agent-journey", self.lanes("hide-session/src/lib.rs"))
+
     def test_desktop_e2e_helpers_run_the_desktop_suites_and_windows_unit_tests(self):
         for path in ("desktop/e2e/fixture.ts", "desktop/e2e/fixture-cleanup.unit.ts", "desktop/playwright.config.ts", "desktop/vitest.config.ts"):
             with self.subTest(path=path):
@@ -540,7 +564,7 @@ class Workflows(unittest.TestCase):
         for lane, block in pr_jobs().items():
             for called in re.findall(r"uses: \./(\.github/workflows/[a-z0-9-]+\.yml)", block):
                 callers.setdefault(called, set()).add(lane)
-        self.assertEqual(len(callers), 6)
+        self.assertEqual(len(callers), 7)
         for workflow, lanes in callers.items():
             with self.subTest(workflow=workflow):
                 result = plan(workflow)
@@ -616,9 +640,10 @@ class Workflows(unittest.TestCase):
         # The 2026-10-05 run started 23 jobs. Since then the macOS desktop
         # suite's second shard and the fifth and sixth web shards were added
         # because the suites outgrew their shards' step caps, which a smaller
-        # queue does not fix (docs/TESTING.md, "Balancing the e2e shards"); a
-        # job beyond these is a new decision, made with this number.
-        self.assertLessEqual(most, 25, "a full run starts more jobs than the e2e shards that keep their steps under the cap need")
+        # queue does not fix (docs/TESTING.md, "Balancing the e2e shards"), and
+        # the agent journey's Linux job was added; a job beyond these is a new
+        # decision, made with this number.
+        self.assertLessEqual(most, 26, "a full run starts more jobs than the e2e shards and the agent journey need")
         testing = (ROOT / "docs/TESTING.md").read_text()
         self.assertIn(f"starts at most {most} jobs", testing)
 

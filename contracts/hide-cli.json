@@ -1329,7 +1329,7 @@
                     "required": true,
                     "requires": [],
                     "value": {
-                        "type": "text"
+                        "type": "session"
                     }
                 },
                 {
@@ -1576,7 +1576,8 @@
                 "agent_not_started",
                 "worktree_unconfirmed",
                 "native_identity_unavailable",
-                "identity_waits_full"
+                "identity_waits_full",
+                "session_too_long"
             ],
             "repeats_at_most": null,
             "rest": "the agent's own arguments"
@@ -1896,7 +1897,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:c4192f4a01c095953a1d28596517606c9fef00816f8df45baec9bfe8442b5e64",
+    "digest": "sha256:fd9236c8cd042f6800de006d7fe99e4927e3e6e8af311cc8faf7059b704dab8a",
     "envelopes": {
         "agent": {
             "answer": "value",

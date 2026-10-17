@@ -51,6 +51,17 @@ bash scripts/verify-cargo.sh build -p hide-agent-adapter --example export_web_co
 target/debug/examples/export_web_contract > contracts/agent-adapters.json
 ```
 
+# Agent journey
+
+`agent-journey.json` is the agent journey's projection of the same declarations ([docs/VERIFICATION.md](../docs/VERIFICATION.md#agent-journey)): for each adapter its Herdr kind, the flag that separates a spawn's first prompt, the model flag, the name a row shows for it while it has no task title (`untitled`), which journey cells it declares, and the most model requests a signed-in CI run may make for it (`request_budget`, three per turn the declared cells start).
+`scripts/agent_journey` reads only this file for what an agent supports, so a cell an adapter does not declare reads N/A rather than a failure.
+The Rust contract test fails when the file differs from the current projection; regenerate it, never edit it:
+
+```sh
+bash scripts/verify-cargo.sh build -p hide-agent-adapter --example export_journey_contract
+target/debug/examples/export_journey_contract > contracts/agent-journey.json
+```
+
 # hide CLI contract
 
 `hide-cli.json` is what `hide contract --json` exports: the commands other tools call (`hide agent`, `request`, `inbox`, `watch`), their options, and the JSON Schema of each answer ([docs/delivery.md](../docs/delivery.md#the-contract-a-calling-tool-checks)).
