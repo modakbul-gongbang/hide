@@ -26,6 +26,11 @@ def forked_row(rest, source):
                  if (row.get("forked_from") or {}).get("pane_id") == source), None)
 
 
+def panes(runtime):
+    """The pane ids the run's Herdr holds now."""
+    return {pane["pane_id"] for pane in runtime.json(["api", "snapshot"])["snapshot"].get("panes", [])}
+
+
 def verdict(row, source_session, herdr_session, kind, listed, source_agent):
     """`row` the forked row, `herdr_session` its pane's session as Herdr
     reports it, `listed` its `hide agent list` entry."""
@@ -55,6 +60,7 @@ def measure(journey):
     journey.record[CELL] = record
     source_session = (journey.daemon.row(journey.pane) or {}).get("session_id")
     record["source"]["session"] = source_session
+    before = panes(journey.runtime)
     journey.daemon.dispatch("fork_pane", {"pane_id": journey.pane, "placement": "tab"})
 
     def forked(rest):
@@ -66,14 +72,21 @@ def measure(journey):
         if journey.runtime.owner.cancelled.is_set():
             raise
         record["fork_wait"] = str(error)
+    # Only this agent runs, so every pane that appeared since is the fork's,
+    # marked by Hide or not; the journey closes each one with the agent's.
+    opened = record["opened"] = sorted(panes(journey.runtime) - before)
+    journey.opened.extend(opened)
     rest = journey.daemon.snapshot() or {}
     row = forked_row(rest, journey.pane)
-    # Without the mark, the panes the fork may have opened anyway, for the evidence.
-    record["row"] = row or [agent for agent in (rest.get("navigator") or {}).get("agents") or []
-                            if agent.get("pane_id") != journey.pane and agent.get("forked_from") is not None]
+    record["row"] = row
     pane = (row or {}).get("pane_id")
-    journey.opened.append(pane)
     herdr_session = (journey.runtime.agent(pane) or {}).get("agent_session") if pane else None
+    if not row:
+        # A fork Hide did not mark: what Herdr and Hide show in each pane it opened.
+        record["unmarked"] = {item: {"herdr_session": (journey.runtime.agent(item) or {}).get("agent_session"),
+                                     "hide_row": {key: (journey.daemon.row(item) or {}).get(key)
+                                                  for key in ("session_id", "forked_from", "identity_label")}}
+                              for item in opened}
     listing = journey.controller.hide(["agent", "list"])
     listed = next((item for item in (listing.get("value") or {}).get("items") or []
                    if pane and item.get("pane") == pane), None)
