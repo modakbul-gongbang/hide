@@ -248,6 +248,57 @@ fn private_folders_are_made_down_to_the_last_and_an_existing_one_is_left_alone()
 }
 
 #[test]
+fn an_owned_folder_is_made_private_whatever_an_earlier_program_left() {
+    let outer = folder();
+    let state = outer.path().join("hide").join("state");
+    assert_eq!(private::own_dir(&state).unwrap(), private::OwnDir::Made);
+    for made in [outer.path().join("hide"), state.clone()] {
+        assert!(private::is_private(&made).unwrap(), "{}", made.display());
+    }
+    assert_eq!(private::own_dir(&state).unwrap(), private::OwnDir::Private);
+    // A folder an earlier build made the way `fs::create_dir_all` makes one,
+    // and one others can even write to, is the account's own and is closed.
+    for write in [false, true] {
+        widen(&state, write);
+        fs::write(state.join("kept"), "kept").unwrap();
+        assert_eq!(
+            private::own_dir(&state).unwrap(),
+            private::OwnDir::Restricted
+        );
+        assert!(private::is_private(&state).unwrap());
+        assert!(!private::others_can_modify(&state).unwrap());
+        assert_eq!(read(&state.join("kept")), "kept");
+    }
+}
+
+#[test]
+fn a_link_or_a_file_where_an_owned_folder_belongs_is_refused_and_left_as_it_is() {
+    let outer = folder();
+    let target = outer.path().join("target");
+    fs::create_dir(&target).unwrap();
+    widen(&target, false);
+    let planted = outer.path().join("link");
+    link::create_link(&target, &planted).unwrap();
+    let error = private::own_dir(&planted).unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::PermissionDenied);
+    assert!(error.to_string().contains("link"), "{error}");
+    assert!(
+        fs::symlink_metadata(&planted)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    assert!(!private::is_private(&target).unwrap());
+    let file = outer.path().join("file");
+    fs::write(&file, "kept").unwrap();
+    assert_eq!(
+        private::own_dir(&file).unwrap_err().kind(),
+        ErrorKind::PermissionDenied
+    );
+    assert_eq!(read(&file), "kept");
+}
+
+#[test]
 fn durable_bootstrap_refuses_escape_and_over_budget_paths_before_creation() {
     use private::DirectoryDurabilityError;
 

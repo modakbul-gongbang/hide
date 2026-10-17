@@ -39,6 +39,58 @@ pub fn create_dir_all(path: &Path) -> io::Result<()> {
     }
 }
 
+/// What [`own_dir`] found at the folder it answered for.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum OwnDir {
+    /// It was missing; it and every missing folder above it are made private.
+    Made,
+    /// It was already a private folder of this account.
+    Private,
+    /// It was this account's and others could reach it; it is private now.
+    Restricted,
+}
+
+/// Makes `path` a private folder of this account, whatever an earlier
+/// program left there: a missing one is made as [`create_dir_all`] makes it,
+/// and an existing folder this account owns that others can reach, such as
+/// one `fs::create_dir_all` made under the process's umask, is restricted to
+/// its owner. A link, anything but a folder, and a folder another account
+/// owns are refused (`PermissionDenied`, naming the path) and left as they
+/// are, never followed or changed.
+pub fn own_dir(path: &Path) -> io::Result<OwnDir> {
+    let made = match fs::symlink_metadata(path) {
+        Ok(_) => false,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            create_dir_all(path)?;
+            true
+        }
+        Err(error) => return Err(error),
+    };
+    // Looked at again when it was just made: another process may have made
+    // it first, the way an earlier build did.
+    let metadata = fs::symlink_metadata(path)?;
+    let refused = |why: &str| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            format!("{} {why}", path.display()),
+        )
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Err(refused("is a link or not a folder"));
+    }
+    if !owned_by_current_user(path)? {
+        return Err(refused("belongs to another account"));
+    }
+    if is_private(path)? {
+        return Ok(if made { OwnDir::Made } else { OwnDir::Private });
+    }
+    restrict_to_owner(path)?;
+    if !is_private(path)? {
+        return Err(refused("could not be made private"));
+    }
+    Ok(OwnDir::Restricted)
+}
+
 /// A bootstrap failure, with the last directory whose entries were synced.
 /// An uncertain component is retained, including one this call created;
 /// recovery revalidates and syncs the chain rather than assuming rollback.
