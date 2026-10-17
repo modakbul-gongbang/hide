@@ -29,9 +29,8 @@
 # its model across the CI account (agy-contract.yml spends 4 of them a
 # night), so agy is measured only on the system `agy` names, or the night's
 # system of its rotation, and reads "not measured" with that reason
-# elsewhere (docs/VERIFICATION.md, Agent journey). omp is not installed on
-# Windows yet and reads "not measured" there with that reason. A leg with no
-# agent to sign in builds and starts nothing and leaves a notice.
+# elsewhere (docs/VERIFICATION.md, Agent journey). A leg with no agent to
+# sign in builds and starts nothing and leaves a notice.
 # A CLI that answers another version than the pin is named in a warning.
 # Its report is never a release's agent evidence when it came from the
 # stand-ins (`skills/release/SKILL.md`).
@@ -205,8 +204,6 @@ jobs:
       RUN_DIR: agents/runs/agent-journey-fake-${{ matrix.system }}
       # The journey needs Python 3.12; Windows names it python.
       PYTHON: ${{ matrix.system == 'windows' && 'python' || 'python3' }}
-      # omp's Windows installer form is not set yet (scripts/install-agent-clis.py).
-      KINDS: ${{ matrix.system == 'windows' && 'claude codex grok pi agy' || 'claude codex grok pi omp agy' }}
     steps:
       - name: Keep line endings as committed
         if: runner.os == 'Windows'
@@ -231,7 +228,7 @@ jobs:
         run: sudo apt-get install -y --no-install-recommends zsh
       - name: Install the pinned agent CLIs
         timeout-minutes: 10
-        run: '"$PYTHON" scripts/install-agent-clis.py $KINDS'
+        run: '"$PYTHON" scripts/install-agent-clis.py claude codex grok pi omp agy'
       - name: Build hided, hide, the hooks and Hide's conversation reader
         timeout-minutes: 25
         run: |
@@ -251,9 +248,7 @@ jobs:
         timeout-minutes: 40
         run: |
           set +e
-          args=(--agents claude-code,codex,grok,pi,omp,antigravity)
-          [[ "$RUNNER_OS" == Windows ]] && args+=(--unmeasured "omp=omp is not installed on Windows yet: scripts/install-agent-clis.py has no form of its Windows installer (install.ps1 -Binary -Ref)")
-          "$PYTHON" scripts/agent-journey-check.py --mode ci --fake-model "${args[@]}" \
+          "$PYTHON" scripts/agent-journey-check.py --mode ci --fake-model --agents claude-code,codex,grok,pi,omp,antigravity \
             --herdr-bin "${{ steps.herdr.outputs.bin }}" --run-dir "$RUN_DIR"
           echo "journey exit $?"
       - name: The lane's verdict
@@ -295,7 +290,7 @@ jobs:
         run: echo "::notice title=agent journey signed in::not configured (no HIDE_CLAUDE_API_KEY, HIDE_CODEX_API_KEY, HIDE_AGY_API_KEY, HIDE_GROK_API_KEY, HIDE_PI_API_KEY or HIDE_OMP_API_KEY secret); the signed-in journey stays unproven"
       - name: Choose the agents this leg signs in
         # Each agent whose key is set, at its pinned version; agy only on the
-        # systems its daily quota measures tonight, omp not on Windows yet.
+        # systems its daily quota measures tonight.
         if: ${{ env.HAS_KEYS == 'true' }}
         id: agents
         env:
@@ -309,15 +304,9 @@ jobs:
           SYSTEM: ${{ matrix.system }}
         run: |
           kinds=()
-          for pair in claude:$HAS_CLAUDE codex:$HAS_CODEX grok:$HAS_GROK pi:$HAS_PI; do
+          for pair in claude:$HAS_CLAUDE codex:$HAS_CODEX grok:$HAS_GROK pi:$HAS_PI omp:$HAS_OMP; do
             [[ "${pair#*:}" == true ]] && kinds+=("${pair%%:*}")
           done
-          omp=""
-          if [[ "$HAS_OMP" == true && "$SYSTEM" == windows ]]; then
-            omp="omp is not installed on Windows yet: scripts/install-agent-clis.py has no form of its Windows installer (install.ps1 -Binary -Ref)"
-          elif [[ "$HAS_OMP" == true ]]; then
-            kinds+=(omp)
-          fi
           rotation=(linux macos windows)
           case "$AGY_PLAN" in
             rotation)
@@ -335,11 +324,10 @@ jobs:
           fi
           if (( ${#kinds[@]} == 0 )); then
             # Nothing to sign in here tonight, so the leg builds and starts nothing.
-            echo "::notice title=agent journey signed in (${SYSTEM})::no agent to sign in on this leg: ${agy}${agy:+${omp:+; }}${omp}"
+            echo "::notice title=agent journey signed in (${SYSTEM})::no agent to sign in on this leg: $agy"
           fi
           echo "kinds=${kinds[*]}" >> "$GITHUB_OUTPUT"
           echo "agy=$agy" >> "$GITHUB_OUTPUT"
-          echo "omp=$omp" >> "$GITHUB_OUTPUT"
       - name: Keep line endings as committed
         if: ${{ steps.agents.outputs.kinds != '' && runner.os == 'Windows' }}
         run: git config --global core.autocrlf false
@@ -403,13 +391,11 @@ jobs:
           HIDE_PI_API_KEY: ${{ secrets.HIDE_PI_API_KEY }}
           HIDE_OMP_API_KEY: ${{ secrets.HIDE_OMP_API_KEY }}
           AGY_UNMEASURED: ${{ steps.agents.outputs.agy }}
-          OMP_UNMEASURED: ${{ steps.agents.outputs.omp }}
         run: |
           set +e
           # The model agy-contract.yml signs agy in with, so both spend one quota.
           args=(--model antigravity=gemini-3.8-flash-medium)
           [[ -n "$AGY_UNMEASURED" ]] && args+=(--unmeasured "antigravity=$AGY_UNMEASURED")
-          [[ -n "$OMP_UNMEASURED" ]] && args+=(--unmeasured "omp=$OMP_UNMEASURED")
           "$PYTHON" scripts/agent-journey-check.py --mode ci "${args[@]}" \
             --herdr-bin "${{ steps.herdr.outputs.bin }}" --run-dir "$RUN_DIR"
           echo "journey exit $?"

@@ -80,11 +80,18 @@ def grok(row, prefix):
 
 def omp(row, prefix):
     """omp's installer takes a release tag in its binary mode and the folder
-    as PI_INSTALL_DIR."""
-    if WINDOWS:
-        # Its Windows form (install.ps1 -Binary -Ref) is set with the Windows journey (#1327).
-        raise SystemExit("omp: the Windows installer form is not set yet")
+    as PI_INSTALL_DIR; on Windows its PowerShell form does, and also adds the
+    folder to the account's PATH and names Git Bash in omp's settings, which
+    a disposable runner may keep."""
     folder = prefix / "omp"
+    if WINDOWS:
+        shell = shutil.which("pwsh") or shutil.which("powershell")
+        if not shell:
+            raise SystemExit("omp: PowerShell is not on PATH")
+        run([shell, "-NoProfile", "-NonInteractive", "-Command",
+             f"& ([scriptblock]::Create((Invoke-RestMethod {OMP_INSTALLER}.ps1))) -Binary -Ref ('v' + $env:OMP_REF)"],
+            {"PI_INSTALL_DIR": str(folder), "OMP_REF": row["version"]})
+        return folder / "omp.exe"
     run(["sh", "-c", f'curl -fsSL {OMP_INSTALLER} | sh -s -- --binary --ref "v$0"', row["version"]],
         {"PI_INSTALL_DIR": str(folder)})
     return folder / "omp"
