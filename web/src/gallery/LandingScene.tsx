@@ -8,6 +8,7 @@
 //   hero       the whole window: the sidebar, a lead and the agent asking to merge side by side, and the PRs tool
 //   attention  the sidebar with the Needs You and Unread groups raised above the project tree
 //   agents     a lead with its children across agent CLIs in the tree, and the lead's pane header with its child row
+//   header     the lead's pane header and its child row alone, enlarged for the callouts beside it
 //   core       the device rail beside Settings > Devices and the paired phone
 
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
@@ -25,7 +26,7 @@ import { useUiStore } from "../ui";
 import { WorkspaceScreen } from "../WorkspaceScreen";
 import { HERO_PANES, HERO_TERMINALS, RULE, landingDevices, landingSidebar, landingWorkspace } from "./landingSceneData";
 
-export const LANDING_SHOTS = ["hero", "attention", "agents", "core"] as const;
+export const LANDING_SHOTS = ["hero", "attention", "agents", "header", "core"] as const;
 export type LandingShot = (typeof LANDING_SHOTS)[number];
 /** `narrow` is the phone variant: the key part of the shot alone, at a width a phone shows without sideways scrolling. */
 export type LandingSceneParams = { shot: LandingShot; theme: "light" | "dark"; narrow: boolean };
@@ -37,7 +38,7 @@ export function landingSceneParams(params: URLSearchParams): LandingSceneParams 
 }
 
 /** The sidebar's width: wide enough that the page's example titles read whole, narrower where Settings needs the room. */
-const SIDEBAR_WIDTH: Record<LandingShot, number> = { hero: 320, attention: 380, agents: 380, core: 340 };
+const SIDEBAR_WIDTH: Record<LandingShot, number> = { hero: 320, attention: 380, agents: 380, header: 380, core: 340 };
 /** The phone variant of the agents shot is the sidebar tree alone. */
 const NARROW_SIDEBAR_WIDTH = 372;
 
@@ -90,9 +91,14 @@ export function LandingScene({ shot, theme, narrow }: LandingSceneParams) {
   return (
     <TooltipProvider>
       <div className="flex h-full flex-col bg-background text-foreground" data-gallery-scene="landing" data-landing-shot={shot} data-landing-narrow={narrow ? "" : undefined} data-landing-terminals={written ? "written" : undefined}>
-        {narrow && shot === "core" ? null : <TitleRow actions={actions} />}
+        {(narrow && shot === "core") || shot === "header" ? null : <TitleRow actions={actions} />}
         <div className="flex min-h-0 flex-1">
-          {narrow && shot === "core" ? null : <Sidebar actions={actions} />}
+          {(narrow && shot === "core") || shot === "header" ? null : <Sidebar actions={actions} />}
+          {shot === "header" && fixture.pane ? (
+            <main className="min-w-0 flex-1 overflow-hidden" data-landing-pane>
+              <PaneView pane={fixture.pane} transport={undefined} focused={false} scale={1} actions={actions} agentKind="claude" markSymbol="going" markTone="" paneCount={1} zoomed={false} />
+            </main>
+          ) : null}
           {shot === "hero" ? <WorkspaceScreen actions={actions} /> : null}
           {shot === "agents" && fixture.pane && !narrow ? (
             <main className="min-w-0 flex-1 p-lg">
