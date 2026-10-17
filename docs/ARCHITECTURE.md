@@ -877,6 +877,7 @@ The host reads these records each tick, registers the new pane under the Factory
 A `Woken` record no one binds within an hour is dropped with the `agent_sleep.woken_unbound` diagnostic, and a record whose wake failed or stayed unconfirmed stops the Task once.
 `Woken` is never published in the snapshot, so no screen draws it.
 The directory-chain barrier is the platform layer's on every system (The platform layer, below); a chain whose barrier fails refuses dormant persistence rather than returning a durability receipt.
+The chain is a fact about the state folder, not about one save, so the core makes it durable once per folder per process, by the folder's file identity, and again only for a folder replaced since (`persistence::establish_folder_once`); every save still flushes its file and that file's folder.
 
 ## The link record
 

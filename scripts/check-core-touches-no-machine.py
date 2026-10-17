@@ -64,11 +64,12 @@ BANNED = [
 # Each entry is the number of machine touches the file has and why.
 STORES = {
     "herdr-core/src/persistence.rs": (
-        12,
+        13,
         "the core's UI state file, including durable directory/write receipts "
-        "with the durable writer's own access type, and explicit write-error "
-        "variants before sleeping-session effects, and a moved copy of it read "
-        "to name what this build cannot read",
+        "with the durable writer's own access type, the state folder's identity "
+        "that keeps its directory receipt once per folder, and explicit "
+        "write-error variants before sleeping-session effects, and a moved copy "
+        "of it read to name what this build cannot read",
     ),
     "herdr-core/src/workspace_views.rs": (6, "the core's saved View layouts"),
     "herdr-core/src/delivery/ledger.rs": (
