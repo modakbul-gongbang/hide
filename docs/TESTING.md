@@ -153,6 +153,7 @@ When the behavior depends on the order of two events, the test fixes that order;
   `fixtureExecutable` supplies native `.exe` names and `fixtureToolPath` uses the native path delimiter while refusing missing or non-absolute Windows system-root or program-files values.
   Catalog discovery probes every provider, so appending the host's `PATH` also reaches its installed CLIs even when the test selects Claude.
   A spec adding a GitHub or Git shim prepends it to `fixturePath`; explicit `extraEnv.PATH` remains authoritative.
+  A node finds `git` and `gh` on the account's search, the login shell's `PATH` before its own (`hide_platform::programs::command`), and on macOS the shell's `path_helper` puts the system's folders first, so a shim for a program a system folder also holds (`/usr/bin/git`) is found only when the login shell is the fixture's too: a Rust fixture removes `SHELL` from the child or names a stand-in shell (`hide-host/tests/it/worktrees.rs`), and an end-to-end daemon, whose panes need the real shell, gets a HOME whose startup files put its fixture `PATH` first, as an account's own installs come first (`fixtureLoginShellPath` in `web/e2e/platform-fixture.ts`, which `spawnDaemon` and each desktop app launch call with the `PATH` they start with).
   A repository fixture declares its initial branch when the GitHub answers name one: `session-work-fixture.ts` creates `main` for its `main` pull requests, so the account's `init.defaultBranch` cannot change PR assignment or automatic session resolution.
   A repository fixture a fake `gh` answers for carries a remote naming that GitHub repository, as a real checkout does, because `hided` answers a checkout whose remotes name none "no GitHub remote" without asking `gh`: `session-work-fixture.ts` sets `origin` to it, and the specs start their repository with `initGithubRepository` in `web/e2e/github-remote.ts`, which adds it as `github` so a local bare `origin` keeps measuring branches.
   A claim about a real agent session needs the real CLI inside an otherwise isolated fixture: a shim on the pane's `PATH` that runs the CLI under the operator's `HOME`, while the server keeps its private one.
@@ -415,7 +416,7 @@ The desktop `@platform` tests run on Windows in a pull request (`windows-desktop
 
 ### How many jobs a run starts
 
-A run that plans every lane a pull request can plan starts at most 25 jobs, two more than the 2026-10-05 shape of run `37324202934` before the macOS and mailbox work: that work saved one, and the e2e suites outgrew their shards' step caps, which took a second macOS desktop shard and two more web shards ([Balancing the e2e shards](#balancing-the-e2e-shards)).
+A run that plans every lane a pull request can plan starts at most 26 jobs, three more than the 2026-10-05 shape of run `37324202934` before the macOS and mailbox work: that work saved one, the e2e suites outgrew their shards' step caps, which took a second macOS desktop shard and two more web shards ([Balancing the e2e shards](#balancing-the-e2e-shards)), and the agent journey's Linux job added one.
 `scripts/tests/test_ci_plan.py` counts them from the workflows:
 
 | Jobs | Count | Why |
@@ -426,6 +427,7 @@ A run that plans every lane a pull request can plan starts at most 25 jobs, two 
 | `web e2e` (Linux) | 7 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and six shards dealt by recorded durations: six were cut to four on 2026-10-05 so fewer jobs queued at the 20-job limit, and went back to six on 2026-10-18 when the suite had grown to 68 minutes of tests and four shards ran 984 to 1111 s of their 1200 s step |
 | `os contract` (Linux, Windows), `os contract (macOS)` | 3 | one job per system, the macOS leg planned only for its two crates |
 | `agy contract` (Windows) | 1 | agy's hook block, trust, conversations and Hide AI backend, and the real agy reading Hide's block, where the hook commands and install folder differ; `rust` runs the same tests on Linux and the nightly runs all three systems |
+| `agent journey` (Linux) | 1 | the journey on the compiled Claude and Codex stand-ins, planned only for the journey's code, its contract and the stand-ins; the nightly and a release run every system and the signed-in lane ([VERIFICATION.md](VERIFICATION.md#agent-journey)) |
 | `remote mailbox` | 1 | the lane that was the tail of the macOS `@platform` job, now on Linux and, in the nightly, on macOS |
 | `desktop e2e` | 2 | the only macOS lane of the desktop app's own changes, in two shards that build in place, because the whole suite outgrew one job's step cap ([Balancing the e2e shards](#balancing-the-e2e-shards)) |
 | `package` (Windows, Linux, macOS) | 3 | `package.yml`'s jobs, planned only for what goes into a package; before the lane its Windows and Linux jobs ran on the same paths outside `verify` |
