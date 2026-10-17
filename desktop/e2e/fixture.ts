@@ -12,7 +12,7 @@ import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-f
 import { bundledExecutable, linkBundle } from "../../web/e2e/bundled-app";
 import { aiSettingsFile } from "../../web/e2e/hided-fixture";
 import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
-import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
+import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureLoginShellPath, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 import { FUSED_ELECTRON_ENV } from "./fused-env";
 
@@ -77,6 +77,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       // `open_external` must not launch a GUI application during a test.
       HIDE_OPEN_COMMAND: fixtureOpenCommand(undefined, root),
     };
+    fixtureLoginShellPath(home, env.PATH!);
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true });
     throw error;
