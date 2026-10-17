@@ -270,24 +270,19 @@ pub struct Env {
 
 impl Env {
     /// The herdr this machine's daemon runs: `HERDR_BIN_PATH` when it is
-    /// set, else the pinned copy the helper build this program runs from
-    /// brought (`hide_kit::device_herdr`: a device's helper, and the core a
-    /// move put on that device runs from the same folders), else the `herdr`
-    /// the account's own terminal finds (`hide_platform::programs`), as a
-    /// device's node finds it. An SSH exec and a login item start this
-    /// program with the system's folders alone on `PATH`, which reach none
-    /// of these. Asked where a daemon is about to rely on it, never on every
-    /// command, since the account's search can start its login shell.
+    /// set, else the pinned copy this account's helper holds
+    /// (`hide_kit::device_herdr::pinned_for_account`: on a device, and on a
+    /// machine a move put the core on, the Herdr the helper ran, whichever
+    /// build of `hided` asks), else the `herdr` the account's own terminal
+    /// finds (`hide_platform::programs`). An SSH exec and a login item start
+    /// this program with the system's folders alone on `PATH`, which reach
+    /// none of these. Asked where a daemon is about to rely on it, never on
+    /// every command, since the account's search can start its login shell.
     pub fn herdr_program(&self) -> Option<PathBuf> {
-        self.herdr_program_for(std::env::current_exe().ok().as_deref())
-    }
-
-    /// [`Env::herdr_program`] for this program at `executable`.
-    fn herdr_program_for(&self, executable: Option<&Path>) -> Option<PathBuf> {
         static NEVER: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
         self.herdr_bin_path
             .clone()
-            .or_else(|| executable.and_then(hide_kit::device_herdr::pinned_for_helper))
+            .or_else(|| hide_kit::device_herdr::pinned_for_account(&self.home))
             .or_else(|| {
                 hide_platform::programs::find_cli_with(
                     &self.home,
@@ -918,11 +913,13 @@ mod tests {
         ])
         .unwrap();
         assert_eq!(env.herdr_bin_path, None, "nothing named one");
-        assert_eq!(env.herdr_program_for(None), Some(installed));
+        assert_eq!(env.herdr_program(), Some(installed));
     }
 
     /// The order a daemon takes its herdr in: the one it was handed, then
-    /// the copy its helper build brought, then the account's own.
+    /// the pinned copy the account's helper holds, then the account's own.
+    /// The pinned copy is found by the account's layout, so a `herdr` that
+    /// comes first on the login shell's `PATH` does not stand in for it.
     #[cfg(unix)]
     #[test]
     fn herdr_bin_path_wins_then_the_pinned_copy_then_the_accounts_own() {
@@ -933,25 +930,23 @@ mod tests {
             &dir.path().join("login-shell"),
             "[ \"$1\" = -ilc ] || exit 64\nPATH=\"$HOME/installed/bin:$PATH\"\nexport PATH\neval \"$2\"",
         );
-        let root = dir.path().join("helper");
-        let helper = root.join("0123456789abcdef/hided");
-        let pinned = program(&hide_kit::device_herdr::pinned_herdr(&root), "exit 0");
-        let (home, shell) = (home.display().to_string(), shell.display().to_string());
-        let env = from_map(&[(HOME, &home), (SHELL, &shell)]).unwrap();
-        assert_eq!(env.herdr_program_for(Some(&helper)), Some(pinned));
-        assert_eq!(
-            env.herdr_program_for(Some(&dir.path().join("target/debug/hided"))),
-            Some(own),
-            "a build outside a helper root brought no copy"
+        let (home_text, shell) = (home.display().to_string(), shell.display().to_string());
+        let env = from_map(&[(HOME, &home_text), (SHELL, &shell)]).unwrap();
+        assert_eq!(env.herdr_program(), Some(own), "no copy arrived yet");
+
+        let pinned = program(
+            &hide_kit::device_herdr::pinned_herdr(&hide_kit::layout::helper_root(&home)),
+            "exit 0",
         );
+        assert_eq!(env.herdr_program(), Some(pinned));
         let env = from_map(&[
-            (HOME, &home),
+            (HOME, &home_text),
             (SHELL, &shell),
             (HERDR_BIN_PATH, "/opt/herdr/bin/herdr"),
         ])
         .unwrap();
         assert_eq!(
-            env.herdr_program_for(Some(&helper)),
+            env.herdr_program(),
             Some(PathBuf::from("/opt/herdr/bin/herdr"))
         );
         let err = from_map(&[(HOME, "/Users/example"), (HERDR_BIN_PATH, "")]).unwrap_err();

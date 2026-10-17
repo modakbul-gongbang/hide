@@ -280,7 +280,6 @@ pub(crate) fn record_daemon(
         .map_err(|error| error.to_string())
 }
 
-/// The core role on `seat`, which already holds the instance lock.
 /// [`Env::herdr_program`] off the async runtime: the account's search can
 /// wait on its login shell.
 async fn herdr_program(env: &Env) -> Result<Option<std::path::PathBuf>, String> {
@@ -290,6 +289,7 @@ async fn herdr_program(env: &Env) -> Result<Option<std::path::PathBuf>, String> 
         .map_err(|error| format!("the herdr search did not finish: {error}"))
 }
 
+/// The core role on `seat`, which already holds the instance lock.
 pub async fn start_core_role(env: Env, seat: seat::SeatParts) -> Result<RunningDaemon, String> {
     // This machine's name in every key that names it. A machine Hide cannot
     // name refuses to start rather than guess one (PRD core-host-node D-28).

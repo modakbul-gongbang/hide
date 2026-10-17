@@ -313,7 +313,7 @@ fn run(
 fn herdr_running(home: &Path, herdr: &Herdr<'_>, stop: &AtomicBool) -> Result<(), String> {
     let bin = herdr
         .bin
-        .ok_or("no herdr on this machine: HERDR_BIN_PATH names none, this build brought none, and the account's search finds none")?;
+        .ok_or("no herdr on this machine: HERDR_BIN_PATH names none, this account's helper holds no pinned copy, and the account's search finds none")?;
     let mut command = Command::new(bin);
     command
         .args(["status", "server", "--json"])
