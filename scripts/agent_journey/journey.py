@@ -409,6 +409,23 @@ class Journey:
         self.daemon.dispatch("key", {"pane_id": self.pane, "bytes_base64": base64.b64encode(b"\r").decode()})
         return True
 
+    def turn_in(self, pane, record):
+        """Types a prompt into `pane`, another agent pane this journey
+        opened, as the operator does, and waits for its answer there. Returns
+        (verdict, read, token); the journey's own pane is unchanged after."""
+        saved = self.pane, self.session, self.reference
+        self.pane, self.session, self.reference = pane, None, None
+        try:
+            value = record["token"] = token()
+            since = self.daemon.mark(pane)
+            if not self.type_prompt(record, prompt(value)):
+                return (cells.FAIL, "the pane's terminal never took this screen's keys (transport "
+                        + " -> ".join(map(str, record["terminal"])) + ")"), {}, value
+            turn, read, record["activities"] = self.wait_turn(since, value)
+            return turn, read, value
+        finally:
+            self.pane, self.session, self.reference = saved
+
     def wait_ready(self):
         """Herdr reads the woken agent ready for input."""
         try:

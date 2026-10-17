@@ -2,12 +2,14 @@
 conversation, and Hide names where it came from.
 
 The operator chooses Fork agent from the pane menu, which sends `fork_pane`
-with the tab placement; the journey sends the same event on its own screen.
-Hide then shows a new row whose `forked_from` names the source's pane, with
-a session of its own that Herdr's integration reported, and `hide agent list`
-registers the fork as a root (no parent) whose origin is the source
-(docs/status-model.md, Where a parent comes from). A fork starts no turn, so
-it spends no model request.
+with the tab placement, and types into the fork to use it; the journey sends
+the same event on its own screen and types one prompt into the fork's pane.
+An agent that tells its session only at its first turn, as Codex does, is
+registered as a fork only after it. Hide then shows a new row whose
+`forked_from` names the source's pane, with a session of its own that
+Herdr's integration reported and in which Hide's reader finds the answer, and
+`hide agent list` registers the fork as a root (no parent) whose origin is
+the source (docs/status-model.md, Where a parent comes from).
 """
 
 from agent_live_check.processes import ProcessError
@@ -15,8 +17,8 @@ from agent_live_check.processes import ProcessError
 from . import cells
 
 CELL = "fork"
-# The fork starts the agent again and waits for its session (Hide waits 5 s
-# for it before it registers the fork); a CLI's start takes seconds.
+# The fork starts the agent again; a CLI's start takes seconds, and Hide
+# registers a fork once Herdr reports the fork's session.
 FORK_SECONDS = 90
 
 
@@ -62,6 +64,21 @@ def measure(journey):
     record["source"]["session"] = source_session
     before = panes(journey.runtime)
     journey.daemon.dispatch("fork_pane", {"pane_id": journey.pane, "placement": "tab"})
+    try:
+        journey.runtime.wait(lambda: panes(journey.runtime) - before, FORK_SECONDS)
+    except ProcessError as error:
+        if journey.runtime.owner.cancelled.is_set():
+            raise
+        record["pane_wait"] = str(error)
+    # Only this agent runs, so every pane that appeared since is the fork's,
+    # marked by Hide or not; the journey closes each one with the agent's.
+    opened = record["opened"] = sorted(panes(journey.runtime) - before)
+    journey.opened.extend(opened)
+    if len(opened) != 1:
+        journey.settle(CELL, (cells.FAIL, f"Fork agent opened {len(opened)} panes, not one"),
+                       journey.evidence(CELL, record))
+        return
+    turn, read, value = journey.turn_in(opened[0], record.setdefault("prompt", {}))
 
     def forked(rest):
         row = forked_row(rest, journey.pane)
@@ -72,24 +89,23 @@ def measure(journey):
         if journey.runtime.owner.cancelled.is_set():
             raise
         record["fork_wait"] = str(error)
-    # Only this agent runs, so every pane that appeared since is the fork's,
-    # marked by Hide or not; the journey closes each one with the agent's.
-    opened = record["opened"] = sorted(panes(journey.runtime) - before)
-    journey.opened.extend(opened)
     rest = journey.daemon.snapshot() or {}
-    row = forked_row(rest, journey.pane)
-    record["row"] = row
+    row = record["row"] = forked_row(rest, journey.pane)
     pane = (row or {}).get("pane_id")
     herdr_session = (journey.runtime.agent(pane) or {}).get("agent_session") if pane else None
     if not row:
-        # A fork Hide did not mark: what Herdr and Hide show in each pane it opened.
-        record["unmarked"] = {item: {"herdr_session": (journey.runtime.agent(item) or {}).get("agent_session"),
-                                     "hide_row": {key: (journey.daemon.row(item) or {}).get(key)
-                                                  for key in ("session_id", "forked_from", "identity_label")}}
-                              for item in opened}
+        # A fork Hide did not mark: what Herdr and Hide show in its pane.
+        record["unmarked"] = {"herdr_session": (journey.runtime.agent(opened[0]) or {}).get("agent_session"),
+                              "hide_row": {key: (journey.daemon.row(opened[0]) or {}).get(key)
+                                           for key in ("session_id", "forked_from", "identity_label")}}
     listing = journey.controller.hide(["agent", "list"])
     listed = next((item for item in (listing.get("value") or {}).get("items") or []
                    if pane and item.get("pane") == pane), None)
+    record["prompt"].update(turn=turn, read=read)
     record.update(herdr_session=herdr_session, listed=listed, errors=list(journey.daemon.errors))
-    journey.settle(CELL, verdict(row, source_session, herdr_session, journey.kind, listed, journey.agent),
-                   journey.evidence(CELL, record))
+    status, reason = verdict(row, source_session, herdr_session, journey.kind, listed, journey.agent)
+    if status == cells.PASS:
+        answer = cells.with_turn(cells.reply_verdict(read, row["session_id"], value), turn)
+        status, reason = (status, reason + "; " + answer[1]) if answer[0] == cells.PASS else \
+            (answer[0], "the fork's answer: " + answer[1])
+    journey.settle(CELL, (status, reason), journey.evidence(CELL, record))

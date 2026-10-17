@@ -72,13 +72,17 @@ pub fn journey_contract() -> impl Iterator<Item = JourneyAdapter> {
         };
         // The turns a run starts: the first prompt in the trusted and the
         // never-trusted start, the question about the Memory card the start
-        // gave, the letter and the prompt typed after Wake. The other cells
-        // judge what Hide shows of those turns and start none.
+        // gave, the letter, the prompt typed into the fork (an agent that
+        // tells its session only at its first turn, as Codex does, is
+        // registered as a fork only then, and the operator types into a fork
+        // to use it) and the prompt typed after Wake. The other cells judge
+        // what Hide shows of those turns and start none.
         let turns = [
             start,
             cells.start_untrusted,
             cells.guidance_memory,
             cells.letter,
+            cells.fork,
             cells.resume,
         ]
         .into_iter()
