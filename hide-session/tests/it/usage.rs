@@ -992,11 +992,8 @@ fn usage_opencode_2_step_without_usage_or_past_the_read_limit_is_skipped_and_the
     )
     .unwrap();
     opencode_2_step(&db, "msg-c", true, 102, 0.3);
-    db.execute(
-        "UPDATE session_message SET data = json_set(data, '$.padding', ?1) WHERE id = 'msg-c'",
-        ["x".repeat(hide_session::SESSION_INCREMENT_READ_LIMIT_BYTES as usize / 2)],
-    )
-    .unwrap();
+    // Past the most a row is scanned at: reported as unread, not dropped.
+    opencode_2_pad(&db, "msg-c", 9 * 1024 * 1024);
     opencode_2_step(&db, "msg-d", true, 103, 0.4);
     let mut saved = None;
     let mut events = Vec::new();
@@ -1027,6 +1024,74 @@ fn usage_opencode_2_step_without_usage_or_past_the_read_limit_is_skipped_and_the
             ("usage_missing".to_owned(), 1)
         ]
         .into()
+    );
+}
+
+/// Makes a 2.x message row `bytes` larger without changing what it says.
+fn opencode_2_pad(db: &rusqlite::Connection, id: &str, bytes: usize) {
+    db.execute(
+        "UPDATE session_message SET data = json_set(data, '$.padding', ?1) WHERE id = ?2",
+        rusqlite::params!["x".repeat(bytes), id],
+    )
+    .unwrap();
+}
+
+#[test]
+fn usage_opencode_2_step_row_past_512_kib_is_counted_with_its_tokens_and_cost() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_2_fixture(home.path());
+    opencode_2_step(&db, "msg-a", true, 100, 0.1);
+    opencode_2_step(&db, "msg-b", true, 101, 0.2);
+    // A step that ran a long tool: its row holds all the output.
+    opencode_2_pad(&db, "msg-b", 2 * 1024 * 1024);
+    let (events, _) = usage_drain(home.path(), Agent::OpenCode, &path, None);
+    assert_eq!(
+        events
+            .iter()
+            .map(|e| (e.recorded_cost_micro_usd.unwrap(), e.tokens.input))
+            .collect::<Vec<_>>(),
+        [(100_000, 20), (200_000, 20)]
+    );
+}
+
+#[test]
+fn usage_opencode_2_rows_past_the_read_total_are_read_by_the_next_read() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_2_fixture(home.path());
+    for (index, id) in ["msg-a", "msg-b", "msg-c", "msg-d"].into_iter().enumerate() {
+        opencode_2_step(&db, id, true, 100 + index as u64, 0.1 * (index + 1) as f64);
+        opencode_2_pad(&db, id, 3 * 1024 * 1024);
+    }
+    // 3 MiB rows: two fit the read's scan total, the third waits.
+    let first = usage::read(home.path(), Agent::OpenCode, &path, None).unwrap();
+    assert!(first.skipped.is_empty());
+    assert_eq!(first.events.len(), 2);
+    assert!(first.has_more);
+    let (rest, _) = usage_drain(home.path(), Agent::OpenCode, &path, Some(first.checkpoint));
+    let all: Vec<_> = first.events.iter().chain(&rest).collect();
+    assert_eq!(all.len(), 4, "{all:?}");
+    assert_eq!(
+        all.iter()
+            .map(|e| &e.key)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        4
+    );
+}
+
+#[test]
+fn usage_opencode_migrated_database_counts_a_large_2x_only_row_too() {
+    let home = tempfile::tempdir().unwrap();
+    let (path, db) = opencode_history(home.path());
+    opencode_upgrade(&db);
+    opencode_2_step(&db, "msg-new", true, 200, 0.5);
+    opencode_2_pad(&db, "msg-new", 2 * 1024 * 1024);
+    let (events, _) = usage_drain(home.path(), Agent::OpenCode, &path, None);
+    assert_eq!(events.len(), 4);
+    assert!(
+        events
+            .iter()
+            .any(|e| e.recorded_cost_micro_usd == Some(500_000))
     );
 }
 

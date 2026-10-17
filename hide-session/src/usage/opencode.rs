@@ -21,10 +21,26 @@ use crate::opencode::{Legacy, Schema};
 const ROW_BYTES: u64 = 64 * 1024;
 const READ_BYTES: u64 = crate::SESSION_INCREMENT_READ_LIMIT_BYTES;
 const ROWS: usize = 512;
-/// An OpenCode 2.x assistant message row holds its content as well, so one
-/// is read in place by SQLite's JSON functions up to this size; the rest of a
-/// read's cap on a value (`READ_BYTES`) is left for the pieces handed back.
-const ROW_2_BYTES: u64 = READ_BYTES / 2;
+/// An OpenCode 2.x assistant message row holds its content as well, so one is
+/// read in place by SQLite's JSON functions, and only the step's few fields
+/// come back. The row is never loaded into Hide, so this bounds the scan, not
+/// memory: a row over it is reported as unread (`record_capacity`), and one
+/// read scans at most this many bytes of rows, the next read going on from the
+/// cursor. The first row of a read is always scanned, so a read moves on.
+const ROW_2_BYTES: u64 = 8 * 1024 * 1024;
+/// The step's fields as SQLite hands them back from a row read in place. Each
+/// text is bounded where it is taken, so a field as large as the row cannot
+/// come back whole.
+const FIELDS_2: &str = "json_object(
+              'completed',json_extract(data,'$.time.completed'),
+              'model',CASE WHEN octet_length(json_extract(data,'$.model.id'))<=4096
+                THEN json_extract(data,'$.model.id') END,
+              'cost',json_extract(data,'$.cost'),
+              'tokens',json(CASE WHEN octet_length(json_extract(data,'$.tokens'))<=4096
+                THEN json_extract(data,'$.tokens') END),
+              'failed',json_extract(data,'$.error') IS NOT NULL,
+              'cwd',(SELECT CASE WHEN length(directory)>0 AND octet_length(directory)<=4096
+                THEN directory END FROM session_v2 WHERE id=m.session_id))";
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct Cursor {
@@ -207,9 +223,15 @@ fn read_connection(
     }
     let migrated = schema == Schema::V2 && legacy == Legacy::Complete;
     let started = Instant::now();
+    // A 2.x row is scanned in place up to its own cap, which SQLite refuses to
+    // load past this limit; a 1.x value is never over the read budget.
     db.set_limit(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
-        READ_BYTES as i32,
+        (if schema == Schema::V2 {
+            ROW_2_BYTES.max(READ_BYTES)
+        } else {
+            READ_BYTES
+        }) as i32,
     );
     let database = crate::opencode::database_path(home).map_err(|_| Refusal::Environment)?;
     let id = hide_platform::fs::identity::file_id(&database).map_err(|_| Refusal::Unreadable)?;
@@ -254,6 +276,8 @@ fn read_connection(
     let Some(horizon) = step.checkpoint.database.horizon else {
         return Ok(step);
     };
+    // Bytes of 2.x rows SQLite has scanned in place in this read.
+    let mut scanned = 0_u64;
     for _ in 0..ROWS {
         if started.elapsed() >= super::STEP_TIME || step.read_bytes + ROW_BYTES + 256 > READ_BYTES {
             step.has_more = true;
@@ -297,16 +321,24 @@ fn read_connection(
             step.checkpoint.database.active = None;
         }
         if migrated {
-            if !next_migrated(db, &mut step, horizon)? {
-                break;
+            match next_migrated(db, &mut step, horizon, &mut scanned)? {
+                Next::Row => continue,
+                Next::End => break,
+                Next::Full => {
+                    step.has_more = true;
+                    break;
+                }
             }
-            continue;
         }
         if schema == Schema::V2 {
-            if !next_2(db, &mut step, horizon)? {
-                break;
+            match next_2(db, &mut step, horizon, &mut scanned)? {
+                Next::Row => continue,
+                Next::End => break,
+                Next::Full => {
+                    step.has_more = true;
+                    break;
+                }
             }
-            continue;
         }
         let cursor = &step.checkpoint.database;
         let row: Option<(String, u64, String, Option<String>)> = db
@@ -404,59 +436,103 @@ fn event_2(id: String, session: String, step: &str) -> Result<Option<Event>, &'s
     }))
 }
 
-/// Takes the next assistant message after the cursor as one usage event, or
-/// ends the round when none is left: `false` then, as for the 1.x cursor. The
-/// row is read in place by SQLite's JSON functions up to [`ROW_2_BYTES`];
-/// only the step's own fields come back.
-fn next_2(db: &Connection, step: &mut Step, horizon: u64) -> Result<bool, Refusal> {
+/// What taking the next 2.x row came to.
+enum Next {
+    /// A row was taken, or reported unread; the cursor is past it.
+    Row,
+    /// None is left after the cursor: the round is over.
+    End,
+    /// The next row would take the read past [`ROW_2_BYTES`] of scanned rows
+    /// and waits, the cursor still before it, for the next read.
+    Full,
+}
+
+/// Takes one 2.x assistant row's step as a usage event, or reports it unread.
+/// `length` is the row's size from its record header and `fields` what SQLite
+/// read of it in place, absent when it was not scanned.
+fn take_2(
+    step: &mut Step,
+    id: String,
+    session: String,
+    length: Option<u64>,
+    fields: Option<String>,
+    scanned: &mut u64,
+) -> Next {
+    let result = match (&fields, length) {
+        (Some(fields), _) => {
+            *scanned += length.unwrap_or(0);
+            event_2(id, session, fields)
+        }
+        (None, Some(length)) if length > ROW_2_BYTES => Err("record_capacity"),
+        (None, Some(length)) if length > ROW_2_BYTES.saturating_sub(*scanned) => {
+            return Next::Full;
+        }
+        (None, _) => Err("record_invalid"),
+    };
+    match result {
+        Ok(Some(event)) => step.events.push(event),
+        Ok(None) => (),
+        Err(reason) => *step.skipped.entry(reason.into()).or_default() += 1,
+    }
+    Next::Row
+}
+
+/// Takes the next assistant message after the cursor as one usage event. The
+/// row is read in place by SQLite's JSON functions up to what is left of
+/// [`ROW_2_BYTES`] for the read; only the step's own fields come back. A row
+/// over [`ROW_2_BYTES`] is reported as `record_capacity`, never dropped
+/// unseen.
+fn next_2(
+    db: &Connection,
+    step: &mut Step,
+    horizon: u64,
+    scanned: &mut u64,
+) -> Result<Next, Refusal> {
     let cursor = &step.checkpoint.database;
-    let row: Option<(String, u64, String, Option<String>)> = db
+    type Row = (String, u64, String, Option<u64>, Option<String>);
+    let row: Option<Row> = db
         .query_row(
-            "SELECT CASE WHEN octet_length(id)<=128 THEN id END,time_updated,
+            &format!(
+                "SELECT CASE WHEN octet_length(id)<=128 THEN id END,time_updated,
              CASE WHEN octet_length(session_id)<=128 THEN session_id END,
-             CASE WHEN octet_length(data)<=?4 AND json_valid(data) THEN json_object(
-              'completed',json_extract(data,'$.time.completed'),
-              'model',json_extract(data,'$.model.id'),
-              'cost',json_extract(data,'$.cost'),
-              'tokens',json_extract(data,'$.tokens'),
-              'failed',json_extract(data,'$.error') IS NOT NULL,
-              'cwd',(SELECT CASE WHEN length(directory)>0 AND octet_length(directory)<=4096
-                THEN directory END FROM session_v2 WHERE id=message.session_id)) END
-             FROM session_message AS message WHERE type='assistant'
+             octet_length(data),
+             CASE WHEN octet_length(data)<=?4 AND json_valid(data) THEN {FIELDS_2} END
+             FROM session_message AS m WHERE type='assistant'
              AND (time_updated>?1 OR (time_updated=?1 AND id>?2)) AND time_updated<=?3
-             ORDER BY time_updated,id LIMIT 1",
-            params![cursor.after_time, cursor.after_id, horizon, ROW_2_BYTES],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+             ORDER BY time_updated,id LIMIT 1"
+            ),
+            params![
+                cursor.after_time,
+                cursor.after_id,
+                horizon,
+                ROW_2_BYTES.saturating_sub(*scanned)
+            ],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
         )
         .optional()
         .map_err(|_| Refusal::Database)?;
-    let Some((id, updated, session, fields)) = row else {
+    let Some((id, updated, session, length, fields)) = row else {
         // Revisit the boundary timestamp next round: later commits may
         // insert another id with the same millisecond, in either order.
         step.checkpoint.database.after_time = horizon;
         step.checkpoint.database.after_id.clear();
         step.checkpoint.database.horizon = None;
         step.has_more = false;
-        return Ok(false);
+        return Ok(Next::End);
     };
     if id.len() > 128 || session.len() > 128 {
         return Err(Refusal::Database);
     }
-    step.read_bytes +=
-        (id.len() + session.len()) as u64 + fields.as_ref().map_or(0, |s| s.len() as u64);
-    step.checkpoint.database.after_time = updated;
-    step.checkpoint.database.after_id = id.clone();
-    step.has_more = true;
-    match fields
-        .as_deref()
-        .ok_or("record_capacity")
-        .and_then(|fields| event_2(id, session, fields))
-    {
-        Ok(Some(event)) => step.events.push(event),
-        Ok(None) => (),
-        Err(reason) => *step.skipped.entry(reason.into()).or_default() += 1,
+    let bytes = (id.len() + session.len()) as u64 + fields.as_ref().map_or(0, |s| s.len() as u64);
+    let taken = take_2(step, id.clone(), session, length, fields, scanned);
+    if matches!(taken, Next::Full) {
+        return Ok(taken);
     }
-    Ok(true)
+    step.read_bytes += bytes;
+    step.checkpoint.database.after_time = updated;
+    step.checkpoint.database.after_id = id;
+    step.has_more = true;
+    Ok(taken)
 }
 
 /// Takes the next assistant message after the cursor in a database 2.x
@@ -465,36 +541,45 @@ fn next_2(db: &Connection, step: &mut Step, horizon: u64) -> Result<bool, Refusa
 /// step-finish parts are read and keyed as before the upgrade. A message only
 /// `session_message` holds was written after, and is one event keyed by its
 /// id. The two walk one order, so one cursor and one horizon serve both.
-fn next_migrated(db: &Connection, step: &mut Step, horizon: u64) -> Result<bool, Refusal> {
+fn next_migrated(
+    db: &Connection,
+    step: &mut Step,
+    horizon: u64,
+    scanned: &mut u64,
+) -> Result<Next, Refusal> {
     let cursor = &step.checkpoint.database;
-    type Row = (String, u64, String, u8, Option<String>, Option<String>);
+    type Row = (
+        String,
+        u64,
+        String,
+        u8,
+        Option<String>,
+        Option<u64>,
+        Option<String>,
+    );
     let row: Option<Row> = db
         .query_row(
-            "SELECT CASE WHEN octet_length(id)<=128 THEN id END,time_updated,
-             CASE WHEN octet_length(session_id)<=128 THEN session_id END,src,legacy,fields
+            &format!(
+                "SELECT CASE WHEN octet_length(id)<=128 THEN id END,time_updated,
+             CASE WHEN octet_length(session_id)<=128 THEN session_id END,src,legacy,length,fields
              FROM (SELECT id,time_updated,session_id,0 AS src,
-              CASE WHEN octet_length(data)<=?4 THEN data END AS legacy,NULL AS fields
+              CASE WHEN octet_length(data)<=?4 THEN data END AS legacy,
+              NULL AS length,NULL AS fields
               FROM message
               UNION ALL
-              SELECT id,time_updated,session_id,1,NULL,
-              CASE WHEN octet_length(data)<=?5 AND json_valid(data) THEN json_object(
-               'completed',json_extract(data,'$.time.completed'),
-               'model',json_extract(data,'$.model.id'),
-               'cost',json_extract(data,'$.cost'),
-               'tokens',json_extract(data,'$.tokens'),
-               'failed',json_extract(data,'$.error') IS NOT NULL,
-               'cwd',(SELECT CASE WHEN length(directory)>0 AND octet_length(directory)<=4096
-                 THEN directory END FROM session_v2 WHERE id=m.session_id)) END
+              SELECT id,time_updated,session_id,1,NULL,octet_length(data),
+              CASE WHEN octet_length(data)<=?5 AND json_valid(data) THEN {FIELDS_2} END
               FROM session_message AS m WHERE type='assistant'
               AND NOT EXISTS (SELECT 1 FROM message WHERE message.id=m.id))
              WHERE (time_updated>?1 OR (time_updated=?1 AND id>?2)) AND time_updated<=?3
-             ORDER BY time_updated,id LIMIT 1",
+             ORDER BY time_updated,id LIMIT 1"
+            ),
             params![
                 cursor.after_time,
                 cursor.after_id,
                 horizon,
                 ROW_BYTES,
-                ROW_2_BYTES
+                ROW_2_BYTES.saturating_sub(*scanned)
             ],
             |r| {
                 Ok((
@@ -504,39 +589,39 @@ fn next_migrated(db: &Connection, step: &mut Step, horizon: u64) -> Result<bool,
                     r.get(3)?,
                     r.get(4)?,
                     r.get(5)?,
+                    r.get(6)?,
                 ))
             },
         )
         .optional()
         .map_err(|_| Refusal::Database)?;
-    let Some((id, updated, session, src, legacy, fields)) = row else {
+    let Some((id, updated, session, src, legacy, length, fields)) = row else {
         step.checkpoint.database.after_time = horizon;
         step.checkpoint.database.after_id.clear();
         step.checkpoint.database.horizon = None;
         step.has_more = false;
-        return Ok(false);
+        return Ok(Next::End);
     };
     if id.len() > 128 || session.len() > 128 {
         return Err(Refusal::Database);
     }
-    step.read_bytes += (id.len() + session.len()) as u64
-        + legacy.as_ref().map_or(0, |s| s.len() as u64)
-        + fields.as_ref().map_or(0, |s| s.len() as u64);
-    step.checkpoint.database.after_time = updated;
-    step.checkpoint.database.after_id = id.clone();
-    step.has_more = true;
     if src == 0 {
+        step.read_bytes +=
+            (id.len() + session.len()) as u64 + legacy.as_ref().map_or(0, |s| s.len() as u64);
+        step.checkpoint.database.after_time = updated;
+        step.checkpoint.database.after_id = id.clone();
+        step.has_more = true;
         take_legacy(db, step, id, updated, session, legacy.as_deref())?;
-        return Ok(true);
+        return Ok(Next::Row);
     }
-    match fields
-        .as_deref()
-        .ok_or("record_capacity")
-        .and_then(|fields| event_2(id, session, fields))
-    {
-        Ok(Some(event)) => step.events.push(event),
-        Ok(None) => (),
-        Err(reason) => *step.skipped.entry(reason.into()).or_default() += 1,
+    let bytes = (id.len() + session.len()) as u64 + fields.as_ref().map_or(0, |s| s.len() as u64);
+    let taken = take_2(step, id.clone(), session, length, fields, scanned);
+    if matches!(taken, Next::Full) {
+        return Ok(taken);
     }
-    Ok(true)
+    step.read_bytes += bytes;
+    step.checkpoint.database.after_time = updated;
+    step.checkpoint.database.after_id = id;
+    step.has_more = true;
+    Ok(taken)
 }
