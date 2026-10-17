@@ -315,10 +315,10 @@ fn confirm(home: &Path, input: Input, deadline: Instant) -> Value {
 }
 
 /// The project's guardrails for a shell or file tool, the spawn guard for
-/// the shell (`bash`, OpenCode 2's `shell`) and the Factory guard for the agent's question tool (OpenCode's
-/// `question`, omp's `ask`): `deny` carries the reason the script refuses
-/// with, and every other outcome lets the call run, as the Claude Code and
-/// Codex guards do.
+/// the shell (`bash`, OpenCode 2's `shell`) and the Factory guard for the
+/// agent's question tool (OpenCode's `question`, omp's `ask`): `deny`
+/// carries the reason the script refuses with, and every other outcome lets
+/// the call run, as the Claude Code and Codex guards do.
 fn tool(home: &Path, agent: &Agent, input: Input, deadline: Instant) -> Value {
     let runtime = agent.runtime();
     let pane = pane();
