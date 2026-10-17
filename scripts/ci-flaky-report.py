@@ -64,10 +64,12 @@ EXPIRY_DAYS = 7
 MAX_PER_RUN = 20
 # Terminal control in text read from a job log or bound for a public page:
 # ECMA-48 escape sequences (CSI, such as the color the runner puts around each
-# step's command in every job log, OSC, and the shorter forms) and every other
-# C0 and C1 control but tab and newline.
+# step's command in every job log; the OSC, DCS, SOS, PM and APC strings, each
+# to its terminator or the end of its line; and the shorter forms) and every
+# other C0 and C1 control but tab and newline. A carriage return ends a line
+# (`plain`), as a terminal shows it.
 CONTROL = re.compile(
-    r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|\x1b(?:\][^\x07\x1b\n]*(?:\x07|\x1b\\)?|[ -/]*[0-~])?"
+    r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|\x1b(?:[\]PX^_][^\x07\x1b\n]*(?:\x07|\x1b\\)?|[ -/]*[0-~])?"
     r"|[\x00-\x08\x0b-\x1f\x7f-\x9f]"
 )
 # Hand-written issues quote a title cut short ("Agent tabs shrink in stages...").
@@ -187,8 +189,13 @@ def nextest_failed(root):
     return found
 
 
+def plain(text):
+    """`text` with its line breaks as newlines and no terminal control."""
+    return CONTROL.sub("", re.sub(r"\r\n?", "\n", text))
+
+
 def clean(text):
-    text = HOME.sub(r"\1~", CONTROL.sub("", text))
+    text = HOME.sub(r"\1~", plain(text))
     return TOKEN.sub("***", text).strip()[:600] or "(no message)"
 
 
@@ -281,7 +288,7 @@ def gh(args, body=None, raw=False):
     if done.returncode:
         raise RuntimeError(f"gh api {' '.join(args)}: {done.stderr.decode('utf-8', 'replace').strip()}")
     if raw:
-        return CONTROL.sub("", done.stdout.decode("utf-8", "replace"))
+        return plain(done.stdout.decode("utf-8", "replace"))
     return json.loads(done.stdout.decode("utf-8")) if done.stdout.strip() else None
 
 

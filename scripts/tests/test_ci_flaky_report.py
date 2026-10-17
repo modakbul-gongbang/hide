@@ -291,6 +291,8 @@ JOB_LOG = (
     b"2026-10-16T20:25:19.3494430Z \x1b[36;1mbash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS\x1b[0m\n"
     b"2026-10-16T20:25:19.3655790Z shell: /bin/bash --noprofile --norc -e -o pipefail {0}\n"
     b"2026-10-16T20:25:19.3656820Z ##[endgroup]\n"
+    b"2026-10-16T20:29:27.0950000Z \x1b]0;unterminated title\n"
+    b"2026-10-16T20:29:27.0960000Z Compiling a\rCompiling b\x7f\xc2\x9b31m\x1bPq#0;2\x1b\\\n"
     b"2026-10-16T20:29:28.0947990Z      Summary [ 248.007s] 2 tests run: 1 passed, 1 failed, 105 skipped\n"
     b"2026-10-16T20:29:28.0948760Z   TRY 2 FAIL [ 105.471s] (1/2) hide-agent-hooks::it agy_binary::a_signed_in_agy_turn_fires_hide_s_hooks\n"
     b"2026-10-16T20:29:28.1043050Z \x1b]0;agy\x07error: test run failed \xff\x00\r\n"
@@ -487,6 +489,8 @@ class NightlyFailures(unittest.TestCase):
         self.assertEqual(issue["labels"], ["nightly-failure"])
 
     def test_an_excerpt_carries_no_terminal_control_from_a_log_or_an_annotation(self):
+        # gh hands a JSON body over with its controls in caret notation, but a lane
+        # writes its annotations from its tool's own report, which carries them raw.
         github = FakeGitHub(
             [job(1, "agy contract / agy signed in (macos)", "failure", [("The real agy runs one turn", "failure")]),
              job(2, PACKAGE, "failure")],
@@ -615,6 +619,8 @@ class Gh(unittest.TestCase):
             text = r.gh(["repos/o/r/actions/jobs/117168142601/logs"], raw=True)
         self.assertIsNone(CONTROL_CHARACTER.search(text), repr(text))
         self.assertIn("Z bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS\n", text)
+        # An unterminated string ends with its line, and a carriage return breaks one.
+        self.assertIn("0950000Z \n2026-10-16T20:29:27.0960000Z Compiling a\nCompiling b\n", text)
         self.assertTrue(r.log_excerpt(text).endswith(
             "TRY 2 FAIL [ 105.471s] (1/2) hide-agent-hooks::it agy_binary::a_signed_in_agy_turn_fires_hide_s_hooks\n"
             "error: test run failed \ufffd\n##[error]Process completed with exit code 100."))
