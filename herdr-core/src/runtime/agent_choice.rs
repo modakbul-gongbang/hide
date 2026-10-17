@@ -103,10 +103,14 @@ pub(crate) fn settle_pane_launches(
     live_pane_ids: Option<&HashSet<String>>,
     scope: crate::agent_state::ReadRecordScope<'_>,
 ) -> bool {
-    let before = launches.clone();
+    if launches.is_empty() {
+        return false;
+    }
+    let count = launches.len();
     if let Some(live_pane_ids) = live_pane_ids {
         launches.retain(|pane_id, _| !scope.owns(pane_id) || live_pane_ids.contains(pane_id));
     }
+    let mut changed = launches.len() != count;
     for agent in agents {
         let Some(launch) = launches.get_mut(&agent.pane_id) else {
             continue;
@@ -114,18 +118,20 @@ pub(crate) fn settle_pane_launches(
         let other_kind = hide_agent_adapter::adapter(&agent.agent_kind).is_some()
             && hide_agent_adapter::canonical_kind(&agent.agent_kind) != launch.kind;
         let other_session = match (&launch.session, &agent.session_id) {
-            (None, Some(session)) => {
+            (None, Some(session)) if !other_kind => {
                 launch.session = Some(session.clone());
+                changed = true;
                 false
             }
             (Some(bound), Some(session)) => bound != session,
-            (_, None) => false,
+            _ => false,
         };
         if other_kind || other_session {
             launches.remove(&agent.pane_id);
+            changed = true;
         }
     }
-    *launches != before
+    changed
 }
 
 impl Runtime {
