@@ -230,8 +230,8 @@ function OutputMarks({ outputs, actions }: { outputs: readonly WorkOutput[]; act
  * checklist under `시킨 일 <끝남>/<전체> · 맡긴 일 <N>`, each task with the
  * children it delegated hanging under it by `↳`, the children no task holds
  * under a small `맡긴 일` at its end; with summaries off, which keep no task,
- * the children as one list. Then `놓친 것 N`, what is still open of what the
- * session and its descendants missed.
+ * the children as one list. Then, with summaries on, `놓친 것 N`, what is
+ * still open of what the session and its descendants missed.
  */
 const NO_RECORDS: readonly RecordValue[] = [];
 function Work({ record, descendants = NO_RECORDS, summaries, onOpen, actions }: { record: RecordValue; descendants?: readonly RecordValue[]; summaries: boolean; onOpen: (child: RecordValue) => void; actions: Actions }) {
@@ -261,7 +261,7 @@ function Work({ record, descendants = NO_RECORDS, summaries, onOpen, actions }: 
       <SectionHead label={t("sessionWork.delegated")} count={children} />
       {rows(record.children, false)}
     </section> : null}
-    {list.missed.length ? <section className="mt-md" data-record-missed={list.missed.length}>
+    {summaries && list.missed.length ? <section className="mt-md" data-record-missed={list.missed.length}>
       <SectionHead label={t("sessionWork.missed")} count={list.missed.length} />
       {list.missed.map(({ owner, missed, task, named }) => <MissedLine key={`${workKey(owner.session)}:${missed.id}`} missed={missed} session={owner.session} cwd={owner.cwd} note={named ? owner.title : task} actions={actions} />)}
     </section> : null}

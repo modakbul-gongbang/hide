@@ -167,10 +167,10 @@ it("draws an output no task claims beside the title, and none for a session with
   } finally { await off.unmount(); }
 });
 
-it("with Hide AI off lists the children as their own section, the requests at the end, and no checklist", async () => {
-  const { container, unmount } = await mount(BASE, { summaries: false });
+it("with Hide AI off lists the children as their own section, the requests at the end, and no checklist or missed work", async () => {
+  const { container, unmount } = await mount({ ...BASE, missed: [missed("m-off", "Found while summaries were on", 2)] }, { summaries: false });
   try {
-    expect(container.querySelector("[data-record-task], [data-record-work]")).toBeNull();
+    expect(container.querySelector("[data-record-task], [data-record-work], [data-record-missed]")).toBeNull();
     expect(text(container.querySelector("[data-record-delegated] h3"))).toBe("Delegated1");
     expect(container.querySelector("[data-record-delegated] [data-record-child-arrow]")).toBeNull();
     expect(container.querySelectorAll("[data-record-request]")).toHaveLength(3);
