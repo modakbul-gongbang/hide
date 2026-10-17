@@ -53,6 +53,21 @@ pub enum Action {
     },
 }
 
+/// A pane of a device whose helper link returns by itself: a band that says
+/// the pane is unavailable only because that link is away says it is
+/// reconnecting, and no longer an error the operator could do something about.
+pub(crate) fn reconnecting(mut header: Header) -> Header {
+    if let Some(band) = header
+        .band
+        .as_mut()
+        .filter(|band| band.kind == "unavailable")
+    {
+        band.kind = "reconnecting".to_owned();
+        band.tone = "muted";
+    }
+    header
+}
+
 pub(crate) fn of(
     pane: &PaneSnapshot,
     agent: Option<&SidebarAgentSnapshot>,

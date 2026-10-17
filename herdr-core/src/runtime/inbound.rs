@@ -112,7 +112,7 @@ impl Runtime {
         if self.remote_connections.contains_key(node) {
             let focused_device = self.snapshot.navigator.focused_device_id.clone();
             let persisted_focus = self.snapshot.ui_state.focused_device_id.clone();
-            self.disconnect_remote_device(node);
+            self.disconnect_remote_device(node, super::devices::Retiring::Removed);
             self.snapshot.navigator.focused_device_id = focused_device;
             self.snapshot.ui_state.focused_device_id = persisted_focus;
         }

@@ -13,7 +13,7 @@
 
 use std::sync::Arc;
 
-use super::devices::DeviceReach;
+use super::devices::{DeviceReach, Retiring};
 use super::*;
 use crate::model::{DeviceHostSnapshot, HostConsent};
 use crate::node_access::NodeLink;
@@ -569,7 +569,54 @@ impl Runtime {
     }
 
     fn set_host_phase(&mut self, device_id: &str, phase: HostPhase) {
+        let waiting = self.helper_link_returns_by_itself(device_id);
         self.device_host_entry(device_id).phase = phase;
+        // A pane of the device reads reconnecting only while the link comes
+        // back by itself, so its band follows the phase.
+        if waiting != self.helper_link_returns_by_itself(device_id) {
+            self.refresh_pane_headers();
+        }
+    }
+
+    /// Whether the device's helper link is away and the core tries it again
+    /// without being asked: a pane of such a device waits, where one whose
+    /// link needs the operator (consent, a changed identity, an unsupported
+    /// device) is unavailable.
+    pub(super) fn helper_link_returns_by_itself(&self, device_id: &str) -> bool {
+        self.link_origin(device_id)
+            .is_some_and(LinkOrigin::core_redials)
+            && matches!(
+                self.device_hosts.get(device_id).map(|host| &host.phase),
+                Some(HostPhase::Unavailable(_) | HostPhase::Connecting)
+            )
+    }
+
+    /// The device's Herdr session answers again, so the machine is reachable:
+    /// a helper link waiting out a retry that doubled while it was away is
+    /// tried now, and a link still starting begins its wait over should it
+    /// fail. A link ready or waiting for the operator is left as it is.
+    pub(super) fn device_reachable_again(&mut self, device_id: &str) -> bool {
+        if !self
+            .link_origin(device_id)
+            .is_some_and(LinkOrigin::core_redials)
+        {
+            return false;
+        }
+        match self.device_hosts.get(device_id).map(|host| &host.phase) {
+            Some(HostPhase::Unavailable(_)) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "remote_host",
+                    "kind": "host.retry_due_session_back",
+                    "target": device_id,
+                }));
+                self.retry_device_host_now(device_id)
+            }
+            Some(HostPhase::Connecting) => {
+                self.device_host_retries.remove(device_id);
+                false
+            }
+            _ => false,
+        }
     }
 
     pub(super) fn advance_host_generation(&mut self, device_id: &str) -> u64 {
@@ -595,6 +642,20 @@ impl Runtime {
             }
             return false;
         }
+        // A link that ended while the attempt still ran told its end to a
+        // phase that takes none (`ingest_host_closed`), and storing it ready
+        // would leave a dead host nobody retries. It is the same lost link,
+        // read here: a dialed link says so through its host, and an arrived
+        // one is told its end after this (`spawn_host_start`).
+        let result = match result {
+            Ok(HostReady::Dialed(established)) => match established.node.host.closed_reason() {
+                Some(reason) => Err(EstablishError::Helper(format!(
+                    "The device helper disconnected: {reason}"
+                ))),
+                None => Ok(HostReady::Dialed(established)),
+            },
+            other => other,
+        };
         match result {
             Ok(ready) => {
                 let (node, dialed) = match ready {
@@ -763,13 +824,16 @@ impl Runtime {
         generation: u64,
         reason: String,
     ) -> bool {
-        let Some(host) = self.device_hosts.get_mut(device_id) else {
+        let Some(host) = self.device_hosts.get(device_id) else {
             return false;
         };
         if host.generation != generation || !matches!(host.phase, HostPhase::Ready { .. }) {
             return false;
         }
-        host.phase = HostPhase::Unavailable(format!("The device helper disconnected: {reason}"));
+        self.set_host_phase(
+            device_id,
+            HostPhase::Unavailable(format!("The device helper disconnected: {reason}")),
+        );
         // A node that dials this core comes back by dialing again.
         if self
             .link_origin(device_id)
@@ -795,13 +859,14 @@ impl Runtime {
         if self.device_hosts.contains_key(device_id) {
             self.advance_host_generation(device_id);
             let host = self.device_host_entry(device_id);
-            if let HostPhase::Ready { host: remote, .. } =
-                std::mem::replace(&mut host.phase, HostPhase::Unavailable(reason.to_owned()))
-            {
+            let closing =
+                std::mem::replace(&mut host.phase, HostPhase::Unavailable(reason.to_owned()));
+            if let HostPhase::Ready { host: remote, .. } = closing {
                 remote.close(reason);
             }
         }
         self.end_device_terminals(device_id, reason);
+        self.refresh_pane_headers();
         self.drop_queued_codex_daemon_off(device_id);
         if self.device_machine_ids.remove(device_id).is_some() {
             self.refresh_agent_lineage();
@@ -832,16 +897,29 @@ impl Runtime {
         }
     }
 
-    pub(super) fn forget_device_host(&mut self, device_id: &str) {
-        self.close_device_host(device_id, "device removed");
+    pub(super) fn forget_device_host(&mut self, device_id: &str, why: Retiring) {
+        self.close_device_host(
+            device_id,
+            match why {
+                Retiring::Removed => "device removed",
+                Retiring::Retried => "device reconnecting",
+            },
+        );
         self.device_hosts.remove(device_id);
         self.device_host_retries.remove(device_id);
-        self.forget_device_catalog(device_id);
-        self.device_kit_pending.remove(device_id);
         self.codex_daemon_off_running.remove(device_id);
-        self.device_first_run_choice.remove(device_id);
-        self.kit_states.remove(device_id);
         self.forget_guardrails_device(device_id);
+        match why {
+            Retiring::Removed => {
+                self.forget_device_catalog(device_id);
+                self.device_kit_pending.remove(device_id);
+                self.device_first_run_choice.remove(device_id);
+                self.kit_states.remove(device_id);
+            }
+            // Work queued for the device runs on the next link; the row stops
+            // saying it is working until a worker can run it.
+            Retiring::Retried => self.clear_kit_busy(device_id),
+        }
     }
 
     /// The link to the machine this core runs on.
