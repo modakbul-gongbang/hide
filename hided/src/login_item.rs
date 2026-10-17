@@ -221,7 +221,11 @@ fn ensure_herdr(bin: &Path, started_within: Duration) -> String {
         Ok(false) => {}
         Err(reason) => return format!("status_failed: {reason}"),
     }
-    let mut command = std::process::Command::new(bin);
+    // Its panes' shells start with the server's environment, which launchd
+    // gave the system's folders alone on `PATH`: the server gets the
+    // account's own search, as the desktop host gives the server it starts
+    // its children's.
+    let mut command = hide_platform::programs::command(bin);
     command.arg("server");
     if std::env::var_os("LANG").is_none()
         && std::env::var_os("LC_ALL").is_none()
