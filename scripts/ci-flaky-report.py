@@ -62,7 +62,14 @@ EXPIRY_DAYS = 7
 # A run with more flaky tests than this is a broken environment, not flakiness;
 # the rest are counted in the log, not filed.
 MAX_PER_RUN = 20
-ANSI = re.compile(r"\x1b\[[0-9;]*m")
+# Terminal control in text read from a job log or bound for a public page:
+# ECMA-48 escape sequences (CSI, such as the color the runner puts around each
+# step's command in every job log, OSC, and the shorter forms) and every other
+# C0 and C1 control but tab and newline.
+CONTROL = re.compile(
+    r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]|\x1b(?:\][^\x07\x1b\n]*(?:\x07|\x1b\\)?|[ -/]*[0-~])?"
+    r"|[\x00-\x08\x0b-\x1f\x7f-\x9f]"
+)
 # Hand-written issues quote a title cut short ("Agent tabs shrink in stages...").
 MATCH_PREFIX = 20
 # A home folder in a quoted path names the account that ran it; an excerpt
@@ -181,7 +188,7 @@ def nextest_failed(root):
 
 
 def clean(text):
-    text = HOME.sub(r"\1~", ANSI.sub("", text))
+    text = HOME.sub(r"\1~", CONTROL.sub("", text))
     return TOKEN.sub("***", text).strip()[:600] or "(no message)"
 
 
@@ -256,18 +263,26 @@ def comment(test, system, facts, expired):
 
 
 def gh(args, body=None, raw=False):
+    """`gh api`'s JSON answer, or with `raw` a body's text with its terminal control removed.
+
+    A raw body, such as a job log, is the bytes the job wrote: gh 2.97 and later
+    refuse one that carries a terminal escape, as every job log does, unless
+    told `--allow-escape-sequences`, so the report needs gh 2.97 or later; and
+    a job may have written bytes that are not UTF-8.
+    """
     try:
         done = subprocess.run(
-            # gh speaks UTF-8; without a named encoding a Windows runner reads it as cp1252.
-            ["gh", "api", *args], input=None if body is None else json.dumps(body), capture_output=True, encoding="utf-8",
+            ["gh", "api", *(["--allow-escape-sequences"] if raw else []), *args],
+            input=None if body is None else json.dumps(body).encode("utf-8"), capture_output=True,
         )
     except OSError as error:
         raise RuntimeError(f"gh could not run: {error}") from error
+    # gh speaks UTF-8; a named encoding keeps a Windows runner from reading it as cp1252.
     if done.returncode:
-        raise RuntimeError(f"gh api {' '.join(args)}: {done.stderr.strip()}")
+        raise RuntimeError(f"gh api {' '.join(args)}: {done.stderr.decode('utf-8', 'replace').strip()}")
     if raw:
-        return done.stdout
-    return json.loads(done.stdout) if done.stdout.strip() else None
+        return CONTROL.sub("", done.stdout.decode("utf-8", "replace"))
+    return json.loads(done.stdout.decode("utf-8")) if done.stdout.strip() else None
 
 
 def open_issues(repo, call=gh):

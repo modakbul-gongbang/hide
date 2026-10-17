@@ -523,6 +523,8 @@ The nightly's `report` job (`scripts/ci-flaky-report.py --nightly`) is the one w
 - A run of any other branch writes no issue.
 - The report fails its job when GitHub does, so a failure it could not file shows as a red report job rather than a silence.
   `--dry-run` with `--repo` and `--run` prints what it would write for any finished run and writes nothing.
+- The report reads a failed job's log through `gh api`, which from gh 2.97 hands over a body carrying a terminal escape only when told `--allow-escape-sequences`, and every job log carries one (the runner colors each step's command), so the report and its `--dry-run` need gh 2.97 or later.
+  It decodes whatever bytes the log holds and removes every terminal control from it before it parses or quotes it, and does the same to an annotation's message; on 2026-10-10 and 2026-10-16 the report died on the first log it read and opened no issue.
 
 ## Reviewing a pull request that adds or changes a test
 
