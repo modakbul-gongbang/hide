@@ -4136,6 +4136,103 @@ fn an_opencode_session_rewound_and_grown_back_is_read_again_not_continued() {
 }
 
 #[test]
+fn opencode_conversation_page_is_its_label_read_by_message_with_receipts_as_injected_context() {
+    use hide_session::{EventKind, SessionReadScope};
+    let home = home(Agent::OpenCode);
+    let writer = opencode_writer(home.path());
+    // Hide's plugin stores a receipt in a synthetic part of the person's
+    // message; another tool's context arrives as a person's message of its
+    // own.
+    writer
+        .execute(
+            "INSERT INTO part VALUES ('prt_hide', 'msg_01', ?1, 1790989200001, 1790989200001, ?2)",
+            rusqlite::params![
+                OPENCODE_ROOT,
+                serde_json::json!({"type": "text", "synthetic": true,
+                    "text": "<system-reminder>\n<hide-memory-receipt event=\"UserPromptSubmit\" count=\"1\" items=\"m1@1\" auth=\"a\" />\n</system-reminder>"})
+                .to_string()
+            ],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO message VALUES ('msg_07', ?1, 1790989400000, 1790989400000, ?2)",
+            rusqlite::params![
+                OPENCODE_ROOT,
+                r#"{"role":"user","time":{"created":1790989400000}}"#
+            ],
+        )
+        .unwrap();
+    writer
+        .execute(
+            "INSERT INTO part VALUES ('prt_ctx', 'msg_07', ?1, 1790989400000, 1790989400000, ?2)",
+            rusqlite::params![
+                OPENCODE_ROOT,
+                serde_json::json!({"type": "text", "text": "<system-reminder>Background task finished</system-reminder>"})
+                    .to_string()
+            ],
+        )
+        .unwrap();
+    let scope = |cwd: &str| SessionReadScope {
+        id: OPENCODE_ROOT.to_owned(),
+        cwd: cwd.to_owned(),
+    };
+
+    let page =
+        hide_session::opencode::read_conversation(home.path(), &scope("/work/app"), None).unwrap();
+    let events = page
+        .events
+        .iter()
+        .zip(&page.event_offsets)
+        .map(|(event, offset)| (*offset, event.kind, event.is_provider_injected()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        events,
+        [
+            (0, EventKind::Human, false),
+            (0, EventKind::Injected, true),
+            (3, EventKind::Human, false),
+            (4, EventKind::Human, false),
+            (5, EventKind::Assistant, false),
+            (6, EventKind::Injected, false),
+        ]
+    );
+    assert!(page.events[1].text.starts_with("<hide-memory-receipt "));
+    assert_eq!(page.events[1].at_unix_ms, 1_790_989_200_000);
+    assert_eq!(page.events[3].images, 1);
+    assert_eq!((page.checkpoint.offset(), page.has_more), (7, false));
+    assert!(page.read_bytes > 0 && !page.rescanned);
+
+    // The same messages, at the same indexes, as the label read reports them.
+    let label = read(home.path(), &request(Agent::OpenCode)).unwrap();
+    assert_eq!(
+        label
+            .events
+            .iter()
+            .map(|event| event.offset)
+            .collect::<Vec<_>>(),
+        [0, 3, 4, 5, 6]
+    );
+    assert_eq!(label.memory_receipts[0].offset, 0);
+
+    // Read on from its checkpoint, nothing new is there.
+    let next = hide_session::opencode::read_conversation(
+        home.path(),
+        &scope("/work/app"),
+        Some(page.checkpoint),
+    )
+    .unwrap();
+    assert!(next.events.is_empty());
+    assert_eq!(next.checkpoint.offset(), 7);
+
+    assert_eq!(
+        hide_session::opencode::read_conversation(home.path(), &scope("/work/other"), None)
+            .unwrap_err(),
+        "label_session_cwd_mismatch"
+    );
+}
+
+#[test]
 fn opencode_activity_answers_its_newest_write_and_count_only_for_its_proven_owner() {
     use hide_session::session_activity::{SessionActivityRequest, read as activity};
     let home = home(Agent::OpenCode);

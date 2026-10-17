@@ -585,7 +585,8 @@ impl PreparedMemory {
     }
 
     /// Where the reporting session's conversation ends now, as the node
-    /// holding its file says: the hold ends once analysis reads past it (D-14).
+    /// holding it says (a file's length, or an OpenCode session's message
+    /// count): the hold ends once analysis reads past it (D-14).
     /// `None` when the node cannot say, and the hold lasts to its deadline.
     fn report_offset(
         &self,
