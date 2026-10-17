@@ -348,11 +348,15 @@ impl PluginFile {
             return Ok(false);
         }
         let folder = self.config_directory(home).join(self.folder);
-        for folder in std::iter::once(folder.clone()).chain(self.own_folder.map(|own| folder.join(own))) {
+        for folder in
+            std::iter::once(folder.clone()).chain(self.own_folder.map(|own| folder.join(own)))
+        {
             match std::fs::create_dir(&folder) {
                 Ok(()) => {}
                 Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(format!("{} could not be made: {error}", folder.display())),
+                Err(error) => {
+                    return Err(format!("{} could not be made: {error}", folder.display()));
+                }
             }
         }
         hide_platform::fs::atomic::write_file(

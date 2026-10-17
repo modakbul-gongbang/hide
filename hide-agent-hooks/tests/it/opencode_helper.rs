@@ -181,7 +181,9 @@ fn a_shell_call_that_starts_an_agent_through_herdr_is_refused_with_the_spawn_gua
                     "command": "herdr agent start --kind claude --name helper", "cwd": machine.home}),
             true,
         );
-        let reason = answer["deny"].as_str().unwrap_or_else(|| panic!("{shell}: {answer}"));
+        let reason = answer["deny"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{shell}: {answer}"));
         assert!(
             reason.contains("hide agent spawn --parent here"),
             "{reason}"

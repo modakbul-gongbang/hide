@@ -280,7 +280,11 @@ fn another_builds_plugin_or_a_gone_helper_reads_stale_with_the_reason() {
         let body = entry.body(&fixture.helper);
         fs::write(
             entry.path(fixture.home()),
-            format!("// {}@0 sha256={}\n{body}", entry.source_name, digest(&body)),
+            format!(
+                "// {}@0 sha256={}\n{body}",
+                entry.source_name,
+                digest(&body)
+            ),
         )
         .unwrap();
         match fixture.observe() {

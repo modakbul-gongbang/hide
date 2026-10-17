@@ -20,8 +20,14 @@ fn crate_dir() -> PathBuf {
 fn the_plugin_keeps_its_pinned_bytes() {
     let helper = Path::new("/kit path/it's/hide-agent-hooks");
     for (file, pinned) in [
-        (&V1, include_str!("../fixtures/hook-bytes/opencode-plugin.js")),
-        (&SERVER, include_str!("../fixtures/hook-bytes/opencode-server.js")),
+        (
+            &V1,
+            include_str!("../fixtures/hook-bytes/opencode-plugin.js"),
+        ),
+        (
+            &SERVER,
+            include_str!("../fixtures/hook-bytes/opencode-server.js"),
+        ),
         (&TUI, include_str!("../fixtures/hook-bytes/opencode-tui.js")),
     ] {
         assert_eq!(
