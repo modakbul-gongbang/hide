@@ -76,9 +76,24 @@ const V2_COLUMNS: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// What a 2.x database still holds of the 1.x `message` and `part` tables.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Legacy {
+    /// None of them: a fresh 2.x database, or a 1.x one.
+    Absent,
+    /// The messages and parts, as 2.x leaves them after it migrates a 1.x
+    /// database.
+    Complete,
+    /// One of them, or either without a column Hide reads: not a state 2.x
+    /// makes.
+    Partial,
+}
+
 impl Schema {
-    /// Reads the schema `connection` holds, from its own catalog.
-    pub(crate) fn detect(connection: &Connection) -> Result<Self, String> {
+    /// The schema `connection` holds, and, beside 2.x tables, what is left of
+    /// the 1.x ones. Only usage asks for the second: it counts a migrated
+    /// message from its 1.x parts, as it did before the migration.
+    pub(crate) fn detect(connection: &Connection) -> Result<(Self, Legacy), String> {
         let mut statement = connection
             .prepare(
                 "SELECT m.name, p.name FROM sqlite_master AS m, \
@@ -102,9 +117,22 @@ impl Schema {
             })
         };
         if holds(V2_COLUMNS) {
-            Ok(Self::V2)
+            // Usage reads only the messages and their parts, so the 1.x
+            // `session` table, which 2.x may or may not keep, is not asked.
+            let legacy_tables = &V1_COLUMNS[1..];
+            let legacy = if holds(legacy_tables) {
+                Legacy::Complete
+            } else if columns
+                .iter()
+                .any(|(table, _)| legacy_tables.iter().any(|(legacy, _)| legacy == table))
+            {
+                Legacy::Partial
+            } else {
+                Legacy::Absent
+            };
+            Ok((Self::V2, legacy))
         } else if holds(V1_COLUMNS) {
-            Ok(Self::V1)
+            Ok((Self::V1, Legacy::Absent))
         } else {
             Err(SCHEMA_UNKNOWN.to_owned())
         }

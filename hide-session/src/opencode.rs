@@ -55,7 +55,7 @@ use crate::{
     SESSION_INCREMENT_READ_LIMIT_BYTES, SESSION_LINE_LIMIT_BYTES, SkipReason,
     label_reference_token, pull_request_addresses,
 };
-pub(crate) use schema::{SCHEMA_UNKNOWN, Schema};
+pub(crate) use schema::{Legacy, SCHEMA_UNKNOWN, Schema};
 
 /// How long a read waits for OpenCode's own write to finish.
 /// The most messages one read takes; a longer session is read over several.
@@ -91,8 +91,16 @@ pub(crate) fn with_read<T>(
     home: &Path,
     read: impl FnOnce(&Connection, Schema) -> T,
 ) -> Result<T, String> {
+    with_read_legacy(home, |connection, schema, _| read(connection, schema))
+}
+
+/// [`with_read`], also handed what a 2.x database holds of the 1.x tables.
+pub(crate) fn with_read_legacy<T>(
+    home: &Path,
+    read: impl FnOnce(&Connection, Schema, Legacy) -> T,
+) -> Result<T, String> {
     with_unchecked_read(home, |connection| {
-        Schema::detect(connection).map(|schema| read(connection, schema))
+        Schema::detect(connection).map(|(schema, legacy)| read(connection, schema, legacy))
     })?
 }
 
