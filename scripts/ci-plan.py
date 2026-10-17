@@ -196,9 +196,10 @@ POLICY_ONLY = (
     ".github/ISSUE_TEMPLATE/*", ".github/DISCUSSION_TEMPLATE/*", ".github/APPROVED_CONTRIBUTORS",
     ".github/workflows/contribution-gate.yml",
     # Workflows no `pr.yml` job calls; `design-contract.yml` has its own pull
-    # request trigger, and the nightly calls `perf.yml`.
+    # request trigger, and the nightly calls `perf.yml` and
+    # `agent-trust-contract.yml`.
     ".github/workflows/nightly.yml", ".github/workflows/herdr-update.yml", ".github/workflows/design-contract.yml",
-    ".github/workflows/perf.yml",
+    ".github/workflows/perf.yml", ".github/workflows/agent-trust-contract.yml",
     "scripts/tests/*",
     # Scripts only `policy`, another workflow or nobody runs.
     "scripts/check-agent-asset-committed.sh", "scripts/check-capability-readers-off-lock.sh",
