@@ -28,15 +28,11 @@ function coreRowId(devices: readonly Device[] | undefined): string {
 }
 
 /**
- * The device this screen runs on: what only this machine can do (reveal or
+ * The device this window runs on: what only this machine can do (reveal or
  * open with an app, a terminal path, a page on its loopback) follows its
- * panes and checkouts. Without a node in the hash it is the core's own.
+ * panes and checkouts, and it is the one this window names This Mac. Without
+ * a node in the hash it is the core's own.
  */
-export function screenDeviceId(rest: SnapshotRest | null): string {
-  return hashNode() ?? localDeviceId(rest);
-}
-
-/** The same, read from the device rows the core lists. */
 export function windowDeviceId(devices: readonly Device[] | undefined): string {
   return hashNode() ?? coreRowId(devices);
 }
