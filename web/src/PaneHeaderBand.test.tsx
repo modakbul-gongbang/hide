@@ -426,3 +426,11 @@ it("words a pull request band by what its verb leaves out and nothing Hide could
     } finally { await unmount(); }
   }
 });
+
+it("words a pane waiting for its device's link as reconnecting, not as a failure", async () => {
+  const { container, unmount } = await mount({ working: false, band: { ...header.band!, kind: "reconnecting", tone: "muted", reason: null, raised: undefined, action: null, more: 0 } });
+  try {
+    expect(container.textContent).toContain("reconnecting…");
+    expect(container.textContent).not.toContain("unavailable");
+  } finally { await unmount(); }
+});

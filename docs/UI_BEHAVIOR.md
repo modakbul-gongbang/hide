@@ -1391,6 +1391,9 @@ The top row's icons are Overview and Open server; the Files badge is on the rail
 Retired `toggle_sidebar_view`, `project_home` and `sidebar_agents` (the removed Agents overview) stored bindings are ignored without losing other valid bindings, with a diagnostic.
 
 A device that is not connected shows the top row and its reconnect view with no tab strip.
+A device's Workspace that lost its connection keeps the last state on screen under one line, `<device> is not connected. Showing the last state it reported; nothing is sent until it reconnects.`, with `Reconnect`; the line names a refused host key or sign-in by its class (`Host key changed`, `Sign-in refused`) with what to do in its tooltip, and never carries the words the connection failed with, which are the device row's in Settings and the diagnostic log's.
+`Reconnect` pressed while the device still does not answer is a new attempt, not a new device: the last state stays, the Overview's age still says when it first stopped answering, and a Reinstall queued for it waits for the link.
+A pane of a device whose link comes back by itself reads `reconnecting…` in its band and returns with the link (the device's Herdr answering again retries the link at once); `unavailable` is left for a pane that waits for the operator or has no terminal service.
 The list shows the device's Needs You and Done and projects with their operator-owned roots.
 Needs You and Done stand still above the projects: the project list scrolls under them and never carries them off, and past half the sidebar's height they scroll on their own.
 Opening a raised row that leaves its section, a Done row once read, moves the next row up into its place, so the operator opens one after another from the same spot while the project list brings each one's tree row into view below (`web/e2e/projects-sidebar.spec.ts`).
