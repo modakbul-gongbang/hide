@@ -33,8 +33,8 @@ from . import ci, cells, quota
 from .controller import Controller
 from .daemon import Daemon
 from .journey import Journey
-from .local import (ROUTES, TRUST, allow_one_shot_references, claude_session_folders, operator_trust, route,
-                    wrapper)
+from .local import (ROUTES, TRUST, allow_one_shot_references, claude_session_folders, disable_hide_ai,
+                    operator_trust, route, wrapper)
 from .report import save, table_lines
 
 KIT_SECONDS = 90
@@ -376,6 +376,10 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
             continue
         launch = ci.wrapper(runtime, program, kind, os.environ.get("PATH", ""),
                             runtime.probe / f"fixture-{kind}.config" if fixture_bin else None)
+        # The kit installs an agent's hooks only where its own folder is, as
+        # a CLI that has run once leaves it; a new runner has none. Made
+        # before the CLI first runs, as Codex writes into it (CODEX_HOME).
+        private_directory(runtime.home / ci.HOME_FOLDERS[kind])
         environment = {**clean_env(), "HOME": str(runtime.home), "TMPDIR": runtime.env["TMPDIR"]}
         _, version, _ = runtime.owner.run([str(launch), "--version"], env=environment, check=False)
         agent["version"] = version.strip()[:120]
@@ -387,6 +391,22 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
                 continue
         ready.append(key)
     return ready
+
+
+def hide_ai_requests(log):
+    """The candidate's Hide AI model requests by provider, one per attempt
+    its log records with a duration; none when it never ran."""
+    found = {}
+    if not log.is_file():
+        return found
+    for line in log.read_text(errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and "feature_id" in record and "duration_ms" in record:
+            found[record.get("provider")] = found.get(record.get("provider"), 0) + 1
+    return found
 
 
 def budget_failures(agents):
@@ -475,6 +495,8 @@ def main(argv=None):
         write_private(runtime.bin / "hide", ("#!/bin/sh\nexec " + shlex.quote(str(runtime.hide)) + ' "$@"\n').encode())
         (runtime.bin / "hide").chmod(0o700)
         if local:
+            # Before hided starts, which reads the file once.
+            disable_hide_ai(runtime.home)
             sandbox, guard, ready = prepare_local(runtime, report, table, rows, measured, operator, root)
         else:
             sandbox, ready = None, prepare_ci(runtime, report, table, rows, measured, fixture_bin, root)
@@ -553,7 +575,11 @@ def main(argv=None):
                 owner.close()
             except Exception as cleanup_error:
                 report["cleanup"]["failures"].append(str(cleanup_error))
-        if runtime:
+        if runtime and not report["cleanup"].get("processes_confirmed"):
+            # An agent that may still run keeps its worktree and branch.
+            report["repository_cleanup"] = {"removed": [], "kept": [
+                {**item, "reason": "processes_unconfirmed"} for item in report["created"]]}
+        elif runtime:
             # After every process ended, so no agent still writes in a worktree.
             try:
                 report["repository_cleanup"] = remove_created(runtime, root, report["created"],
@@ -561,6 +587,16 @@ def main(argv=None):
             except Exception as error:
                 report["repository_cleanup"] = {"removed": [], "failure": str(error), "kept": [
                     {**item, "reason": "cleanup_failed: " + str(error)[:200]} for item in report["created"]]}
+        # Hide AI's model requests, apart from the agents' budget: none in
+        # local mode, where it is off, and counted in CI mode, where it is on.
+        try:
+            report["hide_ai_requests"] = hide_ai_requests(run / "hided.log")
+        except OSError as error:
+            report["hide_ai_requests"] = {}
+            report["failures"].append({"type": "OSError", "reason": f"hided_log_unreadable: {error}"})
+        if local and report["hide_ai_requests"]:
+            report["failures"].append({"type": "IsolationError", "reason": "hide_ai_ran_in_local_mode: "
+                                       + json.dumps(report["hide_ai_requests"])})
         if guard:
             try:
                 report["configuration"] = guard.finish()

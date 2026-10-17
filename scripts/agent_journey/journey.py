@@ -201,7 +201,8 @@ class Journey:
         CLI's own wait running out while the spawn continues, so the same intent
         is asked again until it answers (it converges on one agent)."""
         flag = self.row["prompt_flag"]
-        native = [*self.route["args"], *self.model_args, flag, prompt_text]
+        # The route's arguments are the wrapper's, on every start of the agent.
+        native = [*self.model_args, flag, prompt_text]
         args = ["agent", "spawn", "--parent", "here", "--name", name, "--intent", name,
                 "--kind", self.kind, "--repo", str(repository),
                 "--branch", branch, "--path", str(path), "--", *native]
@@ -508,9 +509,13 @@ class Journey:
         try:
             self.runtime.wait(lambda: (agent := self.herdr_agent()) and agent.get("interactive_ready", True)
                               and agent.get("agent_status") in ("idle", "done") and not agent.get("launch_pending"), 60)
-        except ProcessError:
+        except ProcessError as error:
             if self.runtime.owner.cancelled.is_set():
                 raise
+            agent = self.herdr_agent() or {}
+            raise ProcessError(f"agent_not_ready_for_input: Herdr reads {agent.get('agent_status')}, "
+                               f"interactive_ready {agent.get('interactive_ready')}, "
+                               f"launch_pending {agent.get('launch_pending')}") from error
 
     def untrusted(self, repository):
         """A start in a repository the account never trusted, with no preparation."""
@@ -531,11 +536,12 @@ class Journey:
                 return
             self.agent, self.session, self.checkout = answer["value"]["id"], answer["value"]["session"], worktree.resolve()
             self.reference = None
-            turn, _read, record["activities"] = self.wait_turn(0, value)
+            turn, read, record["activities"] = self.wait_turn(0, value)
             native = self.herdr_agent() or {}
-            record["herdr_agent"], record["turn"] = native, turn
+            record["herdr_agent"], record["turn"], record["read"] = native, turn, read
             self.settle("start_untrusted", cells.start_verdict(spawned, turn,
-                                                               cells.emitter_verdict(native.get("agent_session"), self.kind)),
+                                                               cells.emitter_verdict(native.get("agent_session"), self.kind),
+                                                               cells.reply_verdict(read, self.session, value)),
                         self.evidence("start-untrusted", record))
         finally:
             self.pane = saved_pane

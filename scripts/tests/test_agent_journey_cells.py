@@ -5,10 +5,13 @@ import json
 from pathlib import Path
 import sys
 import tempfile
+import threading
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_journey import cells
+from agent_journey.daemon import Daemon
+from agent_live_check.processes import ProcessError
 from agent_journey.local import (codex_login_refusal, grok_login_refusal, omp_login_refusal, pi_login_refusal,
                                  trust_codex, trust_grok)
 
@@ -200,6 +203,30 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(cells.resume_verdict("a", "b", (cells.PASS, "ok")),
                          (cells.FAIL, "native session changed across Wake (a -> b)"))
         self.assertEqual(cells.resume_verdict("a", "a", (cells.PASS, "ok")), (cells.PASS, "same session a; ok"))
+
+
+class ClosedReader(unittest.TestCase):
+    def daemon(self, closed):
+        daemon = Daemon.__new__(Daemon)
+        daemon.lock, daemon.closed, daemon.history = threading.Condition(), closed, {"p1": [("working", 1)]}
+        daemon.rest = {"navigator": {"agents": [{"pane_id": "p1", "activity": "idle"}]}}
+        return daemon
+
+    def test_a_live_reader_adds_the_row_as_it_reads_now(self):
+        self.assertEqual([activity for activity, _ in self.daemon(None).activities("p1")], ["working", "idle"])
+
+    def test_a_reader_that_stopped_fails_instead_of_offering_its_last_row(self):
+        # Its cached row would read idle forever and pass a turn that never ended.
+        with self.assertRaisesRegex(ProcessError, "daemon_connection_lost:ConnectionError: daemon_closed_1006"):
+            self.daemon("ConnectionError: daemon_closed_1006").activities("p1")
+
+
+class UntrustedStart(unittest.TestCase):
+    def test_an_answer_read_from_another_session_fails_the_start(self):
+        spawned, turn, emitter = (cells.PASS, "spawned"), (cells.PASS, "turn ended"), (cells.PASS, "emitter")
+        read = {"session": "other", "events": [{"role": "assistant", "text": "JOURNEY-1"}]}
+        self.assertEqual(cells.start_verdict(spawned, turn, emitter, cells.reply_verdict(read, "spawned-session", "JOURNEY-1")),
+                         (cells.FAIL, "Hide's reader read session other, not spawned-session"))
 
 
 class LocalRoute(unittest.TestCase):

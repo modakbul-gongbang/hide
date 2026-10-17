@@ -16,6 +16,7 @@ import shutil
 
 from agent_live_check.protection import ProtectionError, private_directory, write_private
 
+from . import cells
 from .local import QUIET
 
 LOGINS = {
@@ -39,8 +40,15 @@ LOGINS = {
     "omp": {"secret": "HIDE_OMP_API_KEY", "key_env": "OPENAI_API_KEY", "env": {}},
 }
 
+# Each CLI's own folder in its HOME, which says to the kit that it is set up.
+HOME_FOLDERS = {"claude": ".claude", "codex": ".codex"}
+
 # A stand-in asks no folder question, so its start anywhere says nothing of one.
 FIXTURE_UNTRUSTED = "not measured: a stand-in has no folder question; the login lane measures it"
+# The agents the stand-ins imitate (web/e2e/shims/live-check.h) and the cells
+# they pass, so the fixture lane passes only when each passed.
+FIXTURE_AGENTS = ("claude-code", "codex")
+FIXTURE_CELLS = tuple(name for name in cells.BUILT_CELLS if name != "start_untrusted")
 
 # What a fixture stand-in cannot show, said in its report (PRD B27).
 FIXTURE_LIMITS = [
@@ -127,6 +135,10 @@ def login(runtime, kind, launch, root):
     """Signs the agent in with the lane's key; returns the refusal, or None."""
     secret = os.environ[LOGINS[kind]["secret"]]
     keys = runtime.probe / "keys"
+    # Registered before anything is written, so even an unconfirmed cleanup removes them.
+    runtime.credential_roots.add(keys)
+    if kind == "codex":
+        runtime.credential_roots.add(runtime.home / HOME_FOLDERS[kind])
     private_directory(keys)
     write_private(key_file(runtime, kind), secret.encode())
     if kind == "claude":
