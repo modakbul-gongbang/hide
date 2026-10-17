@@ -788,6 +788,31 @@ fn a_nodes_project_opens_its_link_record_on_its_pr_card() {
         .expect("the panel opens");
     assert_eq!(panel.workspace_id, "w");
     assert_eq!(panel.failure.as_deref(), Some("links_worker_unavailable"));
+
+    // With the worker: the record answers with the pull request the node's
+    // GitHub read listed, as it does for this machine's project.
+    let github = std::mem::take(&mut runtime.github);
+    runtime.device_github.insert("mbp".into(), github);
+    let shared = Arc::new(Mutex::new(runtime));
+    let worker = super::super::links::spawn_worker(&shared, ChangeNotifier::noop())
+        .expect("the link worker starts");
+    assert!(
+        shared
+            .lock()
+            .unwrap()
+            .dispatch_json(&open_event(serde_json::json!({"kind": "pr", "number": 7})))
+    );
+    wait(&shared, "the node's record", |runtime| {
+        runtime
+            .snapshot
+            .link_panel
+            .as_ref()
+            .is_some_and(|panel| !panel.loading && panel.pr.is_some())
+    });
+    let panel = shared.lock().unwrap().snapshot.link_panel.clone().unwrap();
+    assert_eq!(panel.failure, None);
+    assert_eq!(panel.pr.unwrap().branch, "4-task");
+    drop(worker);
 }
 
 #[test]
