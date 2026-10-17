@@ -45,31 +45,33 @@ impl DaemonState {
 /// and the core a move starts open it, before any store reads it; a link or
 /// another account's folder is refused, and no daemon starts on it.
 fn create_private_dir(dir: &Path) -> io::Result<()> {
-    match private::own_dir(dir) {
-        Ok(private::OwnDir::Restricted) => {
-            let record = serde_json::json!({
+    let (opened, record) = match private::own_dir(dir) {
+        Ok(private::OwnDir::Made | private::OwnDir::Private) => return Ok(()),
+        Ok(private::OwnDir::Restricted) => (
+            Ok(()),
+            serde_json::json!({
                 "component": "hided",
                 "kind": "state.made_private",
                 "state_dir": dir.display().to_string(),
-            });
-            // On disk at once: this runs before the daemon's log is open.
-            let core_state = dir.join(herdr_core::node_migration::CORE_STATE);
-            if let Err(error) = herdr_core::diagnostics::record_now(&core_state, record) {
-                eprintln!("the state folder's repair could not be logged: {error}");
-            }
-            Ok(())
-        }
-        Ok(private::OwnDir::Made | private::OwnDir::Private) => Ok(()),
+            }),
+        ),
         Err(error) => {
-            herdr_core::diagnostic!(serde_json::json!({
+            let record = serde_json::json!({
                 "component": "hided",
                 "kind": "state.not_private",
                 "state_dir": dir.display().to_string(),
                 "message": error.to_string(),
-            }));
-            Err(error)
+            });
+            (Err(error), record)
         }
+    };
+    // On disk at once: this runs before the daemon's log is open, and a
+    // refused daemon never opens it.
+    let core_state = dir.join(herdr_core::node_migration::CORE_STATE);
+    if let Err(error) = herdr_core::diagnostics::record_now(&core_state, record) {
+        eprintln!("the state folder's record could not be logged: {error}");
     }
+    opened
 }
 
 pub fn state_path(dir: &Path) -> PathBuf {
