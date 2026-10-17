@@ -590,7 +590,10 @@ pub enum InspectionDirectory {
 
 /// Inspects one entry without following it. Real directories must belong
 /// to this account or the system and deny other-account modification; a
-/// root-owned sticky system directory also protects existing child names.
+/// system directory others may only add entries to protects the names in it
+/// as well (the sticky rule: a root-owned sticky folder on Unix, on Windows a
+/// system-owned folder that grants others only `FILE_ADD_FILE` and
+/// `FILE_ADD_SUBDIRECTORY`, as a drive's root does).
 /// A system-owned alias returns its raw target so the caller can inspect
 /// that namespace before following it. Account-owned links are refused.
 /// This creates nothing and leaves permissions unchanged.
