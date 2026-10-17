@@ -26,24 +26,31 @@
 //!
 //! Hide remembers in its own record which entries it added: removing the
 //! worktree, or switching the agent off, takes out only those, and an entry
-//! the operator added, before Hide or after it, stays. Every change holds one
-//! account lock per agent, and the JSON files are rewritten through the same
-//! lossless read and compare-before-replace as the hook files, so their other
-//! keys and the operator's formatting are kept byte for byte.
+//! the operator added, before Hide or after it, stays. An entry for a folder
+//! that is gone goes with the next entry Hide adds, so the record's cap is
+//! only reached by folders that exist. Every change holds one account lock
+//! per agent, waited for as long as the longest change holds it, and the JSON
+//! files are rewritten through the same lossless read and compare-before-
+//! replace as the hook files, so their other keys and the operator's
+//! formatting are kept byte for byte.
 
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use hide_agent_adapter::LaunchDialect;
 use serde_json::{Map, Value};
 
 use crate::install::{HookDocument, InstallFailure, read_document, write_document};
+use crate::runtime::AgentRuntime;
 
-const LOCK_WAIT: Duration = Duration::from_secs(2);
-/// The most entries one agent's record keeps; a worktree is removed long
-/// before.
+/// How long Hide waits for Claude Code's own lock on its config, which Claude
+/// holds only while it saves the file.
+const CLAUDE_LOCK_WAIT: Duration = Duration::from_secs(2);
+/// The most folders that exist one agent's record keeps; a worktree is
+/// removed long before.
 const RECORD_LIMIT: usize = 4096;
 
 /// An agent whose folder trust Hide records.
@@ -80,13 +87,32 @@ impl Agent {
         }
     }
 
-    /// The file whose trust entries this agent reads.
+    /// The file whose trust entries this agent reads: for Claude Code and
+    /// Codex the one their hooks' folder names (`AgentRuntime::trust_path`).
     pub fn settings_path(self, home: &Path) -> PathBuf {
         match self {
-            Self::ClaudeCode => claude::config_path(home),
-            Self::Codex => home.join(".codex").join("config.toml"),
+            Self::ClaudeCode => AgentRuntime::ClaudeCode.trust_path(home),
+            Self::Codex => AgentRuntime::Codex.trust_path(home),
             Self::Antigravity => antigravity::settings_path(home),
         }
+    }
+
+    /// The longest one change holds Hide's lock for this agent: a Codex
+    /// session's whole bound, or Claude Code's wait for its own lock, with a
+    /// second for Hide's files around it.
+    fn longest_hold(self) -> Duration {
+        let own = match self {
+            Self::Codex => crate::codex_trust::SESSION_BOUND,
+            Self::ClaudeCode => CLAUDE_LOCK_WAIT,
+            Self::Antigravity => Duration::ZERO,
+        };
+        own + Duration::from_secs(1)
+    }
+
+    /// The longest a [`trust`] or [`forget`] of this agent takes: the wait for
+    /// a change that already holds the lock, then its own.
+    pub fn longest_change(self) -> Duration {
+        2 * self.longest_hold()
     }
 
     fn file_stem(self) -> &'static str {
@@ -151,7 +177,14 @@ fn agent_hooks_dir(home: &Path) -> PathBuf {
     home.join(".hide").join("agent-hooks")
 }
 
-fn hold(agent: Agent, home: &Path) -> Result<hide_platform::fs::lock::Lock, InstallFailure> {
+/// Hide's lock for `agent`'s trust, waited for as long as the change holding
+/// it can take, so a second start while Codex records the first one's trust
+/// waits for it instead of failing.
+fn hold(
+    agent: Agent,
+    home: &Path,
+    stop: &AtomicBool,
+) -> Result<hide_platform::fs::lock::Lock, InstallFailure> {
     let path = agent.lock_path(home);
     let failure = |detail: String| InstallFailure::NotWritable {
         path: path.display().to_string(),
@@ -166,13 +199,18 @@ fn hold(agent: Agent, home: &Path) -> Result<hide_platform::fs::lock::Lock, Inst
     match hide_platform::fs::lock::lock_file(
         file,
         hide_platform::fs::lock::Mode::Exclusive,
-        LOCK_WAIT,
-        &|| false,
+        agent.longest_hold(),
+        &|| stop.load(Ordering::Relaxed),
     )
     .map_err(|error| failure(error.to_string()))?
     {
         hide_platform::fs::lock::Waited::Locked(held) => Ok(held),
-        _ => Err(failure("another trust change held the lock".to_owned())),
+        hide_platform::fs::lock::Waited::TimedOut => Err(failure(format!(
+            "another change of {}'s trust held the lock for more than {} s",
+            agent.label(),
+            agent.longest_hold().as_secs()
+        ))),
+        hide_platform::fs::lock::Waited::Cancelled => Err(failure("Hide is stopping".to_owned())),
     }
 }
 
@@ -195,12 +233,6 @@ fn write_record(agent: Agent, home: &Path, record: &[String]) -> Result<(), Inst
         path: path.display().to_string(),
         detail,
     };
-    if record.len() > RECORD_LIMIT {
-        return Err(failure(format!(
-            "Hide's record of {} trust holds more than {RECORD_LIMIT} folders",
-            agent.label()
-        )));
-    }
     let bytes = serde_json::to_vec(record).map_err(|error| failure(error.to_string()))?;
     hide_platform::fs::atomic::write_file(&path, &bytes, hide_platform::fs::Access::Private)
         .map(drop)
@@ -228,8 +260,16 @@ pub fn trust(agent: Agent, home: &Path, folder: &Path, tools: Tools) -> Result<(
             .transpose()?,
         _ => None,
     };
-    let _lock = hold(agent, home)?;
+    let _lock = hold(agent, home, tools.stop)?;
     let mut record = read_record(agent, home)?;
+    // Hide's entries for folders that are gone (removed outside Hide, or by a
+    // removal that could not reach the agent) go in the same write as the new
+    // one, so the cap is only reached by folders that exist.
+    let gone: Vec<String> = record
+        .iter()
+        .filter(|entry| **entry != key && folder_is_gone(entry))
+        .cloned()
+        .collect();
     let mut added = false;
     // The record is written first, so a crash between the two writes leaves a
     // recorded folder the agent does not trust, which a removal skips. A
@@ -238,6 +278,15 @@ pub fn trust(agent: Agent, home: &Path, folder: &Path, tools: Tools) -> Result<(
     let written = {
         let mut remember = || {
             if !record.contains(&key) {
+                if record.len() - gone.len() >= RECORD_LIMIT {
+                    return Err(InstallFailure::NotWritable {
+                        path: agent.record_path(home).display().to_string(),
+                        detail: format!(
+                            "Hide's record of {} trust already holds {RECORD_LIMIT} folders that exist",
+                            agent.label()
+                        ),
+                    });
+                }
                 record.push(key.clone());
                 write_record(agent, home, &record)?;
                 added = true;
@@ -245,25 +294,44 @@ pub fn trust(agent: Agent, home: &Path, folder: &Path, tools: Tools) -> Result<(
             Ok(())
         };
         match agent {
-            Agent::ClaudeCode => claude::add(home, &key, &mut remember),
+            Agent::ClaudeCode => claude::add(home, &key, &gone, &mut remember),
             Agent::Codex => crate::codex_trust::add_project_trust(
                 codex_program(home, tools)?,
                 home,
                 tools.stop,
                 &key,
                 repository.as_deref(),
+                &gone,
                 &mut remember,
             ),
-            Agent::Antigravity => antigravity::add(home, &key, &mut remember),
+            Agent::Antigravity => antigravity::add(home, &key, &gone, &mut remember),
         }
     };
-    if written.is_err() && added {
-        record.retain(|entry| entry != &key);
-        // The agent's failure is the one reported; a record left behind is
-        // the crash case above.
-        let _ = write_record(agent, home, &record);
+    match written {
+        Ok(Added::New) if !gone.is_empty() => {
+            record.retain(|entry| !gone.contains(entry));
+            // The agent no longer trusts them; an entry still recorded is
+            // taken out of the record with the next one Hide adds.
+            let _ = write_record(agent, home, &record);
+            Ok(())
+        }
+        Ok(_) => Ok(()),
+        Err(failure) => {
+            if added {
+                record.retain(|entry| entry != &key);
+                // The agent's failure is the one reported; a record left
+                // behind is the crash case above.
+                let _ = write_record(agent, home, &record);
+            }
+            Err(failure)
+        }
     }
-    written.map(drop)
+}
+
+/// Whether the folder a record entry names is gone. A folder that cannot be
+/// looked at is not taken for gone.
+fn folder_is_gone(entry: &str) -> bool {
+    matches!(Path::new(entry).try_exists(), Ok(false))
 }
 
 /// [`trust`] for a worktree Hide made for a start of `agent`, refused unless
@@ -329,21 +397,54 @@ fn codex_program<'a>(home: &Path, tools: Tools<'a>) -> Result<&'a Path, InstallF
 }
 
 /// Takes out the trust Hide added for `folder`, as when Hide removes the
-/// worktree; a folder Hide did not add is left alone. Answers how many
-/// entries left the agent's settings.
+/// worktree; a folder Hide did not add is left alone. The folder may already
+/// be gone and named as Git lists it: Hide's record holds the key it wrote,
+/// and each entry there is compared with the folder as the system compares
+/// folders. Answers how many entries left the agent's settings.
 pub fn forget(
     agent: Agent,
     home: &Path,
     folder: &Path,
     tools: Tools,
 ) -> Result<usize, InstallFailure> {
+    agent.spelling(folder)?;
+    let names = folder_names(folder);
+    forget_where(agent, home, tools, |entry| {
+        names.iter().any(|name| same_folder(entry, name))
+    })
+}
+
+/// The ways `folder` may have been recorded: as given, and resolved, with
+/// only its parent resolved once the folder itself is gone.
+fn folder_names(folder: &Path) -> Vec<PathBuf> {
     let resolved = hide_platform::fs::identity::canonical(folder)
         .ok()
-        .and_then(|path| agent.spelling(&path).ok());
-    let folder = agent.spelling(folder)?;
-    forget_where(agent, home, tools, |entry| {
-        entry == folder || resolved.as_deref() == Some(entry)
-    })
+        .or_else(|| {
+            let parent = hide_platform::fs::identity::canonical(folder.parent()?).ok()?;
+            Some(parent.join(folder.file_name()?))
+        });
+    std::iter::once(folder.to_path_buf())
+        .chain(resolved)
+        .collect()
+}
+
+/// Whether a record entry names `path`, as the system compares folders: on
+/// Windows without case and with either separator, which covers each agent's
+/// spelling there (`Agent::spelling`), and exactly elsewhere.
+fn same_folder(entry: &str, path: &Path) -> bool {
+    let Some(path) = path.to_str() else {
+        return false;
+    };
+    let trim = |name: &str| {
+        name.trim_end_matches(['/', std::path::MAIN_SEPARATOR])
+            .to_owned()
+    };
+    if cfg!(windows) {
+        let fold = |name: &str| trim(name).replace('/', "\\").to_lowercase();
+        fold(entry) == fold(path)
+    } else {
+        trim(entry) == trim(path)
+    }
 }
 
 /// Takes out every trust Hide added for `agent`, as when it is switched off.
@@ -369,7 +470,7 @@ fn forget_where(
     {
         return Ok(0);
     }
-    let _lock = hold(agent, home)?;
+    let _lock = hold(agent, home, tools.stop)?;
     let record = read_record(agent, home)?;
     let (gone, kept): (Vec<_>, Vec<_>) = record.into_iter().partition(|entry| chosen(entry));
     if gone.is_empty() {
@@ -445,9 +546,12 @@ mod antigravity {
             })
     }
 
+    /// Adds `key` unless agy trusts it already, and takes out the entries in
+    /// `gone` in the same write.
     pub(super) fn add(
         home: &Path,
         key: &str,
+        gone: &[String],
         remember: &mut dyn FnMut() -> Result<(), InstallFailure>,
     ) -> Result<Added, InstallFailure> {
         let settings = settings_path(home);
@@ -458,6 +562,7 @@ mod antigravity {
             return Ok(Added::Present);
         }
         remember()?;
+        take_out(list, gone);
         list.push(Value::String(key.to_owned()));
         write_document(&settings, &document).map(|()| Added::New)
     }
@@ -467,18 +572,21 @@ mod antigravity {
         let Some(mut document) = read_document(&settings)? else {
             return Ok(0);
         };
-        let list = entries(&mut document, &settings)?;
+        let removed = take_out(entries(&mut document, &settings)?, gone);
+        if removed > 0 {
+            write_document(&settings, &document)?;
+        }
+        Ok(removed)
+    }
+
+    fn take_out(list: &mut Vec<Value>, gone: &[String]) -> usize {
         let before = list.len();
         list.retain(|entry| {
             entry
                 .as_str()
                 .is_none_or(|entry| !gone.iter().any(|g| g == entry))
         });
-        let removed = before - list.len();
-        if removed > 0 {
-            write_document(&settings, &document)?;
-        }
-        Ok(removed)
+        before - list.len()
     }
 }
 
@@ -488,6 +596,10 @@ mod antigravity {
 /// reads the file again before every write of its own, so Hide holds the same
 /// lock across its read and its write and neither drops the other's change.
 mod claude {
+    use std::time::SystemTime;
+
+    use hide_platform::fs::identity::FileId;
+
     use super::*;
 
     const PROJECTS: &str = "projects";
@@ -497,67 +609,109 @@ mod claude {
     const STALE: Duration = Duration::from_secs(10);
     const POLL: Duration = Duration::from_millis(50);
 
-    /// Claude Code's global config: `~/.claude.json`, or the older
-    /// `~/.claude/.config.json` while that file has content, which Claude
-    /// Code then reads instead (its `getGlobalClaudeFile`). Like Hide's hook
-    /// entries in `~/.claude/settings.json`, it is the account's default
-    /// folder and not one `CLAUDE_CONFIG_DIR` names.
-    pub(super) fn config_path(home: &Path) -> PathBuf {
-        let legacy = home.join(".claude").join(".config.json");
-        if std::fs::metadata(&legacy).is_ok_and(|meta| meta.is_file() && meta.len() > 0) {
-            return legacy;
-        }
-        home.join(".claude.json")
+    /// Which lock folder a path names: its identity and its time, the two
+    /// together because a filesystem may give a new folder a freed number.
+    type Mark = (FileId, SystemTime);
+
+    fn mark(path: &Path) -> Option<Mark> {
+        let id = hide_platform::fs::identity::file_id_nofollow(path).ok()?;
+        let modified = std::fs::symlink_metadata(path).ok()?.modified().ok()?;
+        Some((id, modified))
     }
 
     /// Claude Code's lock on its config, held until dropped.
-    struct ConfigLock(PathBuf);
+    pub(super) struct ConfigLock {
+        path: PathBuf,
+        /// The folder Hide made. A hold past [`STALE`] lets Claude Code take
+        /// the lock over, and then the folder there is Claude's.
+        made: Mark,
+    }
 
     impl ConfigLock {
+        /// The lock beside the config's real path, where proper-lockfile
+        /// puts it (it resolves links), so a linked `~/.claude.json` is locked
+        /// where Claude Code locks it.
+        pub(super) fn path(config: &Path) -> PathBuf {
+            let real = hide_platform::fs::identity::canonical(config)
+                .unwrap_or_else(|_| config.to_path_buf());
+            let mut path = real.into_os_string();
+            path.push(".lock");
+            PathBuf::from(path)
+        }
+
         // Another process's lock folder announces nothing when it goes.
         #[allow(clippy::disallowed_methods)] // a production wait, not test code
-        fn take(config: &Path) -> Result<Self, InstallFailure> {
-            let mut path = config.as_os_str().to_owned();
-            path.push(".lock");
-            let path = PathBuf::from(path);
+        pub(super) fn take(config: &Path) -> Result<Self, InstallFailure> {
+            let path = Self::path(config);
             let failure = |detail: String| InstallFailure::NotWritable {
                 path: config.display().to_string(),
                 detail,
             };
-            let deadline = Instant::now() + LOCK_WAIT;
+            let deadline = Instant::now() + CLAUDE_LOCK_WAIT;
             loop {
                 match std::fs::create_dir(&path) {
-                    Ok(()) => return Ok(Self(path)),
+                    Ok(()) => {
+                        let Some(made) = mark(&path) else {
+                            let _ = std::fs::remove_dir(&path);
+                            return Err(failure(format!(
+                                "the lock folder Hide made ({}) could not be read",
+                                path.display()
+                            )));
+                        };
+                        return Ok(Self { path, made });
+                    }
                     Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(error) => return Err(failure(error.to_string())),
                 }
-                let stale = std::fs::metadata(&path)
-                    .and_then(|meta| meta.modified())
-                    .ok()
-                    .and_then(|touched| touched.elapsed().ok())
-                    .is_some_and(|age| age > STALE);
+                let seen = mark(&path);
+                let stale = seen
+                    .is_some_and(|(_, modified)| modified.elapsed().is_ok_and(|age| age > STALE));
                 if stale {
-                    // Taken over as proper-lockfile takes it over; another
-                    // process may have done so first, which the next
-                    // `create_dir` finds.
-                    let _ = std::fs::remove_dir(&path);
+                    // Taken over as proper-lockfile takes one over: only the
+                    // folder seen stale, then one more try to make it, so a
+                    // lock made meanwhile is waited for. Hide's own changes
+                    // never meet here, since each holds Hide's lock first, so
+                    // the only other taker is Claude Code, whose own takeover
+                    // leaves the same moment between the look and the removal.
+                    if mark(&path) == seen {
+                        let _ = std::fs::remove_dir(&path);
+                    }
                     continue;
                 }
                 if Instant::now() >= deadline {
                     return Err(failure(format!(
                         "Claude Code held its config lock ({}) for more than {} s",
                         path.display(),
-                        LOCK_WAIT.as_secs()
+                        CLAUDE_LOCK_WAIT.as_secs()
                     )));
                 }
                 std::thread::sleep(POLL);
             }
         }
+
+        /// Whether the lock folder is still the one Hide made.
+        pub(super) fn held(&self) -> bool {
+            mark(&self.path) == Some(self.made)
+        }
+
+        /// Refuses a write once Claude Code took the lock over.
+        fn still_held(&self, config: &Path) -> Result<(), InstallFailure> {
+            if self.held() {
+                return Ok(());
+            }
+            Err(InstallFailure::NotWritable {
+                path: config.display().to_string(),
+                detail: "Claude Code took its config lock over while Hide held it".to_owned(),
+            })
+        }
     }
 
     impl Drop for ConfigLock {
         fn drop(&mut self) {
-            let _ = std::fs::remove_dir(&self.0);
+            // A lock Claude Code took over is Claude's to remove.
+            if self.held() {
+                let _ = std::fs::remove_dir(&self.path);
+            }
         }
     }
 
@@ -573,39 +727,50 @@ mod claude {
         )
     }
 
+    /// Sets the flag on `key` unless Claude Code trusts it already, and takes
+    /// Hide's flag off the entries in `gone` in the same write.
     pub(super) fn add(
         home: &Path,
         key: &str,
+        gone: &[String],
         remember: &mut dyn FnMut() -> Result<(), InstallFailure>,
     ) -> Result<Added, InstallFailure> {
-        let config = config_path(home);
-        let _lock = ConfigLock::take(&config)?;
+        let config = Agent::ClaudeCode.settings_path(home);
+        let lock = ConfigLock::take(&config)?;
         let mut document =
             read_document(&config)?.unwrap_or_else(|| HookDocument::new(Value::Object(Map::new())));
-        let entry = object_entry(
-            projects(&mut document, &config)?,
-            key,
-            &config,
-            "a projects entry is not an object",
-        )?;
+        let projects = projects(&mut document, &config)?;
+        let entry = object_entry(projects, key, &config, "a projects entry is not an object")?;
         if entry.get(ACCEPTED) == Some(&Value::Bool(true)) {
             return Ok(Added::Present);
         }
         remember()?;
         entry.insert(ACCEPTED.to_owned(), Value::Bool(true));
+        take_out(projects, gone);
+        lock.still_held(&config)?;
         write_document(&config, &document).map(|()| Added::New)
     }
 
     pub(super) fn remove(home: &Path, gone: &[String]) -> Result<usize, InstallFailure> {
-        let config = config_path(home);
+        let config = Agent::ClaudeCode.settings_path(home);
         if !config.exists() {
             return Ok(0);
         }
-        let _lock = ConfigLock::take(&config)?;
+        let lock = ConfigLock::take(&config)?;
         let Some(mut document) = read_document(&config)? else {
             return Ok(0);
         };
-        let projects = projects(&mut document, &config)?;
+        let removed = take_out(projects(&mut document, &config)?, gone);
+        if removed > 0 {
+            lock.still_held(&config)?;
+            write_document(&config, &document)?;
+        }
+        Ok(removed)
+    }
+
+    /// Takes Hide's flag off each entry in `gone` that still has it set, and
+    /// the entry with it when the flag was all it held.
+    fn take_out(projects: &mut Map<String, Value>, gone: &[String]) -> usize {
         let mut removed = 0;
         for key in gone {
             let Some(entry) = projects.get_mut(key).and_then(Value::as_object_mut) else {
@@ -620,10 +785,7 @@ mod claude {
             }
             removed += 1;
         }
-        if removed > 0 {
-            write_document(&config, &document)?;
-        }
-        Ok(removed)
+        removed
     }
 }
 

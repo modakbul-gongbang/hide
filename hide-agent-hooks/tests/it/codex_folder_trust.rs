@@ -90,27 +90,32 @@ fn resolved(path: &Path) -> String {
 /// Git writes for them.
 fn linked_worktree(root: &Path) -> (PathBuf, PathBuf) {
     let main = root.join("repo");
-    let linked = root.join("repo-task");
-    std::fs::create_dir_all(main.join(".git/worktrees/task")).unwrap();
+    std::fs::create_dir_all(main.join(".git")).unwrap();
     std::fs::write(main.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+    let linked = another_worktree(&main, "task");
+    (main, linked)
+}
+
+/// One more linked worktree of the repository at `main`: `repo-<name>`
+/// beside it.
+fn another_worktree(main: &Path, name: &str) -> PathBuf {
+    let admin = main.join(".git/worktrees").join(name);
+    let linked = main.with_file_name(format!("repo-{name}"));
+    std::fs::create_dir_all(&admin).unwrap();
     std::fs::create_dir_all(&linked).unwrap();
     std::fs::write(
         linked.join(".git"),
-        format!("gitdir: {}\n", main.join(".git/worktrees/task").display()),
+        format!("gitdir: {}\n", admin.display()),
     )
     .unwrap();
+    std::fs::write(admin.join("HEAD"), format!("ref: refs/heads/{name}\n")).unwrap();
+    std::fs::write(admin.join("commondir"), "../..\n").unwrap();
     std::fs::write(
-        main.join(".git/worktrees/task/HEAD"),
-        "ref: refs/heads/task\n",
-    )
-    .unwrap();
-    std::fs::write(main.join(".git/worktrees/task/commondir"), "../..\n").unwrap();
-    std::fs::write(
-        main.join(".git/worktrees/task/gitdir"),
+        admin.join("gitdir"),
         format!("{}\n", linked.join(".git").display()),
     )
     .unwrap();
-    (main, linked)
+    linked
 }
 
 #[test]
@@ -214,5 +219,62 @@ fn a_codex_with_no_user_config_yet_is_given_one() {
     assert_eq!(
         fixture.projects(),
         json!({resolved(&fixture.tree): {"trust_level": "trusted"}})
+    );
+}
+
+#[test]
+fn a_second_start_waits_while_codex_records_the_first_one_s_trust() {
+    let fixture = Fixture::new();
+    fixture.set_projects(json!({}));
+    let other = another_worktree(&fixture.main, "other");
+    fixture.mode("slow_write");
+    // Both ask at once; whichever goes second waits for the first's whole
+    // Codex session, longer than the two seconds it once waited.
+    let start = std::sync::Barrier::new(2);
+    let trust = |tree: &Path| {
+        start.wait();
+        folder_trust::trust_worktree(Agent::Codex, fixture.home.path(), tree, fixture.tools())
+            .map_err(|failure| failure.message())
+    };
+    let (first, second) = std::thread::scope(|scope| {
+        let first = scope.spawn(|| trust(&fixture.tree));
+        let second = scope.spawn(|| trust(&other));
+        (first.join().unwrap(), second.join().unwrap())
+    });
+    first.unwrap();
+    second.unwrap();
+    assert_eq!(
+        fixture.projects(),
+        json!({
+            resolved(&fixture.tree): {"trust_level": "trusted"},
+            resolved(&other): {"trust_level": "trusted"},
+        })
+    );
+}
+
+#[test]
+fn a_worktree_that_is_gone_leaves_codex_with_the_next_trust() {
+    let fixture = Fixture::new();
+    let operator = json!({"/somewhere/else": {"trust_level": "trusted"}});
+    fixture.set_projects(operator.clone());
+    fixture.trust().unwrap();
+    let gone = resolved(&fixture.tree);
+    // Removed outside Hide, so no removal of Hide's took it out.
+    std::fs::remove_dir_all(&fixture.tree).unwrap();
+
+    let next = another_worktree(&fixture.main, "next");
+    folder_trust::trust_worktree(Agent::Codex, fixture.home.path(), &next, fixture.tools())
+        .unwrap();
+    let mut expected = operator;
+    expected[resolved(&next)] = json!({"trust_level": "trusted"});
+    assert_eq!(
+        fixture.projects(),
+        expected,
+        "{gone} went in the same write"
+    );
+    assert_eq!(fixture.writes(), 2);
+    assert_eq!(
+        folder_trust::forget_all(Agent::Codex, fixture.home.path(), fixture.tools()).unwrap(),
+        1
     );
 }

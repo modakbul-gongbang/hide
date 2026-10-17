@@ -318,19 +318,27 @@ A start in a checkout that already existed, the operator's own or an earlier wor
 | Codex | `~/.codex/config.toml`, written by Codex's own app-server | `[projects."<worktree>"] trust_level = "trusted"` |
 | agy | `~/.gemini/antigravity-cli/settings.json` | the worktree in `trustedWorkspaces` |
 
+Claude Code's and Codex's files are found from the same folder as their hook files (`AgentRuntime::trust_path` beside `config_path`), so the trust and the hooks always land in one place.
+Like the hooks, they are the account's default folders: an agent run with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` pointing elsewhere reads neither Hide's hooks nor its trust, and asks.
+
 The worktree is named by its resolved path, spelled as the agent compares it: with `/` between names for Claude Code on Windows, and in lower case for Codex on Windows, which compares folders there without case.
 The entry names the worktree itself and never the repository it was made from.
 Answering an agent's own question in a linked worktree trusts the repository's main checkout, which is the operator's and would trust every worktree of that repository with it; Claude Code 2.1.302 and Codex 0.163.0 read an entry for the exact folder before the repository's, and trust given to a folder above a repository does not reach into it (measured on 2026-10-17).
 
-Hide keeps which entries it added in its own record, `~/.hide/agent-hooks/<agent>-trust.json` (`claude-trust.json`, `codex-trust.json`, `antigravity-trust.json`), at most 4096 per agent.
+Hide keeps which entries it added in its own record, `~/.hide/agent-hooks/<agent>-trust.json` (`claude-trust.json`, `codex-trust.json`, `antigravity-trust.json`), at most 4096 folders that exist per agent; a trust past that is refused with the cap in its reason.
 The record is written before the entry and taken back when the entry could not be written, so Hide never leaves an entry its record does not name.
 An entry that is already there is the operator's: Hide writes nothing and records nothing, so removing the worktree leaves it.
 Removing a worktree Hide made takes out the entries Hide added for it, for each agent, and switching an agent off, or removing the machine from Hide, takes out every entry Hide added for that agent; an entry the operator added, before Hide or after it, stays, and so does what else the agent keeps under the same folder (Claude Code's project settings, a Codex project's other keys).
+The removal runs once the folder is gone, so it finds the entry by the key Hide recorded, compared as the system compares folders: the folder's parent resolved, and on Windows without case and with either separator, so Git's `C:/x` finds Codex's `c:\x`.
+A worktree removed outside Hide (by hand, or by a Factory cleanup that found the folder already gone) leaves its entries until the next trust Hide records for that agent, which takes out every entry of Hide's whose folder is gone in the same write.
 Codex's entries are taken out through its app-server too; with no Codex left to ask, they and Hide's record of them stay until a pass that finds one, and nothing reads them meanwhile.
 
-Every change holds one account lock per agent.
+Every change holds one account lock per agent, and a change waits for it as long as the change holding it can take: one Codex app-server session's whole bound (`codex_trust::SESSION_BOUND`, 21 s) and a second, so a second start while Codex records the first one's trust waits instead of failing.
+The core gives the node twice that and five seconds for the call (`folder_trust::Agent::longest_change`); a Codex that answers, as it does in well under a second, takes about a second.
 The JSON files are rewritten through the same lossless read and compare-before-replace as the hook files, so their other keys and the operator's formatting keep their bytes.
-Claude Code rewrites `~/.claude.json` while it holds its own lock on it, the `~/.claude.json.lock` folder, and reads the file again under that lock, so Hide changes the file only while it holds the same lock and neither overwrites the other; Hide waits up to two seconds for it and takes over a lock older than ten seconds, which Claude Code treats as left by a process that ended.
+Claude Code rewrites `~/.claude.json` while it holds its own lock on it, the `.lock` folder beside the file's real path (proper-lockfile resolves a link, so a linked `~/.claude.json` is locked beside its target), and reads the file again under that lock, so Hide changes the file only while it holds the same lock and neither overwrites the other.
+Hide waits up to two seconds for it and takes over a lock older than ten seconds, which Claude Code treats as left by a process that ended, removing only the folder it saw stale; it removes its own lock only while the folder there is still the one it made, and does not write once Claude Code has taken the lock over.
+Hide's own changes never meet at Claude Code's lock, since each holds Hide's lock first; between Hide and Claude Code, a takeover of a stale lock has the moment between the look and the removal that Claude Code's own takeover has.
 Codex's file is never written by Hide: `hide_agent_hooks::codex_trust` starts `codex app-server`, reads the user layer's `projects` with `config/read`, writes the one key with `config/batchWrite` against the version it read, and reads it back, as it does for [Hide's own hooks](#codex-trusts-hides-own-hooks).
 
 A trust that cannot be recorded refuses the start before the agent runs, with `agent_trust_failed: <agent>'s trust of <worktree> could not be recorded (<reason>)`, so no agent waits unseen on its question (PRD antigravity-first-class B20).

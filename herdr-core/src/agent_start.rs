@@ -182,10 +182,9 @@ pub(crate) fn trust_worktree(
     kind: &str,
     path: &str,
 ) -> Result<(), String> {
-    let Some(adapter) = hide_agent_adapter::adapter(kind).filter(|adapter| {
-        adapter
-            .start
-            .is_some_and(hide_agent_adapter::LaunchDialect::trusts_worktrees)
+    let Some((adapter, agent)) = hide_agent_adapter::adapter(kind).and_then(|adapter| {
+        let agent = hide_agent_hooks::folder_trust::Agent::of(adapter.start?)?;
+        Some((adapter, agent))
     }) else {
         return Ok(());
     };
@@ -197,9 +196,10 @@ pub(crate) fn trust_worktree(
             path: path.to_owned(),
             trusted: true,
         },
-        // Codex's trust is written by a Codex app-server the node starts,
-        // which its own bounds end within 15 s (`codex_trust::Limits`).
-        Duration::from_secs(20),
+        // The node may wait for another start's change of the same agent's
+        // trust before its own (a Codex app-server each), and the link
+        // carries the answer back.
+        agent.longest_change() + Duration::from_secs(5),
     )
     .map_err(|error| {
         format!(

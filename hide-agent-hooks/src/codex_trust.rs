@@ -66,6 +66,14 @@ impl Limits {
 /// before its whole tree is ended.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(2);
 
+/// The longest one session with [`Limits::DEFAULT`] runs, its end included:
+/// the requests, the grace to end on its own, then the reap and the reader's
+/// join. A folder trust change holds Hide's lock for that long at most, so
+/// one that waits for it waits this long (`crate::folder_trust`).
+pub(crate) const SESSION_BOUND: Duration = Duration::from_secs(
+    Limits::DEFAULT.overall.as_secs() + SHUTDOWN_GRACE.as_secs() + 2 * REAP_GRACE.as_secs(),
+);
+
 /// How often a wait looks at the caller's stop flag.
 const POLL: Duration = Duration::from_millis(50);
 
@@ -983,13 +991,16 @@ fn project_session<'a>(
 /// key of the main checkout the folder was made from: one Codex marks
 /// untrusted is the operator saying no to those files, so the folder is not
 /// trusted past it, and neither is a folder Codex itself marks untrusted.
-/// `remember` runs once Hide knows it will write, before the write.
+/// `remember` runs once Hide knows it will write, before the write, and the
+/// same write takes out Hide's trust of each folder in `gone`, whose folder no
+/// longer exists.
 pub(crate) fn add_project_trust(
     codex: &Path,
     home: &Path,
     stop: &AtomicBool,
     key: &str,
     repository: Option<&str>,
+    gone: &[String],
     remember: &mut dyn FnMut() -> Result<(), crate::install::InstallFailure>,
 ) -> Result<crate::folder_trust::Added, crate::install::InstallFailure> {
     let refused = |detail: String| crate::install::InstallFailure::Refused {
@@ -1020,15 +1031,14 @@ pub(crate) fn add_project_trust(
         )));
     }
     remember()?;
+    let mut edits = removal_edits(&projects, gone);
+    edits.push(json!({
+        "keyPath": project_key_path(key, Some("trust_level")),
+        "value": "trusted",
+        "mergeStrategy": "replace",
+    }));
     session
-        .write_projects(
-            projects.version.as_deref(),
-            vec![json!({
-                "keyPath": project_key_path(key, Some("trust_level")),
-                "value": "trusted",
-                "mergeStrategy": "replace",
-            })],
-        )
+        .write_projects(projects.version.as_deref(), edits)
         .map_err(|failure| config_failure(home, failure))?;
     match session.projects() {
         Ok(after) if after.trust_level(key) == Some("trusted") => {
@@ -1059,8 +1069,22 @@ pub(crate) fn remove_project_trust(
     let projects = session
         .projects()
         .map_err(|failure| config_failure(home, failure))?;
-    let edits: Vec<Value> = keys
-        .iter()
+    let edits = removal_edits(&projects, keys);
+    if edits.is_empty() {
+        return Ok(0);
+    }
+    let removed = edits.len();
+    session
+        .write_projects(projects.version.as_deref(), edits)
+        .map_err(|failure| config_failure(home, failure))?;
+    Ok(removed)
+}
+
+/// The edits that take out Codex's trust of each folder spelled in `keys`
+/// that Codex still lists as trusted: the folder's whole entry when trust is
+/// all it holds, its `trust_level` otherwise.
+fn removal_edits(projects: &Projects, keys: &[String]) -> Vec<Value> {
+    keys.iter()
         .filter_map(|key| {
             let (found, entry) = projects.entry(key)?;
             if entry.get("trust_level").and_then(Value::as_str) != Some("trusted") {
@@ -1073,15 +1097,7 @@ pub(crate) fn remove_project_trust(
                 "mergeStrategy": "replace",
             }))
         })
-        .collect();
-    if edits.is_empty() {
-        return Ok(0);
-    }
-    let removed = edits.len();
-    session
-        .write_projects(projects.version.as_deref(), edits)
-        .map_err(|failure| config_failure(home, failure))?;
-    Ok(removed)
+        .collect()
 }
 
 /// A file Codex could not use, as `hooks/list` reports it.

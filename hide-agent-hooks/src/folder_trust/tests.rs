@@ -50,6 +50,14 @@ fn read_json(path: &Path) -> Value {
     serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
 }
 
+/// A folder that exists under `root`, by its resolved path, as Hide records
+/// it; a recorded folder that is gone leaves with the next trust.
+fn real(root: &Path, name: &str) -> PathBuf {
+    let path = root.join(name);
+    std::fs::create_dir_all(&path).unwrap();
+    hide_platform::fs::identity::canonical(&path).unwrap()
+}
+
 #[test]
 fn hide_takes_out_only_the_agy_trust_it_added_and_keeps_the_rest_byte_for_byte() {
     let home = home();
@@ -77,9 +85,10 @@ fn hide_takes_out_only_the_agy_trust_it_added_and_keeps_the_rest_byte_for_byte()
 fn switching_an_agent_off_takes_out_every_folder_hide_added_for_it_alone() {
     let home = home();
     let settings = Agent::Antigravity.settings_path(home.path());
-    trust(Agent::Antigravity, home.path(), &folder("a"), none()).unwrap();
-    trust(Agent::Antigravity, home.path(), &folder("b"), none()).unwrap();
-    trust(Agent::ClaudeCode, home.path(), &folder("a"), none()).unwrap();
+    let (a, b) = (real(home.path(), "a"), real(home.path(), "b"));
+    trust(Agent::Antigravity, home.path(), &a, none()).unwrap();
+    trust(Agent::Antigravity, home.path(), &b, none()).unwrap();
+    trust(Agent::ClaudeCode, home.path(), &a, none()).unwrap();
     assert_eq!(
         forget_all(Agent::Antigravity, home.path(), none()).unwrap(),
         2
@@ -218,8 +227,8 @@ fn claude_trusts_the_worktree_itself_and_hide_takes_out_only_its_own_flag() {
     let home = tempfile::tempdir().unwrap();
     let config = home.path().join(".claude.json");
     let main = folder("repo");
-    let kept = folder("kept");
-    let tree = folder("repo-task");
+    let kept = real(home.path(), "kept");
+    let tree = real(home.path(), "repo-task");
     let key = |path: &Path| Agent::ClaudeCode.spelling(path).unwrap();
     // Claude's own file: other projects, an entry for the worktree Claude
     // filled before (trust off, other fields of its own), unknown keys.
@@ -340,6 +349,208 @@ fn a_claude_lock_left_by_a_process_that_ended_is_taken_over() {
         .unwrap();
     trust(Agent::ClaudeCode, home.path(), &folder("tree"), none()).unwrap();
     assert!(!lock.exists());
+}
+
+#[test]
+fn a_folder_that_is_gone_leaves_with_the_next_trust_hide_records() {
+    let home = home();
+    for agent in [Agent::Antigravity, Agent::ClaudeCode] {
+        let (gone, live, next) = (
+            real(home.path(), "gone"),
+            real(home.path(), "live"),
+            real(home.path(), "next"),
+        );
+        let key = |path: &Path| agent.spelling(path).unwrap();
+        trust(agent, home.path(), &gone, none()).unwrap();
+        trust(agent, home.path(), &live, none()).unwrap();
+        // Removed outside Hide, so no removal of Hide's took it out.
+        std::fs::remove_dir(&gone).unwrap();
+
+        trust(agent, home.path(), &next, none()).unwrap();
+        assert_eq!(
+            read_record(agent, home.path()).unwrap(),
+            [key(&live), key(&next)],
+            "{}",
+            agent.label()
+        );
+        let settings = read_json(&agent.settings_path(home.path()));
+        let trusted = match agent {
+            Agent::Antigravity => settings["trustedWorkspaces"].clone(),
+            _ => serde_json::json!(
+                settings["projects"]
+                    .as_object()
+                    .unwrap()
+                    .keys()
+                    .collect::<Vec<_>>()
+            ),
+        };
+        assert_eq!(
+            trusted,
+            serde_json::json!([key(&live), key(&next)]),
+            "{}",
+            agent.label()
+        );
+        forget_all(agent, home.path(), none()).unwrap();
+        std::fs::remove_dir(&live).unwrap();
+        std::fs::remove_dir(&next).unwrap();
+    }
+}
+
+#[test]
+fn a_trust_past_the_record_s_cap_is_refused_and_folders_that_are_gone_do_not_count() {
+    let home = home();
+    let gone = real(home.path(), "gone");
+    let mut record: Vec<String> = (0..RECORD_LIMIT - 1)
+        .map(|n| {
+            real(home.path(), &format!("live-{n}"))
+                .to_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    record.push(gone.to_str().unwrap().to_owned());
+    std::fs::create_dir_all(agent_hooks_dir(home.path())).unwrap();
+    write_record(Agent::Antigravity, home.path(), &record).unwrap();
+    std::fs::remove_dir(&gone).unwrap();
+    // The folder that is gone makes room for one more.
+    trust(
+        Agent::Antigravity,
+        home.path(),
+        &real(home.path(), "one-more"),
+        none(),
+    )
+    .unwrap();
+    let refused = trust(
+        Agent::Antigravity,
+        home.path(),
+        &real(home.path(), "past"),
+        none(),
+    )
+    .unwrap_err()
+    .message();
+    assert!(refused.contains("4096 folders that exist"), "{refused}");
+}
+
+#[test]
+fn a_removal_after_the_folder_is_gone_finds_it_by_the_key_hide_wrote() {
+    let home = home();
+    for agent in [Agent::Antigravity, Agent::ClaudeCode] {
+        // Named as the caller does, not resolved: on macOS the temporary
+        // folder is reached through `/var`, which resolves to `/private/var`.
+        let tree = home.path().join("repo-task");
+        std::fs::create_dir_all(tree.join(".git")).unwrap();
+        trust_worktree(agent, home.path(), &tree, none()).unwrap();
+        std::fs::remove_dir_all(&tree).unwrap();
+        // As Git lists it, with `/` between names on every system.
+        let listed = PathBuf::from(tree.to_str().unwrap().replace('\\', "/"));
+        assert_eq!(
+            forget(agent, home.path(), &listed, none()).unwrap(),
+            1,
+            "{}",
+            agent.label()
+        );
+        assert!(read_record(agent, home.path()).unwrap().is_empty());
+    }
+
+    // Through a link in a folder above it, resolved when it was trusted.
+    #[cfg(unix)]
+    {
+        let real_parent = home.path().join("disk");
+        std::fs::create_dir_all(real_parent.join("repo-task/.git")).unwrap();
+        let link = home.path().join("projects");
+        std::os::unix::fs::symlink(&real_parent, &link).unwrap();
+        trust_worktree(
+            Agent::Antigravity,
+            home.path(),
+            &link.join("repo-task"),
+            none(),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(real_parent.join("repo-task")).unwrap();
+        assert_eq!(
+            forget(
+                Agent::Antigravity,
+                home.path(),
+                &link.join("repo-task"),
+                none()
+            )
+            .unwrap(),
+            1
+        );
+    }
+}
+
+#[test]
+fn a_windows_folder_is_compared_without_case_and_with_either_separator() {
+    let folder = Path::new(r"C:\Work\Repo-Task");
+    if cfg!(windows) {
+        for entry in [
+            r"c:\work\repo-task",
+            "C:/Work/Repo-Task",
+            r"C:\Work\Repo-Task\",
+        ] {
+            assert!(same_folder(entry, folder), "{entry}");
+        }
+        assert!(same_folder(
+            r"C:\Work\Repo-Task",
+            Path::new("C:/work/repo-task/")
+        ));
+        assert!(!same_folder(r"C:\Work\Repo-Task-2", folder));
+    } else {
+        let folder = Path::new("/work/Repo-Task");
+        assert!(same_folder("/work/Repo-Task", folder));
+        assert!(same_folder(
+            "/work/Repo-Task",
+            Path::new("/work/Repo-Task/")
+        ));
+        assert!(!same_folder("/work/repo-task", folder));
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_claude_config_is_locked_where_claude_code_locks_it() {
+    let home = tempfile::tempdir().unwrap();
+    let dotfiles = home.path().join("dotfiles");
+    std::fs::create_dir_all(&dotfiles).unwrap();
+    let target = dotfiles.join("claude.json");
+    std::fs::write(&target, "{}").unwrap();
+    let config = home.path().join(".claude.json");
+    std::os::unix::fs::symlink(&target, &config).unwrap();
+    // A Claude Code saving its config holds the lock beside the real file.
+    let lock = dotfiles.join("claude.json.lock");
+    std::fs::create_dir(&lock).unwrap();
+    let refused = trust(Agent::ClaudeCode, home.path(), &folder("tree"), none())
+        .unwrap_err()
+        .message();
+    assert!(refused.contains("claude.json.lock"), "{refused}");
+    assert!(
+        refused.contains(dotfiles.file_name().unwrap().to_str().unwrap()),
+        "{refused}"
+    );
+    assert!(!home.path().join(".claude.json.lock").exists());
+
+    std::fs::remove_dir(&lock).unwrap();
+    trust(Agent::ClaudeCode, home.path(), &folder("tree"), none()).unwrap();
+    assert!(config.is_symlink(), "the link stays the operator's");
+    assert!(read_json(&target)["projects"].is_object());
+    assert!(!lock.exists());
+}
+
+#[test]
+fn hide_leaves_a_claude_lock_it_no_longer_holds() {
+    let home = tempfile::tempdir().unwrap();
+    let config = home.path().join(".claude.json");
+    std::fs::write(&config, "{}").unwrap();
+    let held = claude::ConfigLock::take(&config).unwrap();
+    let lock = claude::ConfigLock::path(&config);
+    assert!(held.held());
+    // Claude Code took it over after Hide held it past the stale time.
+    std::fs::remove_dir(&lock).unwrap();
+    std::fs::create_dir(&lock).unwrap();
+    assert!(!held.held());
+    drop(held);
+    assert!(lock.is_dir(), "the lock Claude Code holds stays");
 }
 
 #[test]

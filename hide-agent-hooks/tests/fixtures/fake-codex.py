@@ -32,6 +32,8 @@ and `fake-pid` (its own pid). `$CODEX_HOME/fake-mode` selects the behaviour:
   project       also lists an identical project-layer hook
   overridden    answers a projects write `okOverridden`, as when a managed
                 layer decides the value
+  slow_write    takes 2.5 s over a projects write, longer than any wait a
+                second change of the same trust once had
 
 Folder trust (`projects."<folder>".trust_level`) lives in
 `$CODEX_HOME/fake-projects.json`: `config/read` answers it as the user layer's
@@ -256,6 +258,8 @@ for raw in sys.stdin:
         if params.get("expectedVersion") != projects_version():
             error(rid, -32600, "Configuration was modified since last read. Fetch latest version and retry.")
             continue
+        if MODE == "slow_write":
+            time.sleep(2.5)
         projects = load_projects() or {}
         for edit in params["edits"]:
             assert edit["mergeStrategy"] == "replace"
