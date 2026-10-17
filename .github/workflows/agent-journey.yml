@@ -38,6 +38,27 @@
 name: agent journey
 
 on:
+  # By hand, the journey alone, with the repository's secrets
+  # (docs/VERIFICATION.md, The CI lanes).
+  workflow_dispatch:
+    inputs:
+      systems:
+        description: The systems to run, as a JSON array of `linux`, `macos` and `windows`.
+        type: string
+        default: '["linux","macos","windows"]'
+      live:
+        description: Also run the signed-in journey for each agent whose key is set.
+        type: boolean
+        default: false
+      fake:
+        description: Also run the real CLIs against the journey's fake model, with no key.
+        type: boolean
+        default: false
+      agy:
+        description: >-
+          Where the signed-in journey measures agy: `rotation`, one system's name, or `none`.
+        type: string
+        default: none
   workflow_call:
     inputs:
       systems:
