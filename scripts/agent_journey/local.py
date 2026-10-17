@@ -75,7 +75,9 @@ def wrapper(directory, executable, operator, state, kind, home, sandbox, path):
     Herdr's environment, whose PATH reaches neither node nor the account's tools."""
     private_directory(directory)
     target = directory / Path(executable).name
-    command = [str(executable)]
+    # The route's arguments go on every start, the product's own restarts
+    # (Wake's `--resume`, Fork's `--fork-session`) included, not only the spawn.
+    command = [str(executable), *route(kind, home)["args"]]
     if sandbox:
         command = sandbox.command(command)
     environment = {"HOME": str(operator), "HIDE_STATE_DIR": str(state), "PATH": os.pathsep.join((str(directory), path)),
@@ -87,6 +89,15 @@ def wrapper(directory, executable, operator, state, kind, home, sandbox, path):
     write_private(target, ("\n".join(lines) + "\n").encode())
     target.chmod(0o700)
     return target
+
+
+def disable_hide_ai(home):
+    """The candidate's Hide AI switched off in its private home: on, it would
+    run the operator's signed-in CLI with the private HOME and spend requests
+    outside the agent's budget (docs/AI_PROVIDERS.md, `enabled`)."""
+    folder = home / "Library/Application Support/hide"
+    private_directory(folder)
+    write_private(folder / "ai.json", b'{"enabled": false}\n')
 
 
 def codex_login_age(auth, now=None):

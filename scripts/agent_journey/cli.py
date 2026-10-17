@@ -32,8 +32,8 @@ from . import ci, cells, quota
 from .controller import Controller
 from .daemon import Daemon
 from .journey import Journey
-from .local import (ROUTES, allow_one_shot_references, claude_session_folders, codex_login_refusal, operator_trust,
-                    route, trust_codex, wrapper)
+from .local import (ROUTES, allow_one_shot_references, claude_session_folders, codex_login_refusal, disable_hide_ai,
+                    operator_trust, route, trust_codex, wrapper)
 from .report import save, table_lines
 
 KIT_SECONDS = 90
@@ -374,6 +374,22 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
     return ready
 
 
+def hide_ai_requests(log):
+    """The candidate's Hide AI model requests by provider, one per attempt
+    its log records with a duration; none when it never ran."""
+    found = {}
+    if not log.is_file():
+        return found
+    for line in log.read_text(errors="replace").splitlines():
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict) and "feature_id" in record and "duration_ms" in record:
+            found[record.get("provider")] = found.get(record.get("provider"), 0) + 1
+    return found
+
+
 def budget_failures(agents):
     """A signed-in run's agents over their request budget, by name (PRD B29)."""
     return [f"request_budget_exceeded: {agent['id']} made {agent['requests']} model requests, "
@@ -460,6 +476,8 @@ def main(argv=None):
         write_private(runtime.bin / "hide", ("#!/bin/sh\nexec " + shlex.quote(str(runtime.hide)) + ' "$@"\n').encode())
         (runtime.bin / "hide").chmod(0o700)
         if local:
+            # Before hided starts, which reads the file once.
+            disable_hide_ai(runtime.home)
             sandbox, guard, ready = prepare_local(runtime, report, table, rows, measured, operator, root)
         else:
             sandbox, ready = None, prepare_ci(runtime, report, table, rows, measured, fixture_bin, root)
@@ -546,6 +564,12 @@ def main(argv=None):
             except Exception as error:
                 report["repository_cleanup"] = {"removed": [], "failure": str(error), "kept": [
                     {**item, "reason": "cleanup_failed: " + str(error)[:200]} for item in report["created"]]}
+        # Hide AI's model requests, apart from the agents' budget: none in
+        # local mode, where it is off, and counted in CI mode, where it is on.
+        report["hide_ai_requests"] = hide_ai_requests(run / "hided.log")
+        if local and report["hide_ai_requests"]:
+            report["failures"].append({"type": "IsolationError", "reason": "hide_ai_ran_in_local_mode: "
+                                       + json.dumps(report["hide_ai_requests"])})
         if guard:
             try:
                 report["configuration"] = guard.finish()
