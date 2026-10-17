@@ -18,7 +18,7 @@
 import { create } from "zustand";
 import { browserBridge, type BrowserBridge, type BrowserHostEvent, type BrowserPageState, type BrowserPlacement, type BrowserRect, type BrowserSync } from "./host";
 import { SHELL_DRAG_ATTRIBUTES, shellDragging } from "./shellDrag";
-import { screenDeviceId } from "./screenMachine";
+import { windowDeviceId } from "./screenMachine";
 import { type SnapshotRest, type ViewLayoutSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { areasOf, workspaceKey, type ViewWorkspace } from "./viewLayout";
@@ -366,7 +366,7 @@ class BrowserSyncLoop {
       retained: this.retained,
       authorized_scopes: this.authorizedScopes,
       ...(this.attachmentEpoch === undefined ? {} : { attachment_epoch: this.attachmentEpoch }),
-      ...nodeField(screenDeviceId(useShellStore.getState().rest)),
+      ...nodeField(windowDeviceId(useShellStore.getState().rest?.navigator?.devices)),
     };
     this.visible = sync.displays.flatMap((row) => (row.visible && row.rect ? [row.rect] : []));
     const text = JSON.stringify(sync);

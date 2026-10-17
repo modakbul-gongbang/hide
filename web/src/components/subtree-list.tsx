@@ -4,7 +4,9 @@ import { useInterfaceTranslation } from "../i18n/client";
 import { statusText } from "../agentStatus";
 import type { MessageKey } from "../i18n/catalogs";
 import { markTone, markWords } from "../agentRow";
+import { machineName } from "../screenMachine";
 import type { RowMark as RowMarkValue } from "../snapshot";
+import { useShellStore } from "../store";
 import { DeviceChip } from "./device-chip";
 import { StatusMark } from "./status-mark";
 import { Hint } from "./ui/tooltip";
@@ -71,7 +73,8 @@ function SubtreeItem({ row, targetDevice }: { row: SubtreeRow; targetDevice: str
   const quiet = row.state === "quiet";
   // A sleeping agent's moon is never dimmed (status-marks D-21).
   const bright = row.target || !quiet || agent.mark === "asleep";
-  const device = agent.device_id !== targetDevice && agent.device_label ? agent.device_label : null;
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  const device = agent.device_id && agent.device_id !== targetDevice ? machineName(devices, agent.device_id, t) : null;
   return (
     <li
       tabIndex={0}
