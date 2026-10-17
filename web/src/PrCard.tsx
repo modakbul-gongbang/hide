@@ -400,7 +400,7 @@ function Timeline({ project, pr, card, panel, number, actions }: { project: Work
     <section className="flex flex-col gap-xs" aria-label={t("work.card.timeline")} data-pr-card-timeline="true">
       <h3 className="flex min-h-(--size-control-sm) items-baseline gap-xs text-micro font-medium text-muted-foreground">
         <span>{t("work.card.timeline")}</span>
-        {holder.loading ? null : <span className="font-normal" data-pr-card-sessions={holder.total}>· {t("links.sessionsCount", { count: holder.total })}</span>}
+        {holder.loading || !holder.total ? null : <span className="font-normal" data-pr-card-sessions={holder.total}>· {t("links.sessionsCount", { count: holder.total })}</span>}
       </h3>
       <LinkTimeline panel={holder} project={project} pr={pr} milestones={rows} branchOf={() => pr?.head_branch ?? null} onRetry={() => actions.openLinks(project.id, { kind: "pr", number })} actions={actions} />
     </section>
