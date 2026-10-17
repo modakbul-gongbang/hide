@@ -277,13 +277,62 @@ impl Drop for Closed {
     }
 }
 
-/// Leaves the account only reading and entering `folder`: what it inherited
-/// goes, and so does every right granted to the account before.
+/// Replaces the access list of `folder` with one that lets signed-in
+/// accounts read and enter it and nobody add to it, and inherits nothing.
+/// `icacls /inheritance:r` in one call with a grant kept what was inherited.
 #[cfg(windows)]
 fn read_only(folder: &Path) {
-    icacls(
-        folder,
-        &["/inheritance:r", "/grant:r", &format!("{}:(RX)", account())],
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Foundation::{ERROR_SUCCESS, LocalFree};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1, SE_FILE_OBJECT,
+        SetNamedSecurityInfoW,
+    };
+    use windows_sys::Win32::Security::{
+        DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, PROTECTED_DACL_SECURITY_INFORMATION,
+    };
+    let text: Vec<u16> = "D:P(A;;FRFX;;;AU)".encode_utf16().chain([0]).collect();
+    let name: Vec<u16> = folder.as_os_str().encode_wide().chain([0]).collect();
+    let mut descriptor = std::ptr::null_mut();
+    // SAFETY: `text` is NUL-terminated and `descriptor` receives a
+    // LocalAlloc buffer freed below.
+    let made = unsafe {
+        ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            text.as_ptr(),
+            SDDL_REVISION_1,
+            &mut descriptor,
+            std::ptr::null_mut(),
+        )
+    };
+    assert_ne!(made, 0, "{}", std::io::Error::last_os_error());
+    let (mut present, mut defaulted) = (0, 0);
+    let mut acl = std::ptr::null_mut();
+    // SAFETY: `descriptor` is the one just made, and the list it returns
+    // lies inside it.
+    let read =
+        unsafe { GetSecurityDescriptorDacl(descriptor, &mut present, &mut acl, &mut defaulted) };
+    let read_error = std::io::Error::last_os_error();
+    // SAFETY: `name` is NUL-terminated and `acl` lives until the free below.
+    let status = unsafe {
+        SetNamedSecurityInfoW(
+            name.as_ptr(),
+            SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            acl,
+            std::ptr::null(),
+        )
+    };
+    // SAFETY: the buffer came from the conversion above and nothing uses it
+    // after this.
+    unsafe { LocalFree(descriptor) };
+    assert!(read != 0 && present != 0, "{read_error}");
+    assert_eq!(
+        status,
+        ERROR_SUCCESS,
+        "{}",
+        std::io::Error::from_raw_os_error(status as i32)
     );
 }
 
@@ -312,11 +361,6 @@ fn may_add_to(folder: &Path) -> bool {
 fn access_list(path: &Path) -> String {
     let output = Command::new("icacls").arg(path).output().unwrap();
     String::from_utf8_lossy(&output.stdout).into_owned()
-}
-
-#[cfg(windows)]
-fn account() -> String {
-    std::env::var("USERNAME").unwrap()
 }
 
 #[cfg(windows)]
