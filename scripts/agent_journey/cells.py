@@ -144,17 +144,48 @@ def spawn_verdict(answer):
     return PASS, "registered, running, connected, native session " + str(view["session"])
 
 
-def turn_verdict(activities):
-    """The snapshot row went working and then stopped (the turn ended)."""
-    seen_working = False
-    for value in activities:
-        if value == "working":
-            seen_working = True
-        elif value == "stopped" and seen_working:
-            return PASS, "row went working, then stopped"
-    if not seen_working:
-        return FAIL, "row never read working"
-    return FAIL, "row read working and never stopped"
+def answer_of(events, token, after=0):
+    """(prompt_at, answer_at) in Unix ms for the first assistant message from
+    `after` on that carries `token`, the prompt being the last message the
+    person typed before it (not context Hide or the agent injected); None when Hide's reader has no such answer yet."""
+    prompt_at = None
+    for event in events[after:]:
+        if event.get("role") == "user" and event.get("kind", "human") == "human":
+            prompt_at = event.get("at")
+        elif event.get("role") == "assistant" and token in (event.get("text") or ""):
+            return prompt_at, event.get("at")
+    return None
+
+
+def turn_verdict(observed, events, token, after=0):
+    """The turn ended: Hide's reader has its answer, and the row read idle
+    later than the answer's session time (PRD B5). `observed` is every
+    activity the row read since the turn's action, as (activity, Unix ms
+    seen), so an idle left from before the prompt is never the proof.
+    Whether the row read working is reported, not required: Herdr's screen
+    detection misses a turn shorter than its reading."""
+    answer = answer_of(events, token, after)
+    if answer is None:
+        return FAIL, "Hide's reader found no answer to the prompt"
+    prompt_at, answer_at = answer
+    if not answer_at:
+        return FAIL, "the answer has no session time"
+    if not any(activity == "stopped" and seen >= answer_at for activity, seen in observed):
+        return FAIL, "row never read idle after the answer"
+    if any(activity == "working" for activity, _ in observed):
+        return PASS, "row read working, then idle after the answer"
+    length = f", {(answer_at - prompt_at) / 1000:.1f} s" if prompt_at else ""
+    return PASS, f"row read idle after the answer; working not seen: a turn shorter than Herdr's detection{length}"
+
+
+def with_turn(verdict, turn):
+    """A reply's verdict with its turn's: a failed turn fails it, and a
+    passing one adds what the row read."""
+    if turn is None or verdict[0] != PASS:
+        return verdict
+    if turn[0] != PASS:
+        return turn
+    return PASS, verdict[1] + "; " + turn[1]
 
 
 def emitter_verdict(session, kind):

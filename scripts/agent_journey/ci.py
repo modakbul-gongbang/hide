@@ -37,6 +37,8 @@ FIXTURE_LIMITS = [
     "Herdr's integration runs from the hook commands the kit installed, fed the payload the stand-in writes, "
     "so a change in the real CLI's hook payload is not seen.",
     "The working and idle screens and titles and the session file format are the stand-in's copies of the CLI's.",
+    "Codex's app-server, through which Hide records folder and hook trust, is the trust tests' stand-in "
+    "(hide-agent-hooks/tests/fixtures/fake-codex.py), which keeps trust beside config.toml, not in it.",
     "A stand-in waits 5 s before its first turn, as a CLI's start takes seconds, so a first turn that ends "
     "sooner than Hide learns the session is not exercised.",
 ]
@@ -134,7 +136,8 @@ def fixture_config(runtime, kind):
     files = {"claude": runtime.home / ".claude/settings.json", "codex": runtime.home / ".codex/hooks.json"}
     document = json.loads(files[kind].read_text())
     # Each hook's stderr and exit status, kept in the run folder as evidence.
-    lines = ["shell\t/bin/sh", f"index\t{runtime.probe / 'fixture-sessions'}", f"log\t{runtime.run / f'fixture-{kind}-hooks.log'}"]
+    lines = ["shell\t/bin/sh", f"index\t{runtime.probe / 'fixture-sessions'}", f"log\t{runtime.run / f'fixture-{kind}-hooks.log'}",
+             f"app_server\t{runtime.checkout / 'hide-agent-hooks/tests/fixtures/fake-codex.py'}"]
     for event, groups in document.get("hooks", {}).items():
         for group in groups:
             for hook in group.get("hooks", []):

@@ -25,6 +25,7 @@ LETTER_SECONDS = 240
 SLEEP_SECONDS = 90
 WAKE_SECONDS = 150
 ATTACH_SECONDS = 30
+TURN_POLL_SECONDS = 1
 # The grid the journey's one view of a pane draws at.
 VIEW_COLS, VIEW_ROWS = 120, 40
 # Refusals the product answers while the same spawn is still under way, each
@@ -138,19 +139,27 @@ class Journey:
         return {"session": self.session if kind == "path" else value, "path": answer["path"],
                 "events": answer["events"]}
 
-    def wait_turn(self, since=0, seconds=TURN_SECONDS):
-        """The row's activity from `since` in its history until it went
-        working and then stopped; the history holds every activity the
-        daemon's frames carried, so a turn that ended before this wait
-        began is still read."""
-        try:
-            self.daemon.wait(lambda _rest: cells.turn_verdict(self.daemon.activities(self.pane, since))[0] == cells.PASS,
-                             seconds, "the turn to end")
-        except ProcessError as error:
-            if self.runtime.owner.cancelled.is_set():
-                raise
-            self.record.setdefault("waits", []).append(str(error))
-        return self.daemon.activities(self.pane, since)
+    def wait_turn(self, since, value, after=lambda events: 0, seconds=TURN_SECONDS):
+        """Until the turn ended (cells.turn_verdict): Hide's reader has the
+        answer carrying `value` from `after(events)` on, and the row read idle
+        later than that answer. The row's history holds every activity the
+        daemon's frames carried since `since`, so a turn that ended before
+        this wait began is still read. Returns (verdict, read, observed)."""
+        end = time.monotonic() + seconds
+        while True:
+            if not self.reference:
+                self.reference = (self.herdr_agent() or {}).get("agent_session")
+            read = self.conversation()
+            observed = self.daemon.activities(self.pane, since)
+            if "error" in read:
+                verdict = cells.FAIL, "Hide's reader could not read the session: " + read["error"]
+            else:
+                events = read.get("events", [])
+                verdict = cells.turn_verdict(observed, events, value, after(events))
+            if verdict[0] == cells.PASS or time.monotonic() > end:
+                return verdict, read, observed
+            if self.runtime.owner.cancelled.wait(TURN_POLL_SECONDS):
+                raise ProcessError("run_cancelled")
 
     # Cells ----------------------------------------------------------------
 
@@ -211,16 +220,15 @@ class Journey:
             evidence = self.evidence("spawn", self.record["spawn"])
             self.settle("start", spawned, evidence)
             return
-        activities = self.wait_turn()
+        turn, read, observed = self.wait_turn(0, first)
         native = self.herdr_agent() or {}
-        self.reference = native.get("agent_session")
-        self.record["start"] = {"activities": activities, "herdr_agent": native, "row": self.daemon.row(self.pane)}
+        self.reference = native.get("agent_session") or self.reference
+        self.record["start"] = {"activities": observed, "turn": turn, "herdr_agent": native,
+                                "row": self.daemon.row(self.pane)}
         evidence = self.evidence("start", self.record["start"])
-        verdict = cells.start_verdict(spawned, cells.turn_verdict(activities),
-                                      cells.emitter_verdict(self.reference, self.kind))
+        verdict = cells.start_verdict(spawned, turn, cells.emitter_verdict(self.reference, self.kind))
         if not self.settle("start", verdict, evidence):
             return
-        read = self.conversation()
         self.record["reply"] = {"token": first, "read": read}
         self.settle("reply", cells.reply_verdict(read, self.session, first), self.evidence("reply", self.record["reply"]))
 
@@ -253,11 +261,18 @@ class Journey:
                 break
             if self.runtime.owner.cancelled.wait(3):
                 raise ProcessError("run_cancelled")
+        turn = None
         if shown.get("bell_line"):
-            record["activities"] = self.wait_turn(since)
-        read = self.conversation()
+            # The turn the doorbell opened: from the human message it typed on.
+            def opened(events):
+                at = cells.bell_turn(events[before:], shown["bell_line"])
+                return len(events) if at is None else before + at
+            turn, read, record["activities"] = self.wait_turn(since, value, opened)
+            record["turn"] = turn
+        else:
+            read = self.conversation()
         record["read"] = {**read, "events": read.get("events", [])[before:]} if "events" in read else read
-        self.settle("letter", cells.letter_verdict(shown, record["read"], self.session, value),
+        self.settle("letter", cells.with_turn(cells.letter_verdict(shown, record["read"], self.session, value), turn),
                     self.evidence("letter", record))
 
     def sleep_wake(self):
@@ -327,17 +342,17 @@ class Journey:
             self.settle("resume", (cells.FAIL, "the pane's terminal never took this screen's keys (transport "
                                    + " -> ".join(map(str, record["terminal"])) + ")"), self.evidence("resume", record))
             return
-        record["activities"] = self.wait_turn(since)
+        turn, read, record["activities"] = self.wait_turn(since, value, lambda _events: events)
+        record["turn"] = turn
         native = self.herdr_agent() or {}
         after = (native.get("agent_session") or {}).get("value")
         record["session_after"] = after
         if not before or before != after:
             self.settle("resume", cells.resume_verdict(before, after, (cells.FAIL, "")), self.evidence("resume", record))
             return
-        read = self.conversation()
         record["read"] = read
-        self.settle("resume", cells.resume_verdict(before, after, cells.reply_verdict(read, self.session, value, events)),
-                    self.evidence("resume", record))
+        reply = cells.with_turn(cells.reply_verdict(read, self.session, value, events), turn)
+        self.settle("resume", cells.resume_verdict(before, after, reply), self.evidence("resume", record))
 
     def type_prompt(self, record, text):
         """Types `text` and Return as the operator does: opening the agent puts
@@ -397,10 +412,11 @@ class Journey:
                 self.settle("start_untrusted", spawned, self.evidence("start-untrusted", record))
                 return
             self.agent, self.session, self.checkout = answer["value"]["id"], answer["value"]["session"], worktree.resolve()
-            record["activities"] = self.wait_turn()
+            self.reference = None
+            turn, _read, record["activities"] = self.wait_turn(0, value)
             native = self.herdr_agent() or {}
-            record["herdr_agent"] = native
-            self.settle("start_untrusted", cells.start_verdict(spawned, cells.turn_verdict(record["activities"]),
+            record["herdr_agent"], record["turn"] = native, turn
+            self.settle("start_untrusted", cells.start_verdict(spawned, turn,
                                                                cells.emitter_verdict(native.get("agent_session"), self.kind)),
                         self.evidence("start-untrusted", record))
         finally:

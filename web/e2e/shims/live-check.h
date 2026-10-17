@@ -96,7 +96,8 @@ static int live_check(int argc, char **argv) {
    format and answers each turn with the JOURNEY token its prompt or its hook
    context carries. `HIDE_E2E_JOURNEY` names the run's configuration: tab
    separated lines `shell <program>`, `index <folder>`, `log <file>`, where
-   each hook's stderr and exit status go, and `hook <event> <command>`.
+   each hook's stderr and exit status go, `app_server <script>`, the
+   app-server stand-in `codex app-server` runs, and `hook <event> <command>`.
    Never a real model. */
 #ifndef _WIN32
 #include <signal.h>
@@ -107,7 +108,7 @@ static int live_check(int argc, char **argv) {
 #define JOURNEY_OUTPUT (64 * 1024)
 #define JOURNEY_BOOT_SECONDS 5
 static char journey_config[1 << 16];
-static const char *journey_shell, *journey_index, *journey_log;
+static const char *journey_shell, *journey_index, *journey_log, *journey_app_server;
 static const char *journey_events[JOURNEY_HOOKS], *journey_commands[JOURNEY_HOOKS];
 static int journey_hook_count, journey_codex;
 static char journey_id[64], journey_file[4096], journey_cwd[4096];
@@ -129,6 +130,7 @@ static int journey_load(const char *path) {
       if (strcmp(line, "shell") == 0) journey_shell = field;
       else if (strcmp(line, "index") == 0) journey_index = field;
       else if (strcmp(line, "log") == 0) journey_log = field;
+      else if (strcmp(line, "app_server") == 0) journey_app_server = field;
       else if (strcmp(line, "hook") == 0) {
         char *command = strchr(field, '\t');
         if (!command || journey_hook_count == JOURNEY_HOOKS) return 1;
@@ -413,6 +415,13 @@ static int journey(int argc, char **argv) {
   if (journey_codex && argc == 3 && strcmp(argv[1], "features") == 0 && strcmp(argv[2], "list") == 0) return 0;
   if (journey_codex && argc > 1 && strcmp(argv[1], "features") == 0) return 2;
   if (journey_load(getenv("HIDE_E2E_JOURNEY"))) { fputs("journey fixture: configuration unreadable\n", stderr); return 2; }
+  /* Hide records Codex's folder and hook trust through `codex app-server`;
+     the stand-in of hide-agent-hooks's tests answers it. */
+  if (journey_codex && argc == 2 && strcmp(argv[1], "app-server") == 0) {
+    if (!journey_app_server) return 2;
+    execlp("python3", "python3", journey_app_server, "app-server", (char *)NULL);
+    return 2;
+  }
   if (!getcwd(journey_cwd, sizeof journey_cwd)) return 2;
   /* The product's resume arguments: Claude `--resume <id>`, Codex `resume <id>`. */
   const char *resume = NULL, *prompt = NULL;

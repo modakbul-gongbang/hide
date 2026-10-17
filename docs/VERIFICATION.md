@@ -329,11 +329,11 @@ Every prompt asks only for a fresh token (`Reply with exactly <token>`), so a mo
 
 | Step | Passes when |
 | --- | --- |
-| `start` | The spawn answers registered, running and connected with a native session id, the row reads working and then idle, and Herdr's integration reports that session as `herdr:<kind>` |
+| `start` | The spawn answers registered, running and connected with a native session id, Hide's reader holds the answer to the first prompt and the row reads idle later than that answer's session time, and Herdr's integration reports that session as `herdr:<kind>`; whether the row read working is reported, not required, since Herdr's screen detection misses a turn of about two seconds |
 | `reply` | Hide's reader finds the first turn's token in an assistant message; a reply only another parser finds fails |
-| `letter` | A token sent with `hide request send` comes back in the turn Hide's doorbell opened, and `hide request show` says delivered |
+| `letter` | A token sent with `hide request send` comes back in the turn Hide's doorbell opened, `hide request show` says delivered, and the row reads idle after that answer |
 | `sleep_wake` | After the daemon's Sleep event the row reads asleep, and after Wake it runs again |
-| `resume` | The operator opens the woken agent (`focus_pane`), its terminal takes this screen's keys, a typed token prompt is answered in the session it slept in, and Herdr reports the same session id |
+| `resume` | The operator opens the woken agent (`focus_pane`), its terminal takes this screen's keys, a typed token prompt is answered in the session it slept in, the row reads idle after that answer, and Herdr reports the same session id |
 | `start_untrusted` | A start in a repository the account never trusted, with no preparation, passes once Hide has recorded the trust of the worktree it made |
 
 The cells an adapter declares come from `contracts/agent-journey.json`, which `hide-agent-adapter` generates and its contract test keeps current ([contracts/README.md](../contracts/README.md#agent-journey)).
@@ -366,6 +366,7 @@ Never run a cargo build or test while it runs: either relinks `target/debug` und
 ### The CI lanes
 
 `.github/workflows/agent-journey.yml` runs the journey with `--mode ci`, where each agent runs in the runner's disposable HOME with no sandbox, on Linux and macOS.
+Windows has neither lane yet: the harness under the journey is Unix-only, and [INSTALL.md](INSTALL.md#what-each-system-supports) says what closes it.
 - The stand-in lane (`fixture`) puts the compiled `web/e2e/shims/claude-shim.c` in place of Claude Code and Codex with `--fixture-bin` and passes only when both pass `start`, `reply`, `letter`, `sleep_wake` and `resume`.
   The stand-in runs the hook commands the kit installed and writes each CLI's session file format, so a change that breaks the journey's verdicts, the hooks' path into Hide or the cleanup fails it; its report is marked `fixture` with what a stand-in cannot show, and is never a release's agent evidence.
   `pr.yml` runs it on Linux when the journey's code or the shims change (`scripts/ci-plan.py`), `nightly.yml` and `release.yml` every time.

@@ -108,10 +108,28 @@ class Verdicts(unittest.TestCase):
         self.assertEqual(cells.spawn_verdict(refused),
                          (cells.FAIL, "spawn refused: native_identity_unavailable: retry the same intent"))
 
-    def test_a_turn_ends_only_after_working_then_stopped(self):
-        self.assertEqual(cells.turn_verdict(["stopped", "working", "stopped"])[0], cells.PASS)
-        self.assertEqual(cells.turn_verdict(["stopped"]), (cells.FAIL, "row never read working"))
-        self.assertEqual(cells.turn_verdict(["working"]), (cells.FAIL, "row read working and never stopped"))
+    def test_a_turn_ends_when_the_row_reads_idle_after_its_answer(self):
+        events = [{"role": "assistant", "text": "JOURNEY-0", "at": 1_000},
+                  {"role": "user", "text": "Reply with exactly JOURNEY-1", "at": 10_000},
+                  {"role": "assistant", "text": "JOURNEY-1", "at": 12_300}]
+        status, reason = cells.turn_verdict([("working", 10_500), ("stopped", 12_400)], events, "JOURNEY-1")
+        self.assertEqual((status, reason), (cells.PASS, "row read working, then idle after the answer"))
+        # A turn Herdr never saw working passes on the idle after its answer, and says so with its length.
+        status, reason = cells.turn_verdict([("unknown", 9_000), ("stopped", 13_000)], events, "JOURNEY-1")
+        self.assertEqual(status, cells.PASS)
+        self.assertIn("working not seen: a turn shorter than Herdr's detection, 2.3 s", reason)
+
+    def test_an_idle_from_before_the_prompt_or_another_turns_answer_is_not_a_pass(self):
+        events = [{"role": "assistant", "text": "JOURNEY-0", "at": 1_000},
+                  {"role": "user", "text": "Reply with exactly JOURNEY-1", "at": 10_000},
+                  {"role": "assistant", "text": "JOURNEY-1", "at": 12_300}]
+        # Idle read only before the answer, the row still working, or an answer from an earlier turn.
+        self.assertEqual(cells.turn_verdict([("stopped", 9_000), ("working", 12_350)], events, "JOURNEY-1"),
+                         (cells.FAIL, "row never read idle after the answer"))
+        self.assertEqual(cells.turn_verdict([("stopped", 2_000)], events[:2], "JOURNEY-1"),
+                         (cells.FAIL, "Hide's reader found no answer to the prompt"))
+        self.assertEqual(cells.turn_verdict([("stopped", 13_000)], events, "JOURNEY-0", after=1),
+                         (cells.FAIL, "Hide's reader found no answer to the prompt"))
 
     def test_the_emitter_must_be_herdrs_own_integration(self):
         self.assertEqual(cells.emitter_verdict({"source": "herdr:codex"}, "codex")[0], cells.PASS)

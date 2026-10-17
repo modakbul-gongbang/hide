@@ -73,9 +73,10 @@ class Daemon:
         self.rest = None
         self.revision = 0
         self.errors = []
-        # Every activity each pane's row read, in the order the frames
-        # carried them, so a turn shorter than the wait for its action's
-        # answer is still seen; a run makes a few turns per pane.
+        # Every activity each pane's row read, with when this client saw it,
+        # in the order the frames carried them, so a turn shorter than the
+        # wait for its action's answer is still seen; a run makes a few turns
+        # per pane.
         self.history = {}
         self.closed = None
         self.sock = socket.create_connection(("127.0.0.1", self.port), timeout=CONNECT_SECONDS)
@@ -145,11 +146,11 @@ class Daemon:
         """Appends each row's activity when it changed; called under the lock."""
         for agent in (self.rest.get("navigator") or {}).get("agents", []):
             seen = self.history.setdefault(agent.get("pane_id"), [])
-            if not seen or seen[-1] != agent.get("activity"):
+            if not seen or seen[-1][0] != agent.get("activity"):
                 if len(seen) >= HISTORY_CAP:
                     self.closed = f"activity_history_over_cap: {agent.get('pane_id')} changed {HISTORY_CAP} times"
                     return
-                seen.append(agent.get("activity"))
+                seen.append((agent.get("activity"), int(time.time() * 1000)))
 
     def mark(self, pane):
         """Where the pane's activity history stands, for a turn about to start."""
@@ -157,8 +158,14 @@ class Daemon:
             return len(self.history.get(pane, []))
 
     def activities(self, pane, since=0):
+        """(activity, Unix ms seen) from `since` on, with the row as it reads
+        now as the last observation."""
         with self.lock:
-            return list(self.history.get(pane, [])[since:])
+            seen = list(self.history.get(pane, [])[since:])
+            row = self.row(pane)
+            if row:
+                seen.append((row.get("activity"), int(time.time() * 1000)))
+            return seen
 
     def dispatch(self, kind, payload):
         if self.closed:

@@ -4,7 +4,8 @@
 //! never parses a native transcript itself. Not a product binary.
 //!
 //! journey_conversation <home> <agent kind> <id|path> <reference> <cwd>
-//! prints {"path": ..., "events": [{"role", "kind", "text"}...]} or exits 1
+//! prints {"path": ..., "events": [{"role", "kind", "text", "at"}...]}, `at`
+//! the record's time in Unix milliseconds as the session wrote it, or exits 1
 //! with the reader's own refusal on stderr.
 
 use std::path::Path;
@@ -64,7 +65,7 @@ fn read(
                 .map_err(|error| format!("session_conversation_read_failed: {error}"))
         })?;
         events.extend(page.events.into_iter().map(
-            |event| serde_json::json!({"role": event.role, "kind": event.kind, "text": event.text}),
+            |event| serde_json::json!({"role": event.role, "kind": event.kind, "text": event.text, "at": event.at_unix_ms}),
         ));
         if !page.has_more {
             return Ok(serde_json::json!({"path": path, "events": events}));
