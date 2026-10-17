@@ -239,3 +239,56 @@ fn a_slow_ask_for_one_home_does_not_hold_another_home_behind_it() {
         "the second home's answer was remembered, so no shell started while the first ask was held"
     );
 }
+
+/// Set on a copy of this test binary that plays a fresh process; without it
+/// [`a_fresh_process_role`] does nothing.
+const FRESH_PROCESS: &str = "HIDE_PLATFORM_PROGRAMS_FRESH";
+
+/// A fresh process's first [`programs::command`], which prints what the
+/// program said or how it failed to start.
+#[test]
+fn a_fresh_process_role() {
+    if std::env::var_os(FRESH_PROCESS).is_none() {
+        return;
+    }
+    match programs::command("hide-fixture-tool").output() {
+        Ok(output) => print!("RAN {}", String::from_utf8_lossy(&output.stdout)),
+        Err(error) => print!("FAILED {:?}", error.kind()),
+    }
+}
+
+/// A process that has asked nothing yet runs, on its first command, a
+/// program only the login shell's `PATH` reaches. The `hide` CLI and every
+/// short-lived process start this way, and a `gh` missed there reads as not
+/// installed.
+#[test]
+fn a_fresh_process_runs_what_only_the_login_shell_finds_on_its_first_command() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let installed = root.path().join("installer-bin");
+    fs::create_dir_all(&installed).unwrap();
+    crate::stand_ins::program(
+        &installed.join("hide-fixture-tool"),
+        "#!/bin/sh\necho tool ran\n",
+    );
+    let shell = shell_adding_installer_bin(root.path());
+
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "programs::a_fresh_process_role",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env_clear()
+        .env(FRESH_PROCESS, "1")
+        .env("HOME", &home)
+        .env("SHELL", &shell)
+        // A login item's or an SSH exec's own `PATH`.
+        .env("PATH", "/usr/bin:/bin")
+        .output()
+        .unwrap();
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(said.contains("RAN tool ran"), "{said}");
+}

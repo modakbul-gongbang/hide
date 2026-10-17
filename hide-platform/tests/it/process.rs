@@ -1746,6 +1746,40 @@ fn output_whose_set_aside_failed_is_set_aside_by_the_next_ask() {
     assert!(now.contains("AFTER-ERROR"), "{now}");
 }
 
+/// Output left under the name it was set aside under, with nothing at the
+/// log's own name (a set-aside whose file could not be named back), goes on
+/// in a new file at that name from the next ask, so it is not written on
+/// uncapped under a name no ask looks at.
+#[cfg(unix)]
+#[test]
+fn output_left_under_the_aside_name_goes_on_in_a_new_file_from_the_next_ask() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("core.log");
+    let aside = dir.path().join("core.log.1");
+    std::fs::write(&aside, vec![b'~'; OUTPUT_LIMIT as usize + 1]).unwrap();
+    let appended = || {
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&aside)
+            .unwrap()
+    };
+    let status = role_command("output_aside")
+        .env(OUTPUT_LOG, &log)
+        .stdout(appended())
+        .stderr(appended())
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let before = std::fs::read_to_string(&aside).unwrap();
+    assert!(!before.contains("AFTER"), "{before}");
+    let now = std::fs::read_to_string(&log).unwrap();
+    for line in ["SET true", "AFTER-ERROR", "AFTER-OUTPUT", "AGAIN false"] {
+        assert!(now.contains(line), "{line} in {now}");
+    }
+    assert!(hide_platform::fs::private::is_private(&log).unwrap());
+}
+
 /// Output that is not appended to that file, such as a pipe, is left where
 /// it goes, and so is the file, whatever its size.
 #[cfg(unix)]

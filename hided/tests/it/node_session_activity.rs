@@ -94,7 +94,11 @@ fn serve(
         .unwrap();
     let output = child.capture_until(deadline, OUTPUT_LIMIT).unwrap();
     assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
         child.try_wait().unwrap().is_some(),
         "normal EOF must reap the helper"

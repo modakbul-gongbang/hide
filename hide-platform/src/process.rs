@@ -1058,7 +1058,10 @@ pub fn descendants(root: u32) -> io::Result<Vec<u32>> {
 /// to `aside`, replacing the one before, and standard error, and standard
 /// output where it went to the same file, go on in a new private file at
 /// `log`. Answers whether it did. Output that is not that file (a terminal, a
-/// pipe, another file) is left alone, whatever `log` holds.
+/// pipe, another file) is left alone, whatever `log` holds, except the file
+/// at `aside` with nothing at `log`: a set-aside that failed and could not
+/// name its file back leaves the output there, and the next ask moves it on
+/// to a new file at `log`.
 ///
 /// The system opens the file once, when it starts the process, so a rename
 /// alone would leave this process writing on under the new name; asked again
@@ -2217,8 +2220,6 @@ mod sys {
     }
 
     pub(super) fn set_output_aside(log: &Path, aside: &Path, limit: u64) -> io::Result<bool> {
-        use std::os::unix::fs::OpenOptionsExt;
-
         use crate::fs::identity::{file_id, file_id_of};
 
         let error_output = crate::fs::duplicate(&io::stderr())?;
@@ -2227,43 +2228,59 @@ mod sys {
             return Ok(false);
         }
         let at_log = match file_id(log) {
-            Ok(id) => id,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Ok(id) => Some(id),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => None,
             Err(error) => return Err(error),
         };
-        if file_id_of(&error_output)? != at_log {
-            return Ok(false);
-        }
-        let output_too = file_id_of(&io::stdout()).is_ok_and(|id| id == at_log);
+        let written_to = file_id_of(&error_output)?;
+        let output_too = file_id_of(&io::stdout()).is_ok_and(|id| id == written_to);
         let mut onto = vec![libc::STDERR_FILENO];
         if output_too {
             onto.push(libc::STDOUT_FILENO);
         }
-        std::fs::rename(log, aside)?;
-        // Every step after the rename that fails puts the file back at `log`
-        // with the streams on it, so the next ask finds it as before and
-        // tries again, rather than this process writing on, uncapped, to a
-        // file no ask can name.
-        let fresh = match std::fs::OpenOptions::new()
+        match at_log {
+            Some(id) if id == written_to => {
+                std::fs::rename(log, aside)?;
+                // A step after the rename that fails puts the file back at
+                // `log` with the streams on it, so the next ask finds it as
+                // before and tries again.
+                onto_fresh(log, &error_output, &onto)
+                    .map_err(|error| put_back(aside, log, error))?;
+            }
+            // A set-aside whose file could not be named back left the
+            // streams on `aside` with nothing at `log`; this ask finishes it,
+            // so this process never writes on, uncapped, to a file no ask
+            // would set aside.
+            None if file_id(aside).is_ok_and(|id| id == written_to) => {
+                onto_fresh(log, &error_output, &onto)?;
+            }
+            _ => return Ok(false),
+        }
+        Ok(true)
+    }
+
+    /// Moves the standard streams `onto` from `was` to a new private file at
+    /// `log`, or, when a step fails, leaves every one on `was` and no file
+    /// at `log`.
+    fn onto_fresh(log: &Path, was: &std::fs::File, onto: &[libc::c_int]) -> io::Result<()> {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        let fresh = std::fs::OpenOptions::new()
             .append(true)
             .create_new(true)
             .mode(0o600)
-            .open(log)
-        {
-            Ok(fresh) => fresh,
-            Err(error) => return Err(put_back(aside, log, error)),
-        };
+            .open(log)?;
         for (moved, descriptor) in onto.iter().enumerate() {
             if let Err(error) = redirect(&fresh, *descriptor) {
                 for descriptor in &onto[..moved] {
-                    let _ = redirect(&error_output, *descriptor);
+                    let _ = redirect(was, *descriptor);
                 }
                 drop(fresh);
                 let _ = std::fs::remove_file(log);
-                return Err(put_back(aside, log, error));
+                return Err(error);
             }
         }
-        Ok(true)
+        Ok(())
     }
 
     /// `descriptor` (a standard stream) now writes to `file`. `dup2`
@@ -2279,7 +2296,8 @@ mod sys {
     }
 
     /// Names the file set aside `log` again after `error`, and answers
-    /// `error`, or both when that fails too.
+    /// `error`, or both when that fails too; the next ask then finds the
+    /// streams on `aside` with nothing at `log` and finishes the set-aside.
     fn put_back(aside: &Path, log: &Path, error: io::Error) -> io::Error {
         match std::fs::rename(aside, log) {
             Ok(()) => error,

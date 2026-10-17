@@ -36,7 +36,6 @@ fn run() -> Result<(), String> {
     // The node role on a device reads no daemon environment and opens no
     // state folder: it answers its link until the channel closes.
     if args.first().is_some_and(|arg| arg == "node") {
-        hide_platform::programs::warm_account_path();
         return hided::node_cli::run(&args[1..]);
     }
     // The attach role a node on another machine runs here over SSH: it
@@ -93,7 +92,8 @@ fn run() -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     // The programs the daemon starts by name run on the account's search;
-    // its first read starts now, off every caller.
+    // its first read starts now, so the daemon's first command seldom waits
+    // for it.
     hide_platform::programs::warm_account_path();
     let ran = runtime.block_on(hided::run_daemon(env));
     // The roles have ended and saved; a step a stop abandoned (an SSH step
