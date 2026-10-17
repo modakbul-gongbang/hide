@@ -184,9 +184,11 @@ The transcript and the schema request go on stdin as agy's one input message, `{
 A `result` whose `status` is not `SUCCESS` is classified from its `error` text by the shared rules.
 Every child gets the login variables, `AGY_CLI_DISABLE_AUTO_UPDATE=1`, and a `PATH` naming a folder that does not exist: a signed-out agy would open the operator's browser to sign in through a program it finds on `PATH`, and with nothing there every hook, the operator's global ones included, fails to start its shell, which agy also reads as a refused tool (B32).
 
-Every agy child Hide starts (a request, `agy models` and the `/usage` read below) writes its log to one file per kind in `~/.hide/ai/antigravity-logs/` (`request.log`, `models.log`, `usage.log`), which Hide empties before the child starts, so the folder holds the last run of each kind and never more.
+Every agy child Hide starts (a request, `agy models` and the `/usage` read below) writes its log to one file per kind in `~/.hide/ai/antigravity-logs/` (`request.log`, `models.log`, `usage.log`), which Hide empties before the child starts, so the folder holds the last runs of each kind and never more.
+Two children of one kind can overlap (a label request and a Factory request, or two model-list probes), and the later one's emptying can then drop lines the earlier one wrote; nothing reads these logs, so they are not serialized for it.
 Without `--log-file` agy leaves a log of about 20 KB in `~/.gemini/antigravity-cli/log/` for every process and never removes one: measured on agy 1.4.0 from 2026-10-16 to 10-18, the five-minute `/usage` read alone left 226 there.
 agy appends to a file it is given, which is why Hide empties it rather than only naming it; it is emptied in place, so a child of the same kind still running keeps writing to it.
+`--log-file` has been run against agy 1.4.0 on macOS only (`agy models` and `-p /usage`, 2026-10-18); on Windows and Linux it is unverified ([INSTALL.md](INSTALL.md#what-each-system-supports)).
 A log file that cannot be made the account's own empty file starts no child: a request is `ProviderUnavailable` with `antigravity_log_unavailable:<error>`, the model list `Unavailable` with `antigravity_models_log_unavailable:<error>`, and the usage read fails with `antigravity_usage_log_unavailable:<error>`.
 
 Availability is `NotInstalled` when no `agy` is found, `NeedsLogin` while `~/.gemini/antigravity-cli` does not exist (agy has never been signed in there), `Unsupported` while the read-only folder is not ready, and otherwise what `agy models` answers: its `id<TAB>label` lines are the model list and make the provider `Ready`, a sign-in answer is `NeedsLogin`, and anything else is `Unavailable` with the reason.
@@ -357,7 +359,8 @@ It runs in Hide's state directory (`~/.hide/state` by default).
 `USER` is what lets the CLI find its keychain account; without it the CLI prints `/cost` text as if logged out.
 `HERDR_*` and `CLAUDECODE` are withheld on purpose, so even a hook that did run would see no Herdr pane.
 `--setting-sources ''` reads none of the operator's settings, so none of their hooks or plugins runs for the read: a session-start hook may leave a folder in `~/.claude/session-env/` for every session, which Claude Code never removes, and on 2026-10-18 (claude 2.1.302) the read with the settings left one every five minutes and without them none, with the same windows in the answer.
-A setting that changes how the CLI reaches its account (an `env` block naming a proxy, an `apiKeyHelper`) is therefore not applied to the read, as it is not to a Hide AI request, which reads no settings either.
+The read reaches no network: with every outbound connection denied (`sandbox-exec`, 2026-10-18) it answered the same windows, so a proxy or certificate the operator sets only in `settings.json`'s `env` block is not needed for it.
+A Hide AI request reads no settings either and does reach the network, so for it such a proxy has to be in the environment Hide is started with.
 `--bare` cannot be used, because it never reads the keychain.
 `CLAUDE_CONFIG_DIR` is no longer an environment key Hide reads: the child does not receive it, so the CLI uses its default configuration directory.
 

@@ -760,6 +760,39 @@ fn each_kind_of_agy_child_keeps_only_its_last_log_in_hides_folder() {
 }
 
 #[test]
+fn no_agy_child_starts_while_its_log_file_cannot_be_emptied() {
+    // Something that is not a folder where Hide keeps agy's logs: running
+    // agy anyway would put its log back in agy's own folder, unbounded.
+    let fake = agy_fake(json!([{ "stdout": "{}" }]));
+    let (home, _) = agy_home(true);
+    std::fs::create_dir_all(home.path().join(".hide/ai")).unwrap();
+    std::fs::write(
+        home.path().join(".hide/ai/antigravity-logs"),
+        "not a folder",
+    )
+    .unwrap();
+    let backend =
+        hide_ai::AntigravityCliBackend::with_home(fake.config(""), Some(home.path().to_path_buf()));
+
+    let request = backend.execute(&request(), &CancelToken::new());
+    assert!(
+        matches!(&request, Err(AiError::ProviderUnavailable(code)) if code.starts_with("antigravity_log_unavailable:")),
+        "{request:?}"
+    );
+    let models = backend.availability();
+    assert!(
+        matches!(&models, Availability::Unavailable { reason } if reason.starts_with("antigravity_models_log_unavailable:")),
+        "{models:?}"
+    );
+    let usage = backend.usage_text(&CancelToken::new());
+    assert!(
+        matches!(&usage, Err(hide_ai::UsageError::Failed(code)) if code.starts_with("antigravity_usage_log_unavailable:")),
+        "{usage:?}"
+    );
+    assert!(fake.starts().is_empty(), "no agy child was started");
+}
+
+#[test]
 fn agy_is_ready_from_its_model_list_and_its_usage_is_the_whole_frame() {
     let usage = json!({"status": "SUCCESS", "response": "", "command": {"name": "usage", "data": {"groups": []}}}).to_string();
     let fake = agy_fake(json!([
