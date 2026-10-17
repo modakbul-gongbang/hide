@@ -3034,7 +3034,11 @@ fn index_result(
 ) -> Value {
     let (files, truncated, indexing, unavailable) = match answer {
         IndexAnswer::Indexing => (Vec::new(), false, true, None),
-        IndexAnswer::Ready { entries, truncated } => (
+        IndexAnswer::Ready {
+            entries,
+            truncated,
+            refreshing,
+        } => (
             entries
                 .iter()
                 .filter_map(|relative| {
