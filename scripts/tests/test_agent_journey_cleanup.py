@@ -1,5 +1,6 @@
 """What the journey removes, names and reports after a run: no agent runs."""
 
+import json
 import os
 from pathlib import Path
 import re
@@ -12,8 +13,8 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_journey import ci
-from agent_journey.cli import budget_failures, leftover_copies, remove_created, taken_branches
-from agent_journey.local import claude_session_folders
+from agent_journey.cli import budget_failures, hide_ai_requests, leftover_copies, remove_created, taken_branches
+from agent_journey.local import claude_session_folders, disable_hide_ai, wrapper
 from agent_journey.report import markdown
 
 GIT_ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
@@ -108,6 +109,45 @@ class Redaction(unittest.TestCase):
         with mock.patch.dict(os.environ, {"HIDE_CLAUDE_API_KEY": key, "HIDE_CODEX_API_KEY": ""}, clear=False):
             text = f"key {key} approve ...{key[-20:]}? other".encode()
             self.assertEqual(ci.redact(text), b"key [redacted] approve ...[redacted]? other")
+
+
+class LocalStarts(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.base = Path(folder.name).resolve()
+
+    def test_a_wake_start_through_the_panes_claude_carries_the_route(self):
+        # Hide's Wake and Fork start `claude --resume <id> ...` by name in the pane,
+        # which runs this wrapper, so the route rides on every start.
+        home = self.base / "daemon-home"
+        stand_in, argv = self.base / "claude", self.base / "argv"
+        stand_in.write_text(f'#!/bin/sh\nprintf "%s\\n" "$@" > {argv}\n')
+        stand_in.chmod(0o700)
+        target = wrapper(self.base / "bin", stand_in, self.base / "operator", self.base / "state", "claude",
+                         home, None, "/usr/bin")
+        subprocess.run([str(target), "--resume", "session-1"], check=True, env={"PATH": "/usr/bin:/bin"})
+        self.assertEqual(argv.read_text().splitlines(), [
+            "--settings", str(home / ".claude/settings.json"), "--setting-sources", "project,local",
+            "--resume", "session-1"])
+        # The file those arguments name is there before the kit fills it, as Claude refuses a missing one.
+        self.assertEqual(json.loads((home / ".claude/settings.json").read_text()), {})
+
+    def test_hide_ai_is_off_in_the_candidates_private_home(self):
+        disable_hide_ai(self.base / "home")
+        settings = self.base / "home/Library/Application Support/hide/ai.json"
+        self.assertEqual(json.loads(settings.read_text()), {"enabled": False})
+        self.assertEqual(settings.stat().st_mode & 0o777, 0o600)
+
+    def test_hide_ais_requests_are_counted_by_provider_one_per_attempt(self):
+        log = self.base / "hided.log"
+        log.write_text("\n".join([
+            '{"feature_id":"context_label","provider":"claude","outcome_class":"ok","input_chars":3}',
+            '{"feature_id":"context_label","provider":"claude","outcome_class":"ok","duration_ms":5}',
+            '{"feature_id":"context_label","provider":"claude","outcome_class":"invalid_output","duration_ms":4}',
+            '{"component":"kit","kind":"apply.completed"}', "not json"]) + "\n")
+        self.assertEqual(hide_ai_requests(log), {"claude": 2})
+        self.assertEqual(hide_ai_requests(self.base / "missing.log"), {})
 
 
 class LeftoversAndReport(unittest.TestCase):

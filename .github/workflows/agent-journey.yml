@@ -84,7 +84,7 @@ jobs:
         timeout-minutes: 20
         run: |
           set +e
-          python3 scripts/agent-journey-check.py --mode ci --agents claude-code,codex \
+          python3 scripts/agent-journey-check.py --mode ci \
             --fixture-bin "$RUNNER_TEMP/journey-shims" --herdr-bin "${{ steps.herdr.outputs.bin }}" --run-dir "$RUN_DIR"
           echo "exit=$?" >> "$GITHUB_OUTPUT"
       - name: The lane's verdict
@@ -141,10 +141,14 @@ jobs:
         if: ${{ env.HAS_KEYS == 'true' && runner.os == 'Linux' }}
         run: sudo apt-get install -y --no-install-recommends zsh
       - name: Install Claude Code and Codex
-        # The vendors' current releases; the report names the version each answered with.
+        # The vendors' current releases, so a night measures what operators
+        # install; the step and the report name the version each answered
+        # with, so a red night says which CLI changed.
         if: ${{ env.HAS_KEYS == 'true' }}
         timeout-minutes: 5
-        run: npm install -g @anthropic-ai/claude-code @openai/codex
+        run: |
+          npm install -g @anthropic-ai/claude-code @openai/codex
+          echo "::notice title=agent journey CLIs::claude $(claude --version), codex $(codex --version)"
       - name: Build hided, hide, the hooks and Hide's conversation reader
         if: ${{ env.HAS_KEYS == 'true' }}
         timeout-minutes: 25
@@ -167,7 +171,7 @@ jobs:
           HIDE_CODEX_API_KEY: ${{ secrets.HIDE_CODEX_API_KEY }}
         run: |
           set +e
-          python3 scripts/agent-journey-check.py --mode ci --agents claude-code,codex \
+          python3 scripts/agent-journey-check.py --mode ci \
             --herdr-bin "${{ steps.herdr.outputs.bin }}" --run-dir "$RUN_DIR"
           echo "journey exit $?"
       - name: The lane's verdict

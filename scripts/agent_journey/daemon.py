@@ -167,6 +167,9 @@ class Daemon:
         """(activity, Unix ms seen) from `since` on, with the row as it reads
         now as the last observation."""
         with self.lock:
+            # A row from a reader that stopped is no observation of now.
+            if self.closed:
+                raise ProcessError("daemon_connection_lost:" + self.closed)
             seen = list(self.history.get(pane, [])[since:])
             row = self.row(pane)
             if row:
