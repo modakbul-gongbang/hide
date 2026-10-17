@@ -1786,7 +1786,10 @@ fn forget_agent_trust(checkout: &Path) {
     let Ok(home) = hide_platform::host::home_dir() else {
         return;
     };
-    let stop = crate::kit::process_stop();
+    // The removal this follows runs to its own bound whatever its link
+    // does, and so does this: each Codex session ends within its own
+    // (`codex_trust::SESSION_BOUND`).
+    let stop = std::sync::atomic::AtomicBool::new(false);
     for agent in Agent::ALL {
         let codex = (agent == Agent::Codex)
             .then(|| hide_ai::resolve_binary(Path::new("codex")))
