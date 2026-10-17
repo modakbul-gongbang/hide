@@ -343,6 +343,7 @@ Every prompt asks only for a fresh token (`Reply with exactly <token>`), so a mo
 
 The journey runs them in this order, each from the state the last left: `start` and `reply`, `integration`, `guidance_memory`, `letter`, `fork` (before Sleep, while the source still runs the session it copies), `sleep_wake`, `resume`, `title`, `usage`, then `start_untrusted`.
 Only `start`, `start_untrusted`, `guidance_memory`, `letter` and `resume` start a turn; the others judge what Hide shows of them and spend no model request.
+Once an agent's cells are settled, the journey closes the panes it opened for that agent, its start, its fork and its untrusted start, before the next agent starts: the run's process guardian ends the private Herdr when everything under it passes 2 GiB together, and two Claude Code processes left running beside a Codex fork crossed it.
 The cells an adapter declares come from `contracts/agent-journey.json`, which `hide-agent-adapter` generates and its contract test keeps current ([contracts/README.md](../contracts/README.md#agent-journey)).
 It does not prove the desktop window, a physical keyboard, an agent other than the declared rows, or a model, provider or CLI version other than the ones its report names.
 

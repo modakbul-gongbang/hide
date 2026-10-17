@@ -81,6 +81,8 @@ class Journey:
         self.id, self.kind = contract_row["id"], contract_row["herdr_kind"]
         self.run = runtime.run
         self.pane = self.agent = self.session = self.reference = self.checkout = None
+        # Every pane this journey's spawns and fork opened, which close() ends.
+        self.opened = []
         # A model reaches the agent only through the product's own model flag.
         self.model_args = [part.replace("{}", model) for part in contract_row["model_flag"]] if model else []
 
@@ -232,6 +234,7 @@ class Journey:
         spawned = cells.spawn_verdict(answer)
         view = answer.get("value") or {}
         self.pane, self.agent, self.session = view.get("pane"), view.get("id"), view.get("session")
+        self.opened.append(self.pane)
         self.checkout = worktree.resolve()
         evidence = self.evidence("spawn", self.record["spawn"])
         if spawned[0] != cells.PASS:
@@ -431,6 +434,7 @@ class Journey:
         spawned = cells.spawn_verdict(answer)
         saved_pane, saved = self.pane, (self.agent, self.session, self.reference, self.checkout)
         self.pane = (answer.get("value") or {}).get("pane") or self.pane_of(answer)
+        self.opened.append(self.pane)
         try:
             if spawned[0] != cells.PASS:
                 self.settle("start_untrusted", spawned, self.evidence("start-untrusted", record))
@@ -447,6 +451,22 @@ class Journey:
         finally:
             self.pane = saved_pane
             self.agent, self.session, self.reference, self.checkout = saved
+
+    def close(self):
+        """Ends the panes this journey opened once its cells are settled. The
+        run's guardian caps the private Herdr's processes at 2 GiB together,
+        and each finished agent would otherwise keep its share beside the
+        next agent's; a pane that does not close is named, and the run's
+        teardown ends it."""
+        closed = self.record["closed"] = {}
+        for pane in dict.fromkeys(pane for pane in self.opened if pane):
+            try:
+                code, _, err = self.runtime.command(["pane", "close", pane], check=False)
+            except ProcessError as error:
+                if self.runtime.owner.cancelled.is_set():
+                    raise
+                code, err = 1, str(error)
+            closed[pane] = "closed" if not code else err.strip()[:300] or f"exit {code}"
 
     def requests(self):
         """Model requests the run's sessions of this agent made."""

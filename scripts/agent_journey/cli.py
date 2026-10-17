@@ -530,6 +530,7 @@ def main(argv=None):
                     journey.step("untrusted", untrusted)
                 agent["requests"] = journey.requests()
                 agent["request_budget"] = rows[key].get("request_budget")
+                journey.close()
     except Exception as error:
         # A stop the operator asked for is not a failure; the cells say "interrupted".
         if not (owner.cancelled.is_set() and isinstance(error, ProcessError) and "cancelled" in str(error)):

@@ -72,6 +72,7 @@ def measure(journey):
     record["row"] = row or [agent for agent in (rest.get("navigator") or {}).get("agents") or []
                             if agent.get("pane_id") != journey.pane and agent.get("forked_from") is not None]
     pane = (row or {}).get("pane_id")
+    journey.opened.append(pane)
     herdr_session = (journey.runtime.agent(pane) or {}).get("agent_session") if pane else None
     listing = journey.controller.hide(["agent", "list"])
     listed = next((item for item in (listing.get("value") or {}).get("items") or []
