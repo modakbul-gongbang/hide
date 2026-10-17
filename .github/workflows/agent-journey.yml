@@ -8,12 +8,26 @@
 # imitates passed. `pr.yml` runs it when the journey's code or the shims
 # change, `nightly.yml` and `release.yml` every time.
 #
-# With `live`, the `login` job runs the real CLIs in the runner's disposable
-# HOME, signed in with the CI account's keys (`HIDE_CLAUDE_API_KEY`,
-# `HIDE_CODEX_API_KEY`). An agent without its key reads "not configured" and
+# With `fake`, the `fake` job runs the real CLIs at the versions
+# contracts/agent-clis.json pins, with Hide's real kit, answered by the
+# journey's fake model (scripts/agent_journey/fake_model.py) and no key; its
+# report is marked apart from a signed-in one and proves no provider. It
+# passes only when every built cell passes for Claude Code and Codex, the
+# agents the stand-ins imitate, and no agent's cell fails.
+#
+# With `live`, the `login` job runs the real CLIs, pinned the same way, in the
+# runner's disposable HOME, signed in with the CI account's keys
+# (`HIDE_CLAUDE_API_KEY`, `HIDE_CODEX_API_KEY`, `HIDE_AGY_API_KEY`,
+# `HIDE_GROK_API_KEY`, `HIDE_PI_API_KEY`, `HIDE_OMP_API_KEY`). An agent without its key reads "not configured" and
 # leaves a notice, a provider quota refusal leaves a warning; neither fails
 # the job. A failed cell, an isolation or cleanup failure, a request budget
-# overrun, or a refused login or missing CLI with the key set does. Its report is never a release's agent evidence when it
+# overrun, or a refused login or missing CLI with the key set does. agy's key
+# has 20 requests a day for its model across the CI account (agy-contract.yml
+# spends 4 of them a night), so agy is measured only on the system `agy`
+# names, or the night's system of its rotation, and reads "not measured"
+# with that reason elsewhere (docs/VERIFICATION.md, Agent journey).
+# A CLI that answers another version than the pin is named in a warning.
+# Its report is never a release's agent evidence when it
 # came from the stand-ins (`skills/release/SKILL.md`).
 name: agent journey
 
@@ -28,10 +42,28 @@ on:
         description: Also run the signed-in journey for each agent whose key is set.
         type: boolean
         default: false
+      fake:
+        description: Also run the real CLIs against the journey's fake model, with no key.
+        type: boolean
+        default: false
+      agy:
+        description: >-
+          Where the signed-in journey measures agy, whose key has a daily request quota: `rotation` (one
+          system a day, by the UTC day of the year, through linux, macos and windows), one system's name, or `none`.
+        type: string
+        default: none
     secrets:
       HIDE_CLAUDE_API_KEY:
         required: false
       HIDE_CODEX_API_KEY:
+        required: false
+      HIDE_AGY_API_KEY:
+        required: false
+      HIDE_GROK_API_KEY:
+        required: false
+      HIDE_PI_API_KEY:
+        required: false
+      HIDE_OMP_API_KEY:
         required: false
 
 permissions:
@@ -102,6 +134,71 @@ jobs:
             ${{ env.RUN_DIR }}/*.log
           if-no-files-found: warn
 
+  fake:
+    name: agent journey fake model (${{ matrix.system }})
+    if: ${{ inputs.fake }}
+    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15"}')[matrix.system] }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        system: ${{ fromJSON(inputs.systems) }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      HERDR_PLATFORM: ${{ fromJSON('{"linux":"linux-x86_64","macos":"macos-aarch64"}')[matrix.system] }}
+      RUN_DIR: agents/runs/agent-journey-fake-${{ matrix.system }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          save-if: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install zsh on Linux
+        if: runner.os == 'Linux'
+        timeout-minutes: 5
+        run: sudo apt-get install -y --no-install-recommends zsh
+      - name: Install the pinned agent CLIs
+        timeout-minutes: 10
+        run: python3 scripts/install-agent-clis.py claude codex grok pi omp agy
+      - name: Build hided, hide, the hooks and Hide's conversation reader
+        timeout-minutes: 25
+        run: |
+          bash scripts/verify-cargo.sh cli
+          bash scripts/verify-cargo.sh build -p hide-session --example journey_conversation
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        timeout-minutes: 5
+        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")" >> "$GITHUB_OUTPUT"
+      - name: The journey against the fake model
+        timeout-minutes: 40
+        run: |
+          set +e
+          python3 scripts/agent-journey-check.py --mode ci --fake-model \
+            --agents claude-code,codex,grok,pi,omp,antigravity \
+            --herdr-bin "${{ steps.herdr.outputs.bin }}" --run-dir "$RUN_DIR"
+          echo "journey exit $?"
+      - name: The lane's verdict
+        run: python3 scripts/agent-journey-lane.py "$RUN_DIR/report.json" --lane fake
+      - name: Keep the report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: agent-journey-fake-${{ matrix.system }}
+          path: |
+            ${{ env.RUN_DIR }}/report.*
+            ${{ env.RUN_DIR }}/*.json
+            ${{ env.RUN_DIR }}/*.jsonl
+            ${{ env.RUN_DIR }}/*.txt
+            ${{ env.RUN_DIR }}/*.log
+          if-no-files-found: warn
+
   login:
     name: agent journey signed in (${{ matrix.system }})
     if: ${{ inputs.live }}
@@ -117,11 +214,11 @@ jobs:
     env:
       HERDR_PLATFORM: ${{ fromJSON('{"linux":"linux-x86_64","macos":"macos-aarch64"}')[matrix.system] }}
       RUN_DIR: agents/runs/agent-journey-login-${{ matrix.system }}
-      HAS_KEYS: ${{ secrets.HIDE_CLAUDE_API_KEY != '' || secrets.HIDE_CODEX_API_KEY != '' }}
+      HAS_KEYS: ${{ secrets.HIDE_CLAUDE_API_KEY != '' || secrets.HIDE_CODEX_API_KEY != '' || secrets.HIDE_AGY_API_KEY != '' || secrets.HIDE_GROK_API_KEY != '' || secrets.HIDE_PI_API_KEY != '' || secrets.HIDE_OMP_API_KEY != '' }}
     steps:
       - name: Not configured without the CI account's keys
         if: ${{ env.HAS_KEYS != 'true' }}
-        run: echo "::notice title=agent journey signed in::not configured (no HIDE_CLAUDE_API_KEY or HIDE_CODEX_API_KEY secret); the signed-in journey stays unproven"
+        run: echo "::notice title=agent journey signed in::not configured (no HIDE_CLAUDE_API_KEY, HIDE_CODEX_API_KEY, HIDE_AGY_API_KEY, HIDE_GROK_API_KEY, HIDE_PI_API_KEY or HIDE_OMP_API_KEY secret); the signed-in journey stays unproven"
       - uses: actions/checkout@v7
         if: ${{ env.HAS_KEYS == 'true' }}
         with:
@@ -139,15 +236,49 @@ jobs:
       - name: Install zsh on Linux
         if: ${{ env.HAS_KEYS == 'true' && runner.os == 'Linux' }}
         run: sudo apt-get install -y --no-install-recommends zsh
-      - name: Install Claude Code and Codex
-        # The vendors' current releases, so a night measures what operators
-        # install; the step and the report name the version each answered
-        # with, so a red night says which CLI changed.
+      - name: Choose the agents this leg signs in
+        # Each agent whose key is set, at its pinned version; agy only on the
+        # systems its daily quota measures tonight.
         if: ${{ env.HAS_KEYS == 'true' }}
-        timeout-minutes: 5
+        id: agents
+        env:
+          HAS_CLAUDE: ${{ secrets.HIDE_CLAUDE_API_KEY != '' }}
+          HAS_CODEX: ${{ secrets.HIDE_CODEX_API_KEY != '' }}
+          HAS_AGY: ${{ secrets.HIDE_AGY_API_KEY != '' }}
+          HAS_GROK: ${{ secrets.HIDE_GROK_API_KEY != '' }}
+          HAS_PI: ${{ secrets.HIDE_PI_API_KEY != '' }}
+          HAS_OMP: ${{ secrets.HIDE_OMP_API_KEY != '' }}
+          AGY_PLAN: ${{ inputs.agy }}
+          SYSTEM: ${{ matrix.system }}
         run: |
-          npm install -g @anthropic-ai/claude-code @openai/codex
-          echo "::notice title=agent journey CLIs::claude $(claude --version), codex $(codex --version)"
+          kinds=()
+          for pair in claude:$HAS_CLAUDE codex:$HAS_CODEX grok:$HAS_GROK pi:$HAS_PI omp:$HAS_OMP; do
+            [[ "${pair#*:}" == true ]] && kinds+=("${pair%%:*}")
+          done
+          rotation=(linux macos windows)
+          case "$AGY_PLAN" in
+            rotation)
+              agy_system=${rotation[$(( 10#$(date -u +%j) % ${#rotation[@]} ))]}
+              why="the key's 20 requests a day measure it on $agy_system tonight (the rotation through linux, macos and windows; agy-contract.yml takes 4 a night)" ;;
+            none) agy_system=""; why="this run does not spend the key's daily requests on agy" ;;
+            *) agy_system=$AGY_PLAN
+              why="this run measures it on $agy_system only, so the night's and this run's requests stay within the key's 20 a day" ;;
+          esac
+          unmeasured=""
+          if [[ "$HAS_AGY" == true && "$agy_system" == "$SYSTEM" ]]; then
+            kinds+=(agy)
+          elif [[ "$HAS_AGY" == true ]]; then
+            unmeasured=$why
+          fi
+          echo "kinds=${kinds[*]}" >> "$GITHUB_OUTPUT"
+          echo "unmeasured=$unmeasured" >> "$GITHUB_OUTPUT"
+      - name: Install the pinned agent CLIs
+        # contracts/agent-clis.json, so a night measures the versions the
+        # adapters were verified against; the step and the report name the
+        # version each answered with, so a red night says which CLI changed.
+        if: ${{ env.HAS_KEYS == 'true' && steps.agents.outputs.kinds != '' }}
+        timeout-minutes: 10
+        run: python3 scripts/install-agent-clis.py ${{ steps.agents.outputs.kinds }}
       - name: Build hided, hide, the hooks and Hide's conversation reader
         if: ${{ env.HAS_KEYS == 'true' }}
         timeout-minutes: 25
@@ -167,9 +298,17 @@ jobs:
         env:
           HIDE_CLAUDE_API_KEY: ${{ secrets.HIDE_CLAUDE_API_KEY }}
           HIDE_CODEX_API_KEY: ${{ secrets.HIDE_CODEX_API_KEY }}
+          HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
+          HIDE_GROK_API_KEY: ${{ secrets.HIDE_GROK_API_KEY }}
+          HIDE_PI_API_KEY: ${{ secrets.HIDE_PI_API_KEY }}
+          HIDE_OMP_API_KEY: ${{ secrets.HIDE_OMP_API_KEY }}
+          AGY_UNMEASURED: ${{ steps.agents.outputs.unmeasured }}
         run: |
           set +e
-          python3 scripts/agent-journey-check.py --mode ci \
+          # The model agy-contract.yml signs agy in with, so both spend one quota.
+          args=(--model antigravity=gemini-3.8-flash-medium)
+          [[ -n "$AGY_UNMEASURED" ]] && args+=(--unmeasured "antigravity=$AGY_UNMEASURED")
+          python3 scripts/agent-journey-check.py --mode ci "${args[@]}" \
             --herdr-bin "${{ steps.herdr.outputs.bin }}" --run-dir "$RUN_DIR"
           echo "journey exit $?"
       - name: The lane's verdict

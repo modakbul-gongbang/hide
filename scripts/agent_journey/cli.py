@@ -61,6 +61,8 @@ def parser():
     value.add_argument("--herdr-bin", type=Path, help="Previously fetched pinned Herdr; bytes are checked")
     value.add_argument("--fixture-bin", type=Path,
                        help="CI only: folder holding the compiled claude and codex stand-ins (web/e2e/shims)")
+    value.add_argument("--unmeasured", action="append", default=[], metavar="ID=REASON",
+                       help="Leaves a selected agent unstarted, its cells not measured for REASON (a lane's quota rotation)")
     value.add_argument("--fake-model", action="store_true",
                        help="The real CLIs answered by the journey's fake model (fake_model.py), with no key or login")
     return value
@@ -478,6 +480,12 @@ def main(argv=None):
                 or not next(row for row in contract if row["id"] == key)["model_flag"]):
             refuse("invalid_model_override")
         models[key] = model
+    unmeasured = {}
+    for entry in args.unmeasured:
+        key, separator, reason = entry.partition("=")
+        if not separator or key not in selected or not reason.strip() or key in unmeasured:
+            refuse("invalid_unmeasured")
+        unmeasured[key] = reason.strip()
     herdr = args.herdr_bin or default_herdr(checkout, operator)
     if not herdr.is_file():
         refuse("pinned_herdr_missing: run zsh scripts/fetch-herdr-runtime.sh, or pass --herdr-bin")
@@ -491,7 +499,7 @@ def main(argv=None):
         refuse("report_directory_must_be_new_and_local_only")
     root = measured_repository(checkout)
     run_id = slug.removeprefix("agent-journey-") if not args.run_dir else run.name
-    measured = [key for key in selected if key in cells.BUILT_AGENTS]
+    measured = [key for key in selected if key in cells.BUILT_AGENTS and key not in unmeasured]
     # The cleanup deletes the run's branch names, so none may be there before it starts.
     taken = taken_branches(root, [f"journey/{run_id}-{key}" for key in measured])
     if taken:
@@ -506,6 +514,9 @@ def main(argv=None):
               "leftover_copies": leftover_copies(checkout, run), "measured_repository": str(root),
               "leftovers": journey_leftovers(root, checkout, run), "created": [],
               "cleanup": {"confirmed": False}, "failures": []}
+    for key, reason in unmeasured.items():
+        report["agents"].append({"id": key, "unmeasured": reason})
+        cells.settle_agent(table, key, reason)
     owner = OwnedProcesses(diagnostics=run / "process-diagnostics")
     previous = {signum: signal.signal(signum, lambda *_: owner.cancelled.set())
                 for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
