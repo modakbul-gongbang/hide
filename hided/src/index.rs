@@ -136,27 +136,68 @@ impl Entry {
 /// `finish`; a walk that panics, or a thread that never started, drops it
 /// unfinished, which leaves the entry `Empty` so the next query walks again
 /// instead of answering `Indexing` forever.
-struct Walk(Option<Arc<Entry>>);
+struct Walk {
+    entry: Option<Arc<Entry>>,
+    /// The list a refresh replaces; it stays when the refresh does not land.
+    older: Option<Arc<Walked>>,
+    key: IndexKey,
+}
 
 impl Walk {
     fn finish(mut self, result: Result<Walked, String>) {
-        if let Some(entry) = self.0.take() {
-            *entry.state() = match result {
-                Ok(walked) => State::Walked {
-                    walked: Arc::new(walked),
+        let Some(entry) = self.entry.take() else {
+            return;
+        };
+        *entry.state() = match (result, self.older.take()) {
+            (Ok(walked), _) => State::Walked {
+                walked: Arc::new(walked),
+                at: Instant::now(),
+            },
+            // A list the palette was showing is not thrown away by a refresh
+            // that failed: it is kept as if just walked, so the next refresh
+            // comes after another `STALE_AFTER` rather than on every query.
+            (Err(message), Some(older)) => {
+                self.log("index.refresh_failed", &message);
+                State::Walked {
+                    walked: older,
                     at: Instant::now(),
-                },
-                Err(message) => State::Failed(message),
-            };
-        }
+                }
+            }
+            (Err(message), None) => State::Failed(message),
+        };
+    }
+
+    fn log(&self, kind: &str, message: &str) {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "hided",
+                "kind": kind,
+                "device": self.key.0,
+                "root": self.key.1,
+                "message": message,
+            })
+        );
     }
 }
 
 impl Drop for Walk {
     fn drop(&mut self) {
-        if let Some(entry) = self.0.take() {
-            *entry.state() = State::Empty;
-        }
+        let Some(entry) = self.entry.take() else {
+            return;
+        };
+        // A walk that panicked or never started: a refresh keeps the list it
+        // replaced, a first walk leaves the entry to walk again.
+        *entry.state() = match self.older.take() {
+            Some(older) => {
+                self.log("index.refresh_abandoned", "the walk ended without a result");
+                State::Walked {
+                    walked: older,
+                    at: Instant::now(),
+                }
+            }
+            None => State::Empty,
+        };
     }
 }
 
@@ -201,9 +242,9 @@ impl IndexService {
 
     /// The ranked matches for one root of one device. The first call starts
     /// `walk` on its own thread and answers `Indexing`; a list older than
-    /// `STALE_AFTER` is answered as refreshing while `walk` replaces it; a
-    /// failed walk is answered once and then forgotten, so the next query
-    /// walks again.
+    /// `STALE_AFTER` is answered as refreshing while `walk` replaces it, and
+    /// stays when that walk fails (it is logged); a first walk that fails is
+    /// answered once and then forgotten, so the next query walks again.
     pub fn query(
         &self,
         device: &str,
@@ -241,7 +282,12 @@ impl IndexService {
                 State::Walked { walked, .. } => {
                     *state = State::Walking(Some(Arc::clone(&walked)));
                     drop(state);
-                    start_walk(&entry, walk);
+                    start_walk(
+                        &entry,
+                        (device.to_owned(), root.to_owned()),
+                        Some(Arc::clone(&walked)),
+                        walk,
+                    );
                     (walked, true)
                 }
                 State::Walking(older) => {
@@ -255,7 +301,7 @@ impl IndexService {
                 State::Empty => {
                     *state = State::Walking(None);
                     drop(state);
-                    start_walk(&entry, walk);
+                    start_walk(&entry, (device.to_owned(), root.to_owned()), None, walk);
                     return IndexAnswer::Indexing;
                 }
             }
@@ -272,8 +318,17 @@ impl IndexService {
 }
 
 /// Starts the one walk an entry is `Walking` for, on its own thread.
-fn start_walk(entry: &Arc<Entry>, walk: impl FnOnce() -> Result<Walked, String> + Send + 'static) {
-    let walk_of_entry = Walk(Some(Arc::clone(entry)));
+fn start_walk(
+    entry: &Arc<Entry>,
+    key: IndexKey,
+    older: Option<Arc<Walked>>,
+    walk: impl FnOnce() -> Result<Walked, String> + Send + 'static,
+) {
+    let walk_of_entry = Walk {
+        entry: Some(Arc::clone(entry)),
+        older,
+        key,
+    };
     let _ = std::thread::Builder::new()
         .name("hided-index".to_owned())
         .spawn(move || {
@@ -413,6 +468,23 @@ mod tests {
             "the stale list is served while it refreshes"
         );
         assert_eq!(settled(&service, "zqnew"), ["zqnew_after_index.txt"]);
+    }
+
+    #[test]
+    fn a_refresh_that_fails_or_panics_keeps_the_list_it_replaced() {
+        let service = walked_service(&["app.js"]);
+        service.age(STALE_AFTER);
+        service.query("device", "/root", "", || Err("helper gone".to_owned()));
+        // The failed refresh lands as a list just walked: still served, and
+        // not walked again until it is stale once more.
+        assert_eq!(settled(&service, ""), ["app.js"]);
+        service.age(STALE_AFTER);
+        service.query("device", "/root", "", || panic!("the walker crashed"));
+        assert_eq!(settled(&service, ""), ["app.js"]);
+        // A refresh after that still lands.
+        service.age(STALE_AFTER);
+        service.query("device", "/root", "", || Ok(walked(&["app.js", "b.js"])));
+        assert_eq!(settled(&service, ""), ["app.js", "b.js"]);
     }
 
     #[test]
