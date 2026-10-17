@@ -14,6 +14,19 @@
 # `GEMINI_API_KEY` with `"modelProvider": "gemini"`), and on Linux and macOS
 # one real agy turn through Hide's hooks. Without the secret the job says
 # "not configured" and passes (docs/INSTALL.md, What each system supports).
+#
+# The key's free tier allows 20 requests a day for `HIDE_AGY_MODEL` across
+# its project. The listing asks the model nothing (it passed in run
+# 38958746826 after the quota was spent), and a turn that makes its one tool
+# call is two requests, the call and the answer to its refusal, so a nightly
+# spends 4. Each 503 agy retries is one more and nextest runs a failed turn
+# again, so a night of failing turns can spend 16, and a hand run of
+# `lane=agy` spends what a nightly does. The turn still runs on both Unix
+# systems, each with its own agy build: 4 fits the 20, and one turn a night
+# would leave a system unproven to save requests the nightly does not need.
+# A turn the provider refuses because the day's requests are spent writes a
+# `Not measured` warning and passes; a quota of 0, a 503 that never recovers
+# and every other error fail (docs/TESTING.md, A real agent on CI).
 name: agy contract
 
 on:

@@ -459,7 +459,10 @@ A table from a Windows or macOS runner's logs would need its own file and a lane
 A lane that signs a real agent in, like the nightly `agy contract` lane, proves only what the agent does before and around its model's answer; keep its real turn to the minimum.
 
 - An API key alone may not sign the agent in: agy 1.4.0 asked for a browser sign-in until its settings also named `"modelProvider": "gemini"` (2026-10-16).
-- A free-tier quota is counted per model per day across the key's project: 20 requests on 2026-10-16, so hand runs of the lane spend the nightly's turns and the next one fails with `429`.
+- A free-tier quota is counted per model per day across the key's project (20 requests on 2026-10-16), and hand runs of the lane spend the nightly's; budget the turns to it and say how in the workflow (`agy-contract.yml` spends 4 a night).
+- A turn the provider refuses because that quota is spent measured nothing, so it neither passes nor fails as a result: the check writes a warning annotation titled `Not measured`, with the check on its first line and `provider quota exhausted: <quota ids>` after it, and returns, and the nightly report keeps its lane from passing (below).
+  The rule is exact, so a broken setup cannot pass as a spent day: the agent's own error report says `429` and `RESOURCE_EXHAUSTED`, and each violation of its `google.rpc.QuotaFailure` names a quota above 0 (`spent_quota` in `hide-agent-hooks/tests/it/agy_binary.rs`, with agy's recorded reports in `hide-agent-hooks/tests/fixtures/agy-errors/`).
+  A quota of 0 (a model the key is not served), a 503 the agent's retries never got past and every other error fail; a check that signs another agent in applies the same rule to that provider's own report and writes the same annotation.
 - Assert what happens before the model answers (the hooks fired, the letter went in, a refused call carried Hide's reason) rather than what the model writes, and name the model in the workflow so a renamed one is one line to change.
 - Keep the turn's own bounds inside the test's hang guard (`.config/nextest.toml`), so a slow turn fails with the agent's report instead of being ended with nothing.
 
@@ -521,6 +524,7 @@ The nightly's `report` job (`scripts/ci-flaky-report.py --nightly`) is the one w
 - A scheduled run on main, or a hand run of `all`, that passes a lane closes that lane's issues with a comment naming the commit and the run; a skipped or cancelled lane closes nothing.
 - One run opens at most 10 issues; the rest, with the count of failed tests a lane had no annotation room for, go into one issue, `nightly: N more failures in run <id>`, which the next scheduled run closes as it files its own.
 - A run of any other branch writes no issue.
+- A check that passed without measuring (a `Not measured` warning annotation, [A real agent on CI](#a-real-agent-on-ci)) passes its job, but its lane is not green: it closes no issue, is no lane's last green nightly, and the report lists it under "Not measured" in its job summary.
 - The report fails its job when GitHub does, so a failure it could not file shows as a red report job rather than a silence.
   `--dry-run` with `--repo` and `--run` prints what it would write for any finished run and writes nothing.
 

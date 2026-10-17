@@ -450,6 +450,33 @@ class NightlyFailures(unittest.TestCase):
         self.assertEqual(github.closed(), [1])
         self.assertIn("Passed at cccccccccccc", github.writes[0][2]["body"])
 
+    def test_a_lane_that_passed_without_measuring_closes_nothing_and_is_listed(self):
+        lane = "agy contract / agy signed in (macos)"
+        check = "agy_binary::a_signed_in_agy_turn_fires_hide_s_hooks"
+        unmeasured = {"title": "Not measured", "path": ".github", "start_line": 1,
+                      "message": f"{check}\nprovider quota exhausted: GenerateRequestsPerDayPerProjectPerModel-FreeTier"}
+        issues = [{"number": 1, "body": f"<!-- nightly-failure:{lane}:step x -->"},
+                  {"number": 2, "body": "<!-- nightly-failure:agy contract / agy signed in (linux):step x -->"}]
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        summary = Path(folder.name) / "summary.md"
+        saved = dict(os.environ)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ["GITHUB_STEP_SUMMARY"] = str(summary)
+        github = nightly(FakeGitHub(
+            [job(1, lane, "success"), job(2, "agy contract / agy signed in (linux)", "success")],
+            annotations={1: [unmeasured]}, issues=issues))
+        self.assertEqual(github.closed(), [2])
+        self.assertIn(f"### Not measured\n\n- `{lane}`: {check}: provider quota exhausted: "
+                      "GenerateRequestsPerDayPerProjectPerModel-FreeTier", summary.read_text())
+
+    def test_a_lane_that_passed_without_measuring_is_no_last_green_nightly(self):
+        github = self.package_failed()
+        github.add_earlier(95, "b" * 40, "2026-10-06T18:00:00Z", [job(12, PACKAGE, "success")])
+        github.annotations[12] = [{"title": "Not measured", "message": "check\nprovider quota exhausted: q"}]
+        (issue,) = nightly(github).opened()
+        self.assertIn(f"Last green nightly of this lane: {GREEN[:12]}", issue["body"])
+
     def test_only_a_hand_run_of_every_lane_closes(self):
         issues = [{"number": 1, "body": "<!-- nightly-failure:desktop e2e (macos full):step x -->"}]
         jobs = [job(1, "desktop e2e (macos full)", "success")]
