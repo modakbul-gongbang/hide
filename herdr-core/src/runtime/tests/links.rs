@@ -27,6 +27,70 @@ fn record_workspace(device: &str, id: &str, panes: &[&str]) -> WorkspaceSnapshot
     workspace
 }
 
+fn remote_session(workspaces: Vec<WorkspaceSnapshot>) -> RemoteStatusSnapshot {
+    RemoteStatusSnapshot {
+        target_id: "remote".into(),
+        state: "connected".into(),
+        message: None,
+        herdr_version: None,
+        session: Some(RemoteSessionSnapshot {
+            workspaces,
+            agents: vec![],
+            active_tab_ids: Default::default(),
+            focused_workspace_id: None,
+            focused_checkout_id: None,
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: vec![],
+            pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
+            issue_links: Default::default(),
+            herdr_version: None,
+        }),
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+        unreachable_since_unix_ms: None,
+    }
+}
+
+#[test]
+fn a_device_panes_links_scope_holds_its_device_project_and_every_device_for_all_projects() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![record_workspace(
+        crate::node::TEST_NODE,
+        "local-project",
+        &["local-pane"],
+    )];
+    let mut device_project = record_workspace("remote", "remote-project", &["remote-pane"]);
+    device_project.path = "/srv/app".into();
+    device_project.checkouts[0].path = "/srv/app".into();
+    runtime.snapshot.status.remote = vec![remote_session(vec![device_project])];
+
+    let context = crate::workspace_control::Context {
+        device_id: "remote".into(),
+        workspace_id: "remote-project".into(),
+        checkout_id: "remote-project".into(),
+        checkout_path: "/srv/app".into(),
+    };
+    let scope = runtime.links_scope(&context).expect("a record home");
+    let remote_key = hide_project::project_id("remote", Path::new("/srv/app"));
+    assert_eq!(
+        scope.caller, remote_key,
+        "the device pane's checkout names its Project"
+    );
+    let mut devices = scope
+        .projects
+        .iter()
+        .map(|project| project.device_id.as_str())
+        .collect::<Vec<_>>();
+    devices.sort_unstable();
+    assert_eq!(
+        devices,
+        ["remote", crate::node::TEST_NODE],
+        "--all-projects reads this machine's Projects and the device's"
+    );
+}
+
 #[test]
 fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
     let mut runtime = runtime();
