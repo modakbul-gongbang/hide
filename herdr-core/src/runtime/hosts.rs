@@ -58,11 +58,26 @@ pub(super) enum HostPhase {
 const HOST_RETRY_FIRST_MS: u64 = 2_000;
 const HOST_RETRY_MAX_MS: u64 = 60_000;
 
+/// Whether the device's Herdr session answering again has already moved this
+/// outage's helper retry forward. It does so once, so a session that flaps
+/// cannot turn the schedule's cap into a dial every few seconds; the link
+/// reaching ready ends the outage and its record.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum SessionBack {
+    #[default]
+    Unseen,
+    /// The session came back while an attempt ran: should it fail, the next
+    /// one is due at once.
+    DuringAttempt,
+    Spent,
+}
+
 /// When a lost or failed link may be tried again, and the wait after that.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct HostRetry {
     pub(super) at_unix_ms: Option<u64>,
     pub(super) delay_ms: u64,
+    pub(super) session_back: SessionBack,
 }
 
 impl Default for HostRetry {
@@ -70,6 +85,7 @@ impl Default for HostRetry {
         Self {
             at_unix_ms: None,
             delay_ms: HOST_RETRY_FIRST_MS,
+            session_back: SessionBack::Unseen,
         }
     }
 }
@@ -361,8 +377,13 @@ impl Runtime {
         let generation = self.advance_host_generation(device_id);
         // This is the attempt a waiting retry was for; a failed one
         // schedules the next.
-        if let Some(retry) = self.device_host_retries.get_mut(device_id) {
-            retry.at_unix_ms = None;
+        if let Some(retry) = self.device_host_retries.get_mut(device_id)
+            && retry.at_unix_ms.take().is_some()
+        {
+            // No retry waits any longer; the panes read what the attempt
+            // makes of the link (connecting, or unavailable if it starts
+            // nothing).
+            self.refresh_pane_headers();
         }
         if self.device_kit_removing(device_id) {
             self.set_host_phase(
@@ -533,14 +554,24 @@ impl Runtime {
             .device_host_retries
             .entry(device_id.to_owned())
             .or_default();
-        retry.at_unix_ms = Some(now_unix_ms.saturating_add(retry.delay_ms));
+        // The session answered while the attempt ran, so the machine can be
+        // reached: this failure's retry is due now, the once.
+        let wait = if retry.session_back == SessionBack::DuringAttempt {
+            retry.session_back = SessionBack::Spent;
+            0
+        } else {
+            retry.delay_ms
+        };
+        retry.at_unix_ms = Some(now_unix_ms.saturating_add(wait));
         crate::diagnostic!(serde_json::json!({
             "component": "remote_host",
             "kind": "host.retry_scheduled",
             "target": device_id,
-            "delay_ms": retry.delay_ms,
+            "delay_ms": wait,
         }));
         retry.delay_ms = retry.delay_ms.saturating_mul(2).min(HOST_RETRY_MAX_MS);
+        // A pane reads reconnecting once a retry is scheduled.
+        self.refresh_pane_headers();
     }
 
     /// Tries again each device whose lost or failed link has waited out its
@@ -585,9 +616,9 @@ impl Runtime {
         }
     }
 
-    /// What the device's helper link waits for while it is away: the core
-    /// tries it again without being asked, or the operator has to allow the
-    /// helper. A changed identity or an unsupported device is neither, and
+    /// What the device's helper link waits for while it is away: an attempt
+    /// that runs or a retry that is scheduled, or the operator has to allow
+    /// the helper. A changed identity or an unsupported device is neither, and
     /// its panes stay unavailable.
     pub(super) fn helper_link_wait(&self, device_id: &str) -> Option<LinkWait> {
         if !self
@@ -597,16 +628,30 @@ impl Runtime {
             return None;
         }
         match self.device_hosts.get(device_id).map(|host| &host.phase) {
-            Some(HostPhase::Unavailable(_) | HostPhase::Connecting) => Some(LinkWait::Returns),
+            Some(HostPhase::Connecting) => Some(LinkWait::Returns),
+            // Only a retry that is scheduled brings an unavailable link back;
+            // the paths that schedule none (no SSH connection yet, the kit
+            // still coming off, no worker) wait for something else.
+            Some(HostPhase::Unavailable(_))
+                if self
+                    .device_host_retries
+                    .get(device_id)
+                    .is_some_and(|retry| retry.at_unix_ms.is_some()) =>
+            {
+                Some(LinkWait::Returns)
+            }
             Some(HostPhase::NotAllowed) => Some(LinkWait::NeedsConsent),
             _ => None,
         }
     }
 
     /// The device's Herdr session answers again, so the machine is reachable:
-    /// a helper link waiting out a retry that doubled while it was away is
-    /// tried now, and a link still starting begins its wait over should it
-    /// fail. A link ready or waiting for the operator is left as it is.
+    /// the helper link's retry is due now, without waiting out a wait that
+    /// grew while the machine was away. The delay after it keeps doubling,
+    /// and this happens once per outage: a session that flaps while the
+    /// helper keeps failing is still dialed no oftener than the schedule's
+    /// cap allows. A link that is ready, or waits for the operator, is left
+    /// as it is.
     pub(super) fn device_reachable_again(&mut self, device_id: &str) -> bool {
         if !self
             .link_origin(device_id)
@@ -614,20 +659,34 @@ impl Runtime {
         {
             return false;
         }
+        let retry = self
+            .device_host_retries
+            .entry(device_id.to_owned())
+            .or_default();
+        if retry.session_back == SessionBack::Spent {
+            return false;
+        }
         match self.device_hosts.get(device_id).map(|host| &host.phase) {
             Some(HostPhase::Unavailable(_)) => {
+                retry.session_back = SessionBack::Spent;
                 crate::diagnostic!(serde_json::json!({
                     "component": "remote_host",
                     "kind": "host.retry_due_session_back",
                     "target": device_id,
                 }));
-                self.retry_device_host_now(device_id)
+                self.start_device_host(device_id)
             }
             Some(HostPhase::Connecting) => {
-                self.device_host_retries.remove(device_id);
+                retry.session_back = SessionBack::DuringAttempt;
                 false
             }
-            _ => false,
+            _ => {
+                // Nothing waits for the session; the entry only stands for it.
+                if *retry == HostRetry::default() {
+                    self.device_host_retries.remove(device_id);
+                }
+                false
+            }
         }
     }
 

@@ -2352,10 +2352,12 @@ fn helper_failed() -> Result<hosts::HostReady, hide_node_link::device::Establish
 }
 
 /// A device's Herdr session that answers again means the machine can be
-/// reached, so the helper link that kept waiting out a wait grown while the
-/// machine was away is due at once, and its wait begins over.
+/// reached, so the helper link's retry is due now instead of at the end of a
+/// wait grown while the machine was away; the wait after it keeps doubling,
+/// and a session that flaps while the helper keeps failing moves the retry
+/// forward once per outage, never once per flap.
 #[test]
-fn a_device_session_that_answers_again_brings_its_helper_link_back_at_once() {
+fn a_device_session_that_answers_again_makes_the_helper_retry_due_once_per_outage() {
     let probe = device_runtime(None, None);
     let shared = device_runtime(Some(granted(&probe)), None);
     let mut runtime = shared.lock().unwrap();
@@ -2374,31 +2376,40 @@ fn a_device_session_that_answers_again_brings_its_helper_link_back_at_once() {
         "the wait has grown past ten seconds"
     );
 
-    runtime.ingest_remote_session(
-        DEVICE,
-        Err(SessionFetchError::Unreachable("no answer".to_owned())),
-    );
-    assert_eq!(
-        runtime.device_host_generation(DEVICE),
-        generation,
-        "an unreachable session starts nothing"
-    );
-    runtime.ingest_remote_session(DEVICE, Ok(live_session("0.9.3")));
+    let flap = |runtime: &mut Runtime| {
+        runtime.ingest_remote_session(
+            DEVICE,
+            Err(SessionFetchError::Unreachable("no answer".to_owned())),
+        );
+        runtime.ingest_remote_session(DEVICE, Ok(live_session("0.9.3")));
+    };
+    flap(&mut runtime);
+    let attempt = runtime.device_host_generation(DEVICE);
     assert_ne!(
-        runtime.device_host_generation(DEVICE),
-        generation,
-        "the machine answers again, so its helper link is tried at once"
-    );
-    assert!(
-        !runtime.device_host_retries.contains_key(DEVICE),
-        "the wait that grew while it was away is gone"
+        attempt, generation,
+        "the machine answers again, so the helper link is tried at once"
     );
 
-    let generation = runtime.device_host_generation(DEVICE);
+    // That attempt fails too; the wait after it is the schedule's next, not
+    // the first one again.
     let before = super::unix_milliseconds();
-    runtime.ingest_host_established(DEVICE, generation, helper_failed());
+    runtime.ingest_host_established(DEVICE, attempt, helper_failed());
     let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
-    assert_eq!((at - before) / 1_000, 2, "the wait begins over");
+    assert_eq!(
+        (at - before) / 1_000,
+        60,
+        "the doubling goes on to its cap, not back to two seconds"
+    );
+
+    for _ in 0..5 {
+        flap(&mut runtime);
+    }
+    assert_eq!(
+        runtime.device_host_generation(DEVICE),
+        attempt,
+        "five more flaps start no attempt"
+    );
+    assert_eq!(runtime.device_host_retries[DEVICE].at_unix_ms, Some(at));
 }
 
 /// A pane of a device whose helper link will be tried again by itself reads
@@ -2430,6 +2441,12 @@ fn a_device_pane_waiting_for_its_helper_reads_reconnecting_only_while_it_will_re
 
     runtime.ingest_host_closed(DEVICE, first, "the link dropped".to_owned());
     assert_eq!(band(&runtime).as_deref(), Some("reconnecting"));
+
+    // The retry finds no SSH connection to dial and schedules no other: the
+    // pane waits for something that is not coming, so it is not reconnecting.
+    let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
+    runtime.tick_device_hosts(at);
+    assert_eq!(band(&runtime).as_deref(), Some("unavailable"));
 
     runtime.start_device_host(DEVICE);
     let second = runtime.device_host_generation(DEVICE);
@@ -2518,10 +2535,10 @@ fn a_helper_link_that_closed_during_establish_is_retried_not_stored_ready() {
 }
 
 /// The session answering again while a helper attempt still runs leaves that
-/// attempt alone, but the wait after it, should it fail, begins over rather
-/// than doubling on the outage's.
+/// attempt alone; should it fail, the retry is due at once, the once, and the
+/// wait after that is the schedule's next.
 #[test]
-fn a_session_back_while_the_helper_link_starts_begins_its_wait_over() {
+fn a_session_back_while_the_helper_link_starts_makes_its_failure_retry_at_once_once() {
     let probe = device_runtime(None, None);
     let shared = device_runtime(Some(granted(&probe)), None);
     let mut runtime = shared.lock().unwrap();
@@ -2545,7 +2562,21 @@ fn a_session_back_while_the_helper_link_starts_begins_its_wait_over() {
     let before = super::unix_milliseconds();
     runtime.ingest_host_established(DEVICE, generation, helper_failed());
     let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
-    assert_eq!((at - before) / 1_000, 2);
+    assert!(at - before < 1_000, "its failure is retried at once");
+    runtime.tick_device_hosts(at);
+
+    // The next attempt fails after another flap: no second shortcut.
+    runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
+    let generation = runtime.device_host_generation(DEVICE);
+    runtime.ingest_remote_session(
+        DEVICE,
+        Err(SessionFetchError::Unreachable("no answer".to_owned())),
+    );
+    runtime.ingest_remote_session(DEVICE, Ok(live_session("0.9.3")));
+    let before = super::unix_milliseconds();
+    runtime.ingest_host_established(DEVICE, generation, helper_failed());
+    let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
+    assert_eq!((at - before) / 1_000, 60);
 }
 
 /// Revoking the helper ends the device's terminals with its link: a pane the
@@ -2589,9 +2620,9 @@ fn revoking_the_helper_ends_the_devices_terminals_and_its_panes_say_why() {
     assert_eq!(band(&runtime).as_deref(), Some("helper_not_allowed"));
 
     runtime.set_host_consent(DEVICE, true);
-    assert_eq!(
+    assert_ne!(
         band(&runtime).as_deref(),
-        Some("reconnecting"),
-        "allowing it again is a link on its way"
+        Some("helper_not_allowed"),
+        "allowing it again ends the consent wait"
     );
 }
