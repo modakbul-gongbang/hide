@@ -1767,6 +1767,7 @@ The project identity is scoped by device, following the sidebar's Project > Work
 Both the recent-panel and project switchers show at most nine rows around the highlight.
 Project rows show the last surface and checkout; panel rows show their project and checkout (collapsed to the checkout alone when both share a name) and their surface type.
 A row's device chip follows its detail line, truncated before it would crowd the detail, with the status mark, title and checkout intact; a device absent from the registration map is named by its actual remote ID rather than presented as local.
+Every device chip on an agent, a child or a descendant names its machine as the device rail does (`machineName`): the window's own machine is This Mac whatever name the core registered it under.
 A panel row whose tab holds exactly one agent pane is titled by that agent's identity with its status mark; a tab with no agent or several keeps the Herdr tab label.
 Recent Panels and Recent Projects history is session-local and retains only existing projects and surfaces; a deleted highlight moves to the next surviving entry without reordering the held cycle, and if none survives, the cycle cancels and keeps the current selection.
 

@@ -1638,6 +1638,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
   const lines = useMemo(() => sidebarTreeLines(agentRows, shownAll), [agentRows, shownAll]);
   // Which devices are reachable now, as one value, so a reconnect redraws the rows that name one.
   const reachable = useShellStore((s) => [localDeviceId(s.rest), ...(s.rest?.status?.remote ?? []).filter((row) => row.state === "connected").map((row) => row.target_id)].join("\n"));
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   return (
     <ul>
       {lines.map((line) => {
@@ -1657,7 +1658,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
         const hasChildren = context.childrenOf(agent).length > 0;
         const parentDevice = parent?.device_id ?? deviceId;
         const remote = depth > 0 && agent.device_id !== undefined && agent.device_id !== parentDevice
-          ? { label: agent.device_label ?? agent.device_id, reachable: reachable.split("\n").includes(agent.device_id) }
+          ? { label: machineName(devices, agent.device_id, t), reachable: reachable.split("\n").includes(agent.device_id) }
           : null;
         const tree: SidebarTreeSlot = {
           place: line.place,
@@ -1673,7 +1674,7 @@ function AgentTreeRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
           <SidebarAgentRow
             key={`${agent.pane_id}:${depth}`}
             agent={agent}
-            device={depth === 0 && agent.device_id !== deviceId ? (agent.device_label ?? null) : null}
+            device={depth === 0 && agent.device_id !== undefined && agent.device_id !== deviceId ? machineName(devices, agent.device_id, t) : null}
             place={null}
             depth={depth}
             tree={tree}

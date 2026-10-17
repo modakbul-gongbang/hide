@@ -2556,7 +2556,7 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "project_target", payload: { parent, name } });
     },
 
-    /** Makes `path` as a new folder with its own Git repository, then registers it; this Mac only. */
+    /** Makes `path` as a new folder with its own Git repository, then registers it; on the core's machine only, whichever window asks. */
     createProject(path: string, label: string) {
       dispatch({ schema_version: 2, kind: "create_workspace", payload: { path, label, initialize_git: true, new_folder: true } });
     },
