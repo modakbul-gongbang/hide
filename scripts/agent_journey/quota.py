@@ -15,10 +15,72 @@ from pathlib import Path
 
 CONTRACT = Path(__file__).resolve().parents[2] / "contracts" / "provider-quota.json"
 
-# Provider -> reader(session paths, row): the spent quota ids when the turn
-# that failed got no model answer and ended on the provider refusing quotas
-# the row names, each above 0; otherwise None.
-READERS = {}
+AGY_ERROR = "AGY_ERROR: "
+# agy's own logs, under the HOME it ran in (the run's disposable one on CI).
+AGY_LOGS = ".gemini/antigravity-cli/log"
+
+
+def agy_report(line):
+    """The JSON error report of one `AGY_ERROR:` line agy wrote, or None."""
+    at = line.find(AGY_ERROR)
+    if at < 0:
+        return None
+    try:
+        report = json.loads(line[at + len(AGY_ERROR):])
+    except ValueError:
+        return None
+    return report if isinstance(report, dict) else None
+
+
+def gemini_quotas(report, row):
+    """The quota ids of a Gemini refusal that spent the key's day, as
+    `hide-agent-hooks/tests/it/agy_binary.rs` reads them: the report carries
+    the row's code and status, and every `google.rpc.QuotaFailure`
+    violation names one of the row's quota ids with a value above 0 (the API
+    leaves out a value of 0); otherwise None."""
+    if report.get("error_code") != row["error_code"] or report.get("status") != row["status"]:
+        return None
+    _, marker, failure = str(report.get("short_error") or "").partition("google.rpc.QuotaFailure violations:")
+    if not marker:
+        return None
+    quotas = []
+    for violation in failure.split("quotaId:")[1:]:
+        fields = violation.split("]", 1)[0].split()
+        value = next((field.removeprefix("quotaValue:") for field in fields[1:] if field.startswith("quotaValue:")), None)
+        if not fields or value is None or not value.isdigit() or int(value) == 0 or fields[0] not in row["spent_quota_ids"]:
+            return None
+        quotas.append(fields[0])
+    return quotas or None
+
+
+def gemini_spent(paths, row, home):
+    """agy's turn that failed got no model answer (no `PLANNER_RESPONSE`
+    after its last `USER_INPUT` in the transcripts Hide's reader read), and
+    the newest error report in agy's own logs is a spent day. The log is
+    where an interactive agy can leave the `AGY_ERROR:` report its print
+    mode writes to stderr; until one is seen there, a spent day fails the
+    cell like any other refusal."""
+    for path in paths:
+        steps = [record.get("type") for record in records(path)]
+        last_input = max((index for index, step in enumerate(steps) if step == "USER_INPUT"), default=-1)
+        if "PLANNER_RESPONSE" in steps[last_input + 1:]:
+            return None
+    logs = sorted((home / AGY_LOGS).glob("*.log"), key=lambda log: log.stat().st_mtime) if home else []
+    for log in reversed(logs):
+        try:
+            lines = log.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        reports = [report for report in map(agy_report, lines) if report]
+        if reports:
+            return gemini_quotas(reports[-1], row)
+    return None
+
+
+# Provider -> reader(session paths, row, the agent's HOME): the spent quota
+# ids when the turn that failed got no model answer and ended on the provider
+# refusing quotas the row names, each above 0; otherwise None.
+READERS = {"gemini": gemini_spent}
 
 
 def contract(path=CONTRACT):
@@ -40,14 +102,14 @@ def contract(path=CONTRACT):
     return rows
 
 
-def spent_quota(agent, paths, rows):
+def spent_quota(agent, paths, rows, home=None):
     """The spent quota ids that leave the agent's failed turn unmeasured, or None."""
     name = next((name for name, row in rows.items() if agent in row["agents"]), None)
     if name is None:
         return None
     if name not in READERS:
         raise ValueError(f"provider_quota_reader_missing: {name} names {agent}, and the journey cannot read its refusals")
-    return READERS[name](paths, rows[name])
+    return READERS[name](paths, rows[name], home)
 
 
 def records(path):
@@ -72,7 +134,23 @@ def records(path):
 def model_requests(kind, path):
     """Model requests one session made: Claude Code writes one assistant
     record per response, several for one response sharing its message id;
-    Codex writes one token count event per response."""
+    Codex writes one token count event per response; Grok counts its model
+    calls on each prompt's `turn_completed` usage; Pi and omp write one
+    assistant message per response; agy one `PLANNER_RESPONSE` step."""
+    if kind == "grok":
+        calls = {}
+        for record in records(path):
+            update = (record.get("params") or {}).get("update") if isinstance(record.get("params"), dict) else None
+            if isinstance(update, dict) and update.get("sessionUpdate") == "turn_completed":
+                usage = update.get("usage") if isinstance(update.get("usage"), dict) else {}
+                if isinstance(usage.get("modelCalls"), int):
+                    calls[update.get("prompt_id")] = usage["modelCalls"]
+        return sum(calls.values())
+    if kind in ("pi", "omp"):
+        return sum(1 for record in records(path) if record.get("type") == "message"
+                   and isinstance(record.get("message"), dict) and record["message"].get("role") == "assistant")
+    if kind == "agy":
+        return sum(1 for record in records(path) if record.get("type") == "PLANNER_RESPONSE")
     if kind == "claude":
         ids = set()
         for record in records(path):

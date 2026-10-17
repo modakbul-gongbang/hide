@@ -25,17 +25,29 @@ LOGINS = {
     # asks to finish onboarding, to accept that key and to trust the folder,
     # which the disposable ~/.claude.json answers for the measured repository
     # only, so the never-trusted cell still meets Claude's folder question.
-    "claude": {"secret": "HIDE_CLAUDE_API_KEY", "key_env": "ANTHROPIC_API_KEY"},
+    "claude": {"secret": "HIDE_CLAUDE_API_KEY", "key_env": "ANTHROPIC_API_KEY", "env": {}},
     # Codex stores an API key login in its home with `codex login --with-api-key`.
-    "codex": {"secret": "HIDE_CODEX_API_KEY", "key_env": None},
+    "codex": {"secret": "HIDE_CODEX_API_KEY", "key_env": None, "env": {"CODEX_HOME": ".codex"}},
+    # agy 1.4.0 signs in with GEMINI_API_KEY only once its settings name
+    # `"modelProvider": "gemini"` (docs/TESTING.md, A real agent on CI); the
+    # model the key's free tier serves is named in the workflow.
+    "agy": {"secret": "HIDE_AGY_API_KEY", "key_env": "GEMINI_API_KEY", "env": {}},
+    # Grok 1.0.52 falls back to XAI_API_KEY with no `grok login`
+    # (~/.grok/docs/user-guide/11-custom-models.md, Credential Resolution).
+    "grok": {"secret": "HIDE_GROK_API_KEY", "key_env": "XAI_API_KEY", "env": {}},
+    # Pi 1.0.4 and omp 18.7.0 read a provider's key from its environment
+    # variable (`pi --help`, `omp --help`); OpenAI's is OPENAI_API_KEY.
+    "pi": {"secret": "HIDE_PI_API_KEY", "key_env": "OPENAI_API_KEY", "env": {}},
+    "omp": {"secret": "HIDE_OMP_API_KEY", "key_env": "OPENAI_API_KEY", "env": {}},
 }
-
-# Each CLI's own folder in its HOME, which says to the kit that it is set up.
-HOME_FOLDERS = {"claude": ".claude", "codex": ".codex"}
 
 # A stand-in asks no folder question, so its start anywhere says nothing of one.
 FIXTURE_UNTRUSTED = "not measured: a stand-in has no folder question; the login lane measures it"
-# What the stand-ins imitate, so the fixture lane passes only when each passed.
+# The agents the stand-ins imitate (web/e2e/shims/live-check.h) and the cells
+# they pass, so the fixture lane passes only when each passed.
+FIXTURE_AGENTS = ("claude-code", "codex")
+# Why the stand-in lane leaves every other agent unstarted.
+FIXTURE_ONLY = "a stand-in imitates Claude Code and Codex only; the fake model lane measures this agent"
 FIXTURE_CELLS = tuple(name for name in cells.BUILT_CELLS if name != "start_untrusted")
 
 # What a fixture stand-in cannot show, said in its report (PRD B27).
@@ -74,21 +86,21 @@ def executable(fixture_bin, kind):
     return Path(found) if found else None
 
 
-def not_configured(kind, fixture_bin):
+def not_configured(kind, fixture_bin, fake=False):
     """The secret this agent's login needs, when the lane has none."""
-    if fixture_bin:
+    if fixture_bin or fake:
         return None
     secret = LOGINS[kind]["secret"]
     return None if os.environ.get(secret) else secret
 
 
-def route_names(kind, fixture_bin):
+def route_names(kind, fixture_bin, fake_env=None):
     """The environment CI mode adds to an agent, by name only (its values are paths or a key)."""
-    names = [*home_env(Path()), "HIDE_STATE_DIR", "PATH", *QUIET]
-    if kind == "codex":
-        names.append("CODEX_HOME")
+    names = [*home_env(Path()), "HIDE_STATE_DIR", "PATH", *QUIET, *LOGINS[kind]["env"]]
     if fixture_bin:
         names.append("HIDE_E2E_JOURNEY")
+    elif fake_env is not None:
+        names.extend(fake_env)
     elif LOGINS[kind]["key_env"]:
         names.append(LOGINS[kind]["key_env"])
     return names
@@ -100,19 +112,21 @@ def key_file(runtime, kind):
     return runtime.probe / "keys" / kind
 
 
-def wrapper(runtime, program, kind, path, journey_config=None):
-    """The `claude` or `codex` a pane runs: the agent in the disposable HOME,
-    with the runner's PATH behind the candidate's `hide` and, for Claude, its key."""
+def wrapper(runtime, program, kind, path, journey_config=None, fake_env=None):
+    """The program a pane runs as `kind`: the agent in the disposable HOME,
+    with the runner's PATH behind the candidate's `hide` and its key, or the
+    fake model's environment (fake_lane.py) in place of a key."""
     private_directory(runtime.bin)
     environment = {**home_env(runtime.home), "HIDE_STATE_DIR": str(runtime.state),
-                   "PATH": os.pathsep.join((str(runtime.bin), path)), **QUIET}
-    if kind == "codex":
-        environment["CODEX_HOME"] = str(runtime.home / ".codex")
+                   "PATH": os.pathsep.join((str(runtime.bin), path)), **QUIET,
+                   **{name: str(runtime.home / relative) for name, relative in LOGINS[kind]["env"].items()}}
     if journey_config:
         environment["HIDE_E2E_JOURNEY"] = str(journey_config)
+    environment.update(fake_env or {})
     key_env = LOGINS[kind]["key_env"]
+    keyed = key_env and not journey_config and fake_env is None
     return launcher(runtime.bin / kind, [program], environment=environment, unset=["CLAUDE_CONFIG_DIR"],
-                    file_variables=[(key_env, key_file(runtime, kind))] if key_env and not journey_config else [])
+                    file_variables=[(key_env, key_file(runtime, kind))] if keyed else [])
 
 
 def login(runtime, kind, launch, root):
@@ -122,11 +136,19 @@ def login(runtime, kind, launch, root):
     # Registered before anything is written, so even an unconfirmed cleanup removes them.
     runtime.credential_roots.add(keys)
     if kind == "codex":
-        runtime.credential_roots.add(runtime.home / HOME_FOLDERS[kind])
+        runtime.credential_roots.add(runtime.home / LOGINS[kind]["env"]["CODEX_HOME"])
     private_directory(keys)
     write_private(key_file(runtime, kind), secret.encode())
     if kind == "claude":
         claude_settings(runtime.home, root, secret)
+        return None
+    if kind == "agy":
+        settings = runtime.home / ".gemini/antigravity-cli/settings.json"
+        private_directory(settings.parent)
+        write_private(settings, json.dumps({"modelProvider": "gemini"}).encode())
+        return None
+    if kind != "codex":
+        # The key in the agent's environment is the whole login.
         return None
     environment = {**clean_env(), **home_env(runtime.home), "PATH": runtime.env["PATH"],
                    **temp_env(runtime.run / "agent-tmp")}

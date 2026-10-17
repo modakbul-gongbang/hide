@@ -2,6 +2,9 @@
   {
     "id": "claude-code",
     "herdr_kind": "claude",
+    "home_folder": [
+      ".claude"
+    ],
     "prompt_flag": "--",
     "model_flag": [
       "--model",
@@ -20,11 +23,16 @@
       "title": true,
       "usage": true
     },
+    "letter": "bell",
+    "wake": "pane",
     "request_budget": 12
   },
   {
     "id": "codex",
     "herdr_kind": "codex",
+    "home_folder": [
+      ".codex"
+    ],
     "prompt_flag": "--",
     "model_flag": [
       "-m",
@@ -43,11 +51,16 @@
       "title": true,
       "usage": true
     },
+    "letter": "bell",
+    "wake": "pane",
     "request_budget": 12
   },
   {
     "id": "grok",
     "herdr_kind": "grok",
+    "home_folder": [
+      ".grok"
+    ],
     "prompt_flag": "--",
     "model_flag": [],
     "cells": {
@@ -63,11 +76,17 @@
       "title": true,
       "usage": true
     },
+    "letter": "tool",
+    "wake": "sleeping_session",
     "request_budget": 12
   },
   {
     "id": "opencode",
     "herdr_kind": "opencode",
+    "home_folder": [
+      ".config",
+      "opencode"
+    ],
     "prompt_flag": "--prompt",
     "model_flag": [],
     "cells": {
@@ -83,11 +102,17 @@
       "title": true,
       "usage": true
     },
+    "letter": "next_prompt",
+    "wake": "sleeping_session",
     "request_budget": 12
   },
   {
     "id": "pi",
     "herdr_kind": "pi",
+    "home_folder": [
+      ".pi",
+      "agent"
+    ],
     "prompt_flag": "--",
     "model_flag": [],
     "cells": {
@@ -103,11 +128,17 @@
       "title": true,
       "usage": true
     },
+    "letter": "next_prompt",
+    "wake": "sleeping_session",
     "request_budget": 12
   },
   {
     "id": "omp",
     "herdr_kind": "omp",
+    "home_folder": [
+      ".omp",
+      "agent"
+    ],
     "prompt_flag": "--",
     "model_flag": [],
     "cells": {
@@ -123,11 +154,16 @@
       "title": true,
       "usage": true
     },
+    "letter": "next_prompt",
+    "wake": "sleeping_session",
     "request_budget": 12
   },
   {
     "id": "cursor",
     "herdr_kind": "cursor",
+    "home_folder": [
+      ".cursor"
+    ],
     "prompt_flag": "--",
     "model_flag": [],
     "cells": {
@@ -143,11 +179,17 @@
       "title": false,
       "usage": false
     },
+    "letter": "tool",
+    "wake": "sleeping_session",
     "request_budget": 12
   },
   {
     "id": "antigravity",
     "herdr_kind": "agy",
+    "home_folder": [
+      ".gemini",
+      "config"
+    ],
     "prompt_flag": "-i",
     "model_flag": [
       "--model",
@@ -166,6 +208,8 @@
       "title": true,
       "usage": true
     },
+    "letter": "next_prompt",
+    "wake": "pane",
     "request_budget": 12
   }
 ]

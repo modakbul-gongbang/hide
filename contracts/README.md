@@ -53,7 +53,7 @@ target/debug/examples/export_web_contract > contracts/agent-adapters.json
 
 # Agent journey
 
-`agent-journey.json` is the agent journey's projection of the same declarations ([docs/VERIFICATION.md](../docs/VERIFICATION.md#agent-journey)): for each adapter its Herdr kind, the flag that separates a spawn's first prompt, the model flag, which journey cells it declares, and the most model requests a signed-in CI run may make for it (`request_budget`, three per turn the declared cells start).
+`agent-journey.json` is the agent journey's projection of the same declarations ([docs/VERIFICATION.md](../docs/VERIFICATION.md#agent-journey)): for each adapter its Herdr kind, its own folder in its HOME (`home_folder`, which the kit reads as the agent being set up), the flag that separates a spawn's first prompt, the model flag, which journey cells it declares, how a letter reaches it (`letter`: `bell` wakes the pane, `next_prompt` rides the next prompt's hook, `tool` waits until the agent reads its inbox), how it wakes from sleep (`wake`: `pane` wakes the pane it sleeps in, `sleeping_session` reopens a closed session in a new pane), and the most model requests a signed-in CI run may make for it (`request_budget`, three per turn the declared cells start).
 `scripts/agent_journey` reads only this file for what an agent supports, so a cell an adapter does not declare reads N/A rather than a failure.
 The Rust contract test fails when the file differs from the current projection; regenerate it, never edit it:
 
@@ -61,6 +61,12 @@ The Rust contract test fails when the file differs from the current projection; 
 bash scripts/verify-cargo.sh build -p hide-agent-adapter --example export_journey_contract
 target/debug/examples/export_journey_contract > contracts/agent-journey.json
 ```
+
+# Agent CLI pins
+
+`agent-clis.json` is the one place a CI agent CLI version is written: for each agent, by its Herdr kind, the version every CI lane installs, the installer (`npm` with its package, or the vendor's own installer for Grok, omp and agy), and, for an npm package whose program is not its `.bin` shim, the program's path in the package.
+`scripts/install-agent-clis.py` reads it to install each CLI on a runner, and the agent journey reads it to say in its report whether the CLI it measured answered that version; a row whose installer takes no version (agy's) says so in `pinned`, and its version is checked, not installed.
+Move a pin in a pull request that runs the lanes that install it; no workflow restates a version.
 
 # hide CLI contract
 

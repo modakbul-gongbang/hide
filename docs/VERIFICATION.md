@@ -332,26 +332,30 @@ It is the check a release runs on the Mac before its tag ([skills/release/SKILL.
 
 ### What it proves
 
-Each agent is started only through `hide agent spawn --parent here` from a controller pane, in its own branch, worktree and tab of the measured repository (this checkout's main root), and each step is judged from what Hide itself reports: the daemon's snapshot rows, `hide request show`, Herdr's `agent list` and Hide's own conversation reader (`hide_session::read_conversation`, built as the `journey_conversation` example).
+Each agent is started only through `hide agent spawn --parent here` from a controller pane, in its own branch, worktree and tab of the measured repository, and each step is judged from what Hide itself reports: the daemon's snapshot rows, `hide request show`, Herdr's `agent list` and Hide's own conversation reader (`hide_session::read_conversation`, built as the `journey_conversation` example).
 Every prompt asks only for a fresh token (`Reply with exactly <token>`), so a model never chooses an action.
+The measured repository is a shared clone (`git clone --shared`) of this checkout's commit, on `main`, at `projects/measured` in the candidate's HOME, added as a project the way Add project adds one, and the journey starts its agents only once the navigator lists it as a registered Git project.
+An operator starts agents in a project they added inside their HOME, and Hide adds none outside it (`outside_home`); a Wake after a Sleep that closed the pane (Grok, Pi, omp, OpenCode) finds the agent's checkout among that project's, so a repository outside the candidate's HOME left those Wakes with no checkout to open.
+The clone reads this checkout's objects and writes only its own, so the run's branches and worktrees never reach the operator's repository; each agent's folder trust names the clone.
 
 | Step | Passes when |
 | --- | --- |
 | `start` | The spawn answers registered, running and connected with a native session id, Hide's reader holds the answer to the first prompt and the row reads idle later than that answer's session time, and Herdr's integration reports that session as `herdr:<kind>`; whether the row read working is reported, not required, since Herdr's screen detection misses a turn of about two seconds |
 | `reply` | Hide's reader finds the first turn's token in an assistant message; a reply only another parser finds fails |
-| `letter` | A token sent with `hide request send` comes back in the turn Hide's doorbell opened, `hide request show` says delivered, and the row reads idle after that answer |
-| `sleep_wake` | After the daemon's Sleep event the row reads asleep, and after Wake it runs again |
+| `letter` | A token sent with `hide request send` comes back in the turn the letter reached, `hide request show` says delivered, and the row reads idle after that answer; the turn is the one Hide's doorbell opened for an agent with a bell (Claude Code, Codex), and for one with a prompt hook and no bell (agy, Pi, omp, OpenCode) the next prompt the journey types, whose hook hands the letter over and confirms it (`hook_confirmed`) |
+| `sleep_wake` | After the daemon's Sleep event the row reads asleep, and after Wake it runs again: in the pane it slept in for an agent Hide wakes there (Claude Code, Codex, agy), and for one whose Sleep closes its pane (Grok, Pi, omp, OpenCode) once `wake_sleeping_session` opened a new pane that hosts the same session and its registration |
 | `resume` | The operator opens the woken agent (`focus_pane`), its terminal takes this screen's keys, a typed token prompt is answered in the session it slept in, the row reads idle after that answer, and Herdr reports the same session id |
 | `start_untrusted` | A start in a repository the account never trusted, with no preparation, passes once Hide has recorded the trust of the worktree it made |
 
-The cells an adapter declares come from `contracts/agent-journey.json`, which `hide-agent-adapter` generates and its contract test keeps current ([contracts/README.md](../contracts/README.md#agent-journey)).
+The cells an adapter declares, and its letter and wake forms, come from `contracts/agent-journey.json`, which `hide-agent-adapter` generates and its contract test keeps current ([contracts/README.md](../contracts/README.md#agent-journey)).
+Grok's letter is `not measured`: Grok takes a letter only at a tool call its model chooses or through a `hide inbox` it runs, and the journey never asks a model to choose an action; it closes once the adapter gives Grok a prompt hook or a bell.
 It does not prove the desktop window, a physical keyboard, an agent other than the declared rows, or a model, provider or CLI version other than the ones its report names.
 
 ### Cells, reasons and exit codes
 
 Every cell reads `pass`, `fail`, `not measured`, `N/A` or `excluded`, with a reason and the evidence file under the run folder; a failed cell carries the product's own refusal or the state that never came with the time waited, and the agent's pane capture.
 - `N/A` is a cell the adapter does not declare.
-- `not measured` is a cell the run could not reach without touching the operator's state or spending what it must not: a CLI that is missing or signed out (the journey never signs in), a Codex login copy older than 7 days, a repository Claude was never trusted in, a cell whose earlier step failed or was not measured (`prerequisite cell failed (<cell>)`, `prerequisite cell not measured (<cell>)`), a stopped run, and `not built in this cycle`.
+- `not measured` is a cell the run could not reach without touching the operator's state or spending what it must not: a CLI that is missing or signed out (the journey never signs in), a Codex login copy older than 7 days, an OAuth login copy whose access token expires within an hour (Grok, Pi, omp; its refresh inside the copy could sign the operator's own agent out), a login another process holds open, a repository Claude was never trusted in, a cell whose earlier step failed or was not measured (`prerequisite cell failed (<cell>)`, `prerequisite cell not measured (<cell>)`), a stopped run, an agent a lane left out with its reason (`--unmeasured ID=REASON`, agy's quota rotation), and `not built in this cycle`.
   Claude's never-trusted start is `not measured` locally, since it would leave an entry in the operator's shared `~/.claude.json`; CI mode measures it in its disposable HOME.
 - `excluded` is an agent the operator took out of the journey, with the date: Cursor, `excluded: operator decision 2026-10-17`.
   `--agents cursor` is refused, and an excluded cell counts toward no exit code and no release's list of blanks.
@@ -365,28 +369,55 @@ The table is printed and written as `report.md` and `report.json` in a new `agen
 Build `hided`, `hide` and the hooks with `bash scripts/verify-cargo.sh cli` and the reader with `bash scripts/verify-cargo.sh build -p hide-session --example journey_conversation`, fetch the pinned Herdr with `scripts/fetch-herdr-runtime.sh`, then run it from the worktree; `--agents claude-code,codex` narrows the rows and `--model ID=MODEL` passes a model through the product's own flag.
 It reuses `scripts/agent_live_check`'s isolation: the pinned Herdr on a private socket, this worktree's `hided` on private state with the kit installed into a private daemon home, the write sandbox and the process guardian.
 Claude keeps the operator's HOME for its keychain sign-in and reads only the candidate's settings, through the arguments the pane's `claude` adds to every start, Hide's own Wake and Fork restarts included; Codex reads a private `CODEX_HOME` holding a 0600 copy of its login, removed at the end, and the measured repository's trust, written only there.
+Grok, Pi and omp keep the operator's HOME too and read a private folder of the daemon home through the variable each documents for it (`GROK_HOME`, and `PI_CODING_AGENT_DIR` for both Pi and omp), holding a 0600 copy of the login (omp's `agent.db`, copied only while no process has it open) and, for Grok, the measured repository's folder trust.
+agy is `not measured` locally: it reads its hooks only from `~/.gemini/config` in the HOME its keychain sign-in needs, so the candidate's kit cannot reach it without the operator's own hooks running; CI mode measures it.
+omp keeps its run state in the operator's `~/.omp` whatever its agent folder (`run/daemons/<hash of the project folder>`, `run/session-owners/<session>.lock`, `logs/`), and does not start beside another omp: the journey measures omp only when no omp runs, never ends one, and at the end removes the daemon folders whose name is the hash of a folder the run made and the locks of the run's own sessions, listing the logs written during the run, which name only a pid (`scripts/agent_journey/omp_state.py`).
 The candidate's Hide AI is off in local mode (`enabled: false` in the private home's `ai.json`), since it would run the operator's signed-in CLI with the private HOME; a request from it fails the run (exit 2).
 In CI mode it stays on, and the report counts its model requests by provider apart from each agent's budget.
 The journey writes no operator file; the entries Claude itself leaves for the run's paths are left alone and listed: in `~/.claude.json` by key, in `~/.claude/projects` by exact folder path.
+No provider key in the operator's shell reaches an agent: every variable whose name ends in `_API_KEY`, and `ANTHROPIC_AUTH_TOKEN` and the cloud credentials, is left out of the run's environment, so an agent reaches a provider only through the login or key its route gives it (omp 18.7.0 had sent its background requests to Google with the shell's `GEMINI_API_KEY`).
 Hide records folder trust for each worktree it spawns an agent into, and must record Codex's only in the private `CODEX_HOME` the agent reads: before the cleanup and after it the journey reads the operator's `~/.codex/config.toml` and `~/.claude.json` for trust entries naming a path of the run.
 A Codex entry there is an isolation failure (exit 2); a Claude one is reported by key, and one left after the cleanup is listed as a product finding.
-Every exit, a stop and the deadline included, ends the agents, panes, Herdr and `hided` and confirms it, and then removes the run's `journey/<run-id>-<agent>` branches and worktrees: each one only while its worktree is under the run and its start commit matches the run's record, read at the cleanup for a spawn that never answered, since that name is the run's alone.
-A branch that moved or a worktree outside the run is kept and named, and fails the run.
-A run refuses to start (exit 2) while one of its branch names is already in the repository, as a rerun under the same `--run-dir` name finds an earlier run's leftover, so its cleanup never takes that branch for its own.
+Every exit, a stop and the deadline included, ends the agents, panes, Herdr and `hided` and confirms it, and then removes the probe, the clone with the run's `journey/<run-id>-<agent>` branches and their worktrees in it; while an agent's end is unconfirmed the probe stays.
 Never run a cargo build or test while it runs: either relinks `target/debug` under the running `hided`.
+
+### The fake model (`--fake-model`)
+
+With `--fake-model`, in either mode, each real CLI with Hide's real kit and Herdr's integration is answered by the journey's fake model (`scripts/agent_journey/fake_model.py`) instead of a provider, and no login is read, copied or used.
+It speaks OpenAI Chat Completions and Responses, Anthropic Messages and Gemini `generateContent`, streamed or whole, with usage in each provider's shape, and answers a turn with the last token of what the request sends after the model's own last turn, a token inside Hide's Project Memory blocks left out, or with the token of the Project Memory index the session started with when the turn carries none; a request that asks for JSON of a schema, as Claude Code's and Codex's title requests do, is answered with an object of that schema.
+`scripts/agent_journey/fake_lane.py` writes each CLI's provider configuration into the run's daemon home, and each agent gets its own server, so its log counts that agent's model requests exactly.
+Locally Claude then reads a private `CLAUDE_CONFIG_DIR` in the daemon home instead of the operator's `~/.claude.json`, so its never-trusted start is measured there too; the candidate's Hide AI is off in both modes, and the native titles are what the title cell reads.
+The report is marked as a fake model run with what a fake model cannot show: it proves the CLI, Hide's kit and Herdr's integration, never a provider, a login or a quota, and its rows are kept apart from a signed-in run's.
 
 ### The CI lanes
 
-`.github/workflows/agent-journey.yml` runs the journey with `--mode ci`, where each agent runs in the runner's disposable HOME with no sandbox, on Linux and macOS, and the signed-in lane on Windows too.
-No keyless run starts an agent on Windows yet; [INSTALL.md](INSTALL.md#what-each-system-supports) says what closes it.
-There the `windows forms` job runs `scripts/tests/test_agent_live_windows.py` instead: an owner that dies takes its children's trees with it, every cap is the Unix guardian's and a crossed one is a named failure, private files admit only this account, and the pane commands and launchers keep their arguments and exit status.
+`.github/workflows/agent-journey.yml` runs the journey with `--mode ci`, where each agent runs in the runner's disposable HOME with no sandbox: the stand-in lane on Linux and macOS, the fake model and signed-in lanes on Linux, macOS and Windows.
+Every lane that runs a real CLI installs it with `scripts/install-agent-clis.py` at the version `contracts/agent-clis.json` pins, the one place a CI agent version is written (`agent-trust-contract.yml` installs from it too); agy's installer takes no version, so its row says so and the version it answered is checked against the row instead, and a CLI that answers another version than its row is named in a warning on the lane.
+No agent has passed a journey on Windows yet; [INSTALL.md](INSTALL.md#what-each-system-supports) says why and what closes it.
+On Windows the `windows forms` job also runs `scripts/tests/test_agent_live_windows.py`: an owner that dies takes its children's trees with it, every cap is the Unix guardian's and a crossed one is a named failure, private files admit only this account, and the pane commands and launchers keep their arguments and exit status.
 - The stand-in lane (`fixture`) puts the compiled `web/e2e/shims/claude-shim.c` in place of Claude Code and Codex with `--fixture-bin` and passes only when both pass `start`, `reply`, `letter`, `sleep_wake` and `resume`.
   The stand-in runs the hook commands the kit installed and writes each CLI's session file format, so a change that breaks the journey's verdicts, the hooks' path into Hide or the cleanup fails it; its report is marked `fixture` with what a stand-in cannot show, and is never a release's agent evidence.
   `pr.yml` runs it on Linux, with `windows forms`, when the journey's code, the live check or the shims change (`scripts/ci-plan.py`), `nightly.yml` and `release.yml` every time.
-- The signed-in lane (`login`, nightly and release) signs each agent in with the CI account's key: `HIDE_CLAUDE_API_KEY` as Claude's `ANTHROPIC_API_KEY`, `HIDE_CODEX_API_KEY` through `codex login --with-api-key`.
+- The fake model lane (`fake`, nightly and release) runs Claude Code, Codex, Grok, Pi, omp and agy with `--fake-model`, keyless, and passes only when every built cell passes for Claude Code and Codex and no agent's cell fails; once it is green for both on every system it replaces the stand-in lane.
+- The signed-in lane (`login`, nightly and release) signs each agent in with the CI account's key: `HIDE_CLAUDE_API_KEY` as Claude's `ANTHROPIC_API_KEY`, `HIDE_CODEX_API_KEY` through `codex login --with-api-key`, `HIDE_AGY_API_KEY` as agy's `GEMINI_API_KEY` with `"modelProvider": "gemini"` in its settings, `HIDE_GROK_API_KEY` as Grok's `XAI_API_KEY`, and `HIDE_PI_API_KEY` and `HIDE_OMP_API_KEY` as Pi's and omp's `OPENAI_API_KEY`; only the CLIs whose key is set are installed, and a leg with no agent to sign in, such as one where only agy's key is set on a night agy is measured elsewhere, builds and starts nothing and leaves a notice.
+  agy runs on `gemini-3.8-flash-medium`, the model `agy-contract.yml` signs it in with, whose free tier allows 20 requests a day across the CI account and of which that lane spends 4 a night, so agy is measured on one system a night (the nightly's `agy: rotation`, through Linux, macOS and Windows by the UTC day of the year) and on Linux alone in a release, and reads `not measured` with that reason on the other legs.
   An agent without its secret reads `not measured: not configured (<secret>)` and leaves a notice; the key is kept under the run's probe, which the cleanup removes, and the report, each cell's evidence, each pane capture and the copy of Herdr's log have the key and the last 20 characters Claude's key question shows of it replaced; `hided` and Herdr never receive it.
   A failed cell, an isolation, setup or cleanup failure, a request budget overrun, or a refused login or a missing CLI for an agent whose secret is set fails the lane; a turn the provider answered nothing because the key's day was spent is `not measured: provider quota exhausted (<quota ids>)` with a `Not measured` warning, by the rule `contracts/provider-quota.json` keeps ([TESTING.md: A real agent on CI](TESTING.md#a-real-agent-on-ci)), and Claude Code and Codex have no row there yet, so every refusal of theirs, a per-minute rate limit included, fails.
 `scripts/agent-journey-lane.py` turns a report into the lane's verdict and its annotations, and the lane keeps the report as an artifact.
+The journey alone runs by hand with the repository's secrets: `gh workflow run agent-journey.yml --ref <branch> -f systems='["linux","macos","windows"]' -f fake=true -f live=true -f agy=rotation`; a hand run's agy requests come out of the same 20 a day as the nightly's.
+
+Model requests each agent made, measured with the fake model on 2026-10-18 (each prompt's requests, a CLI's own title and helper requests included), against the budget `contracts/agent-journey.json` gives a signed-in run:
+
+| Agent | CLI | Requests | Measured run |
+| --- | --- | --- | --- |
+| Claude Code | 2.1.302 | 1 per prompt and 1 title request per new session: 6 for start, letter, resume and the never-trusted start | local, every built cell |
+| Codex | 0.163.0 | the same as Claude Code: 6 | local, every built cell |
+| Grok | 1.0.52 | 3 chat requests per prompt and 1 more to `grok-4.6` per new session: 8 for start and the never-trusted start | local; Wake was refused, so resume never ran |
+| Pi | 1.0.4 | 1 per prompt | local; the spawn was refused before its cells |
+| omp | 18.7.0 | not measured: the spawn was refused | local |
+| agy | 1.4.0 | not measured yet | CI only |
+
+A release day's agy requests are the night's leg, `agy-contract.yml`'s 4 and the release's Linux leg, which stay within the 20 only while one journey leg spends at most 8; each signed-in leg's count is in its report, and agy's is not measured yet, so the first signed-in agy leg decides whether a release can afford its one system.
 
 ## A device check
 
