@@ -133,7 +133,13 @@ class Journey:
             env={**self.runtime.env}, check=False, seconds=15)
         if code:
             return {"error": err.strip()[:300] or f"reader exit {code}"}
-        answer = json.loads(out)
+        try:
+            answer = json.loads(out)
+        except ValueError:
+            answer = None
+        if not (isinstance(answer, dict) and isinstance(answer.get("path"), str)
+                and isinstance(answer.get("events"), list)):
+            raise ProcessError("journey_conversation_answer_malformed: " + out[:200])
         if answer["path"] not in self.paths:
             self.paths.append(answer["path"])
         return {"session": self.session if kind == "path" else value, "path": answer["path"],
@@ -205,8 +211,11 @@ class Journey:
         """start, then reply: the spawn, the turn its first prompt opened, the emitter, the reply."""
         first = token()
         worktree = self.runtime.probe / "worktrees" / self.id
+        # Named before the spawn, so a spawn that raises or is stopped still leaves its branch to the cleanup.
+        entry = {"branch": self.branch, "start": None, "worktree": str(worktree)}
+        self.created.append(entry)
         args, answer, attempts = self.spawn("journey-" + self.id, self.repository, self.branch, worktree, prompt(first))
-        self.created.append(created_branch(self.runtime, self.repository, self.branch, worktree))
+        entry.update(created_branch(self.runtime, self.repository, self.branch, worktree))
         self.record["spawn"] = {"argv": ["hide", *args], "route": self.route,
                                 "answers": attempts}
         spawned = cells.spawn_verdict(answer)

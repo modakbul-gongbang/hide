@@ -343,7 +343,7 @@ It does not prove the desktop window, a physical keyboard, an agent other than t
 
 Every cell reads `pass`, `fail`, `not measured`, `N/A` or `excluded`, with a reason and the evidence file under the run folder; a failed cell carries the product's own refusal or the state that never came with the time waited, and the agent's pane capture.
 - `N/A` is a cell the adapter does not declare.
-- `not measured` is a cell the run could not reach without touching the operator's state or spending what it must not: a CLI that is missing or signed out (the journey never signs in), a Codex login copy older than 7 days, a repository Claude was never trusted in, a cell whose earlier step failed (`earlier cell failed (<cell>)`), a stopped run, and `not built in this cycle`.
+- `not measured` is a cell the run could not reach without touching the operator's state or spending what it must not: a CLI that is missing or signed out (the journey never signs in), a Codex login copy older than 7 days, a repository Claude was never trusted in, a cell whose earlier step failed or was not measured (`prerequisite cell failed (<cell>)`, `prerequisite cell not measured (<cell>)`), a stopped run, and `not built in this cycle`.
   Claude's never-trusted start is `not measured` locally, since it would leave an entry in the operator's shared `~/.claude.json`; CI mode measures it in its disposable HOME.
 - `excluded` is an agent the operator took out of the journey, with the date: Cursor, `excluded: operator decision 2026-10-17`.
   `--agents cursor` is refused, and an excluded cell counts toward no exit code and no release's list of blanks.
@@ -357,10 +357,11 @@ The table is printed and written as `report.md` and `report.json` in a new `agen
 Build `hided`, `hide` and the hooks with `bash scripts/verify-cargo.sh cli` and the reader with `bash scripts/verify-cargo.sh build -p hide-session --example journey_conversation`, fetch the pinned Herdr with `scripts/fetch-herdr-runtime.sh`, then run it from the worktree; `--agents claude-code,codex` narrows the rows and `--model ID=MODEL` passes a model through the product's own flag.
 It reuses `scripts/agent_live_check`'s isolation: the pinned Herdr on a private socket, this worktree's `hided` on private state with the kit installed into a private daemon home, the write sandbox and the process guardian.
 Claude keeps the operator's HOME for its keychain sign-in and reads only the candidate's settings; Codex reads a private `CODEX_HOME` holding a 0600 copy of its login, removed at the end, and the measured repository's trust, written only there.
-The journey writes no operator file; the entries Claude itself leaves in `~/.claude.json` and `~/.claude/projects` for the run's paths are listed by file and key and left alone.
+The journey writes no operator file; the entries Claude itself leaves for the run's paths are left alone and listed: in `~/.claude.json` by key, in `~/.claude/projects` by exact folder path.
 Hide records folder trust for each worktree it spawns an agent into, and must record Codex's only in the private `CODEX_HOME` the agent reads: before the cleanup and after it the journey reads the operator's `~/.codex/config.toml` and `~/.claude.json` for trust entries naming a path of the run.
 A Codex entry there is an isolation failure (exit 2); a Claude one is reported by key, and one left after the cleanup is listed as a product finding.
-Every exit ends the agents, panes, Herdr and `hided` and confirms it, and removes the run's `journey/<run-id>-*` branches and worktrees only when the name and start commit match its record.
+Every exit, a stop and the deadline included, ends the agents, panes, Herdr and `hided` and confirms it, and then removes the run's `journey/<run-id>-*` branches and worktrees: each one only while its worktree is under the run and its start commit matches the run's record, read at the cleanup for a spawn that never answered, since that name is the run's alone.
+A branch that moved or a worktree outside the run is kept and named, and fails the run.
 Never run a cargo build or test while it runs: either relinks `target/debug` under the running `hided`.
 
 ### The CI lanes
@@ -372,7 +373,7 @@ Windows has neither lane yet: the harness under the journey is Unix-only, and [I
   `pr.yml` runs it on Linux when the journey's code or the shims change (`scripts/ci-plan.py`), `nightly.yml` and `release.yml` every time.
 - The signed-in lane (`login`, nightly and release) signs each agent in with the CI account's key: `HIDE_CLAUDE_API_KEY` as Claude's `ANTHROPIC_API_KEY`, `HIDE_CODEX_API_KEY` through `codex login --with-api-key`.
   An agent without its secret reads `not measured: not configured (<secret>)` and leaves a notice; the key is kept under the run's probe, which the cleanup removes, and no report or artifact carries it.
-  A failed cell, an isolation, setup or cleanup failure, or a request budget overrun fails the lane; a turn the provider answered nothing because the key's day was spent is `not measured: provider quota exhausted (<quota ids>)` with a `Not measured` warning, by the rule `contracts/provider-quota.json` keeps ([TESTING.md: A real agent on CI](TESTING.md#a-real-agent-on-ci)), and Claude Code and Codex have no row there yet, so every refusal of theirs, a per-minute rate limit included, fails.
+  A failed cell, an isolation, setup or cleanup failure, a request budget overrun, or a refused login or a missing CLI for an agent whose secret is set fails the lane; a turn the provider answered nothing because the key's day was spent is `not measured: provider quota exhausted (<quota ids>)` with a `Not measured` warning, by the rule `contracts/provider-quota.json` keeps ([TESTING.md: A real agent on CI](TESTING.md#a-real-agent-on-ci)), and Claude Code and Codex have no row there yet, so every refusal of theirs, a per-minute rate limit included, fails.
 `scripts/agent-journey-lane.py` turns a report into the lane's verdict and its annotations, and the lane keeps the report as an artifact.
 
 ## A device check

@@ -37,8 +37,8 @@ The build is that worktree's own; never point it at another checkout's `target/`
 From that worktree, with no `HERDR_*` or `HIDE_*` variable from the launching pane:
 
 ```sh
-env -u HERDR_SOCKET_PATH -u HERDR_PANE_ID -u HERDR_ENV -u HIDE_CAP_REF \
-  python3 scripts/agent-journey-check.py --run-dir agents/runs/release-<version>-journey
+(unset $(env | sed -En 's/^((HERDR|HIDE)_[A-Za-z0-9_]*)=.*/\1/p')
+ python3 scripts/agent-journey-check.py --run-dir agents/runs/release-<version>-journey)
 ```
 
 Every declared cell runs; no `--agents` narrows it.

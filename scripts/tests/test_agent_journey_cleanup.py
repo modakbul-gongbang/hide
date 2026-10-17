@@ -1,0 +1,145 @@
+"""What the journey removes, names and reports after a run: no agent runs."""
+
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+from types import SimpleNamespace
+import unittest
+from unittest import mock
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from agent_journey import ci
+from agent_journey.cli import budget_failures, leftover_copies, remove_created
+from agent_journey.local import claude_session_folders
+from agent_journey.report import markdown
+
+GIT_ENV = {"PATH": "/usr/bin:/bin", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull,
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@invalid", "GIT_COMMITTER_NAME": "t",
+           "GIT_COMMITTER_EMAIL": "t@invalid"}
+
+
+def git(root, *args):
+    return subprocess.run(["/usr/bin/git", "-C", str(root), *args], env=GIT_ENV, check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
+class RepositoryCleanup(unittest.TestCase):
+    """The cleanup runs after the run's owner closed, so it takes no owner."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        base = Path(folder.name).resolve()
+        self.root, self.probe, self.elsewhere = base / "repo", base / "run/probe", base / "elsewhere"
+        self.root.mkdir()
+        self.probe.mkdir(parents=True)
+        git(self.root, "init", "-q", "-b", "main")
+        git(self.root, "commit", "-q", "--allow-empty", "-m", "base")
+        self.runtime = SimpleNamespace(env=GIT_ENV, probe=self.probe)
+
+    def worktree(self, branch, path):
+        git(self.root, "worktree", "add", "-q", "-b", branch, str(path))
+        return git(self.root, "rev-parse", branch)
+
+    def branches(self):
+        return git(self.root, "for-each-ref", "--format=%(refname:short)", "refs/heads/").split()
+
+    def test_a_recorded_branch_goes_with_its_worktree(self):
+        start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
+        result = remove_created(self.runtime, self.root, [
+            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], "r1")
+        self.assertEqual(result["kept"], [])
+        self.assertEqual(self.branches(), ["main"])
+        self.assertNotIn(str(self.probe), git(self.root, "worktree", "list"))
+
+    def test_a_spawn_that_raised_before_its_start_was_read_is_still_removed(self):
+        self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
+        result = remove_created(self.runtime, self.root, [
+            {"branch": "journey/r1-codex", "start": None, "worktree": str(self.probe / "worktrees/codex")}], "r1")
+        self.assertEqual(result["kept"], [])
+        self.assertTrue(result["removed"][0]["start_read_at_cleanup"])
+        self.assertEqual(self.branches(), ["main"])
+
+    def test_a_branch_of_this_run_the_record_lacks_is_swept_and_another_runs_stays(self):
+        self.worktree("journey/r1-claude-code", self.probe / "worktrees/claude-code")
+        git(self.root, "branch", "journey/r2-codex")
+        result = remove_created(self.runtime, self.root, [], "r1")
+        self.assertEqual([item["branch"] for item in result["removed"]], ["journey/r1-claude-code"])
+        self.assertTrue(result["removed"][0]["swept"])
+        self.assertEqual(sorted(self.branches()), ["journey/r2-codex", "main"])
+
+    def test_a_moved_branch_and_a_worktree_outside_the_run_are_kept_and_named(self):
+        start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
+        git(self.probe / "worktrees/codex", "commit", "-q", "--allow-empty", "-m", "someone else's")
+        self.worktree("journey/r1-pi", self.elsewhere)
+        result = remove_created(self.runtime, self.root, [
+            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], "r1")
+        reasons = {item["branch"]: item["reason"] for item in result["kept"]}
+        self.assertEqual(reasons, {"journey/r1-codex": "branch_moved_since_the_run_made_it",
+                                   "journey/r1-pi": "worktree_outside_the_run"})
+        self.assertTrue(self.elsewhere.is_dir())
+
+    def test_a_worktree_folder_already_gone_with_the_probe_is_still_unregistered(self):
+        start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
+        subprocess.run(["/bin/rm", "-r", str(self.probe / "worktrees")], check=True)
+        result = remove_created(self.runtime, self.root, [
+            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], "r1")
+        self.assertEqual(result["kept"], [])
+        self.assertEqual(self.branches(), ["main"])
+
+
+class LeftoversAndReport(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.base = Path(folder.name).resolve()
+
+    def test_a_login_copy_left_in_any_earlier_run_folder_is_named(self):
+        runs = self.base / "agents/runs"
+        for name in ("agent-journey-a", "release-0.5.0-journey", "this-run"):
+            (runs / name / "probe/daemon-home/.codex").mkdir(parents=True)
+            (runs / name / "probe/daemon-home/.codex/auth.json").write_text("{}")
+        found = leftover_copies(self.base, runs / "this-run")
+        self.assertEqual(found, [str(runs / name / "probe/daemon-home/.codex/auth.json")
+                                 for name in ("agent-journey-a", "release-0.5.0-journey")])
+
+    def test_claudes_session_folders_for_the_runs_paths_are_named_by_exact_path(self):
+        run = self.base / "agents/runs/agent-journey-x"
+        projects = self.base / "home/.claude/projects"
+        # Claude's folder name: every character but a letter or digit as `-`.
+        encoded = re.sub("[^A-Za-z0-9]", "-", str(run))
+        other = re.sub("[^A-Za-z0-9]", "-", str(run.with_name("agent-journey-y")))
+        for name in (encoded + "-probe-worktrees-claude-code", other + "-probe-worktrees-codex", "-elsewhere"):
+            (projects / name).mkdir(parents=True)
+        self.assertEqual(claude_session_folders(self.base / "home", run),
+                         [str(projects / (encoded + "-probe-worktrees-claude-code"))])
+
+    def test_only_an_agent_over_its_budget_fails_by_name(self):
+        failures = budget_failures([{"id": "codex", "requests": 13, "request_budget": 12},
+                                    {"id": "claude-code", "requests": 12, "request_budget": 12},
+                                    {"id": "pi"}])
+        self.assertEqual(failures, ["request_budget_exceeded: codex made 13 model requests, budget 12"])
+
+    def test_an_agent_without_its_secret_is_not_configured_and_a_stand_in_needs_none(self):
+        with mock.patch.dict(os.environ, {"HIDE_CODEX_API_KEY": ""}, clear=False):
+            self.assertEqual(ci.not_configured("codex", None), "HIDE_CODEX_API_KEY")
+            self.assertIsNone(ci.not_configured("codex", self.base))
+        with mock.patch.dict(os.environ, {"HIDE_CODEX_API_KEY": "set"}, clear=False):
+            self.assertIsNone(ci.not_configured("codex", None))
+
+    def test_a_fixture_report_says_so_and_lists_what_a_stand_in_cannot_show(self):
+        report = {"mode": "ci", "fixture": True, "fixture_limits": ci.FIXTURE_LIMITS, "herdr": {}, "table": {},
+                  "systems": {}, "agents": []}
+        text = markdown(report)
+        self.assertIn("**Fixture run**", text)
+        self.assertIn("never a release's agent evidence", text)
+        self.assertIn("## What a stand-in cannot show", text)
+        self.assertIn(ci.FIXTURE_LIMITS[0], text)
+        self.assertNotIn("Fixture run", markdown({**report, "fixture": False, "fixture_limits": None}))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -12,8 +12,8 @@
 # HOME, signed in with the CI account's keys (`HIDE_CLAUDE_API_KEY`,
 # `HIDE_CODEX_API_KEY`). An agent without its key reads "not configured" and
 # leaves a notice, a provider quota refusal leaves a warning; neither fails
-# the job. A failed cell, an isolation or cleanup failure, or a request
-# budget overrun does. Its report is never a release's agent evidence when it
+# the job. A failed cell, an isolation or cleanup failure, a request budget
+# overrun, or a refused login or missing CLI with the key set does. Its report is never a release's agent evidence when it
 # came from the stand-ins (`skills/release/SKILL.md`).
 name: agent journey
 
@@ -124,6 +124,9 @@ jobs:
         run: echo "::notice title=agent journey signed in::not configured (no HIDE_CLAUDE_API_KEY or HIDE_CODEX_API_KEY secret); the signed-in journey stays unproven"
       - uses: actions/checkout@v7
         if: ${{ env.HAS_KEYS == 'true' }}
+        with:
+          # The keyed steps never need the repository token.
+          persist-credentials: false
       - uses: Swatinem/rust-cache@v2
         if: ${{ env.HAS_KEYS == 'true' }}
         with:

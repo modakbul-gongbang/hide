@@ -22,6 +22,8 @@ def markdown(report):
     lines = ["# Agent journey", "",
              f"Mode: {report['mode']}. Herdr: {text(report['herdr'].get('version', 'not started'))}. "
              f"Candidate hided sha256: {text(report['herdr'].get('hided_sha256', 'not started'))}.", "",
+             *(["**Fixture run**: the compiled stand-ins of web/e2e/shims answered in place of the CLIs and no model "
+                "read a prompt; this report is never a release's agent evidence.", ""] if report.get("fixture") else []),
              "Each cell is judged from what Hide reported (spawn answer, snapshot rows, Hide's conversation reader, "
              "the letter record, Herdr's session report), never from screen text.", "",
              *table_lines(report), "",
@@ -31,6 +33,9 @@ def markdown(report):
             row = cells[name]
             lines.append("| " + " | ".join(text(value) for value in
                                             (agent, name, row["status"], row["reason"], row["evidence"] or "")) + " |")
+    if report.get("fixture_limits"):
+        lines.extend(["", "## What a stand-in cannot show", ""])
+        lines.extend(f"- {text(limit)}" for limit in report["fixture_limits"])
     lines.extend(["", "## Systems", ""])
     lines.extend(f"- {name}: {text(value)}" for name, value in report["systems"].items())
     lines.extend(["", "## What each agent was started with", "",
@@ -57,7 +62,8 @@ def markdown(report):
         lines.append("")
     lines.extend(["## Isolation, operator files and cleanup", "", "```json",
                   json.dumps({key: report[key] for key in ("measured_repository", "created", "repository_cleanup", "leftovers",
-                                               "configuration", "operator_trust", "leftover_copies", "cleanup", "failures")
+                                               "configuration", "operator_trust", "operator_session_folders",
+                                               "leftover_copies", "cleanup", "failures")
                                 if key in report},
                              indent=2, default=str), "```", ""])
     return "\n".join(lines)

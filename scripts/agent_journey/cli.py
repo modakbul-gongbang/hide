@@ -14,6 +14,7 @@ from pathlib import Path
 import shlex
 import shutil
 import signal
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -31,8 +32,8 @@ from . import ci, cells, quota
 from .controller import Controller
 from .daemon import Daemon
 from .journey import Journey
-from .local import (ROUTES, allow_one_shot_references, codex_login_refusal, operator_trust, route, trust_codex,
-                    wrapper)
+from .local import (ROUTES, allow_one_shot_references, claude_session_folders, codex_login_refusal, operator_trust,
+                    route, trust_codex, wrapper)
 from .report import save, table_lines
 
 KIT_SECONDS = 90
@@ -78,8 +79,8 @@ def load_contract(checkout):
 def leftover_copies(checkout, run):
     """Login copies an uncatchable kill left in earlier runs: named, never reused."""
     found = []
-    for folder in sorted((checkout / "agents/runs").glob("agent-journey-*")):
-        if folder == run:
+    for folder in sorted((checkout / "agents/runs").iterdir()):
+        if folder == run or folder.is_symlink() or not folder.is_dir():
             continue
         copy = folder / "probe/daemon-home/.codex/auth.json"
         if copy.exists() or copy.is_symlink():
@@ -89,7 +90,6 @@ def leftover_copies(checkout, run):
 
 def measured_repository(checkout):
     """The main repository of the checkout the journey runs from (PRD D-43)."""
-    import subprocess
     common = subprocess.run(["/usr/bin/git", "-C", str(checkout), "rev-parse", "--path-format=absolute",
                              "--git-common-dir"], capture_output=True, text=True, timeout=15)
     if common.returncode:
@@ -103,7 +103,6 @@ def measured_repository(checkout):
 def journey_leftovers(root, checkout, run):
     """Branches and worktrees an uncatchable kill left in the measured
     repository: named for the operator, never reused or removed."""
-    import subprocess
     branches = subprocess.run(["/usr/bin/git", "-C", str(root), "for-each-ref", "--format=%(refname:short)",
                                "refs/heads/journey/"], capture_output=True, text=True, timeout=15).stdout.split()
     listed = subprocess.run(["/usr/bin/git", "-C", str(root), "worktree", "list", "--porcelain"],
@@ -120,6 +119,9 @@ def check_operator_trust(report, operator, run, when):
     `when`: a Codex entry there is an isolation failure, a Claude one is
     reported by key, and one left after the cleanup is a product finding."""
     trust = report.setdefault("operator_trust", {})
+    if when == "after":
+        # Claude's own session folders for the run's paths: listed, left alone.
+        report["operator_session_folders"] = claude_session_folders(operator, run)
     try:
         found = trust[when] = operator_trust(operator, run)
     except ProtectionError as error:
@@ -145,35 +147,70 @@ def claude_trusts(operator, root):
     return (projects.get(str(root)) or {}).get("hasTrustDialogAccepted") is True
 
 
-def remove_created(runtime, root, created):
+def plain_git(env, root, *args):
+    """Git in the measured repository, outside the owner: the repository
+    cleanup runs after the owner closed, and after a stop or the deadline."""
+    result = subprocess.run(["/usr/bin/git", "-C", str(root), *args], env=env, capture_output=True, text=True,
+                            timeout=15)
+    return result.returncode, result.stdout, result.stderr
+
+
+def registered_worktrees(env, root):
+    """Each registered worktree's path and branch in the measured repository."""
+    code, out, err = plain_git(env, root, "worktree", "list", "--porcelain")
+    if code:
+        raise ProtectionError("worktree_list_failed: " + err.strip()[:200])
+    found, path = {}, None
+    for line in out.splitlines():
+        if line.startswith("worktree "):
+            path = line.removeprefix("worktree ")
+        elif line.startswith("branch ") and path:
+            found[path] = line.removeprefix("branch refs/heads/")
+    return found
+
+
+def remove_created(runtime, root, created, run_id):
     """Deletes the worktrees and branches this run made, each only while its
     name and start commit still match the run's record; anything else stays
-    and is named."""
+    and is named. A branch the record lacks a start for (a spawn that raised
+    or was stopped) and one under the run's `journey/<run_id>-` name the
+    record lacks are read now: that name is this run's alone."""
     removed, kept = [], []
     env = {**runtime.env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
-    for item in created:
+    code, out, err = plain_git(env, root, "for-each-ref", "--format=%(refname:short)", f"refs/heads/journey/{run_id}-*")
+    if code:
+        raise ProtectionError("branch_list_failed: " + err.strip()[:200])
+    worktrees = registered_worktrees(env, root)
+    items = [dict(item) for item in created]
+    for branch in out.split():
+        if not any(item["branch"] == branch for item in items):
+            path = next((path for path, name in worktrees.items() if name == branch), None)
+            items.append({"branch": branch, "start": None, "worktree": path, "swept": True})
+    probe = runtime.probe.resolve()
+    for item in items:
         if not item["start"]:
-            continue
-        code, out, _ = runtime.owner.run(["/usr/bin/git", "-C", str(root), "worktree", "list", "--porcelain"],
-                                         env=env, check=False)
-        registered = f"worktree {item['worktree']}" in out.splitlines() or \
-            f"worktree {Path(item['worktree']).resolve()}" in out.splitlines()
+            code, tip, _ = plain_git(env, root, "rev-parse", "--verify", "-q", "refs/heads/" + item["branch"])
+            if code:
+                continue  # the spawn never made it
+            item.update(start=tip.strip(), start_read_at_cleanup=True)
+        worktree = item["worktree"]
+        registered = worktree and (worktree in worktrees or str(Path(worktree).resolve()) in worktrees)
         if registered:
-            code, _, err = runtime.owner.run(["/usr/bin/git", "-C", str(root), "worktree", "remove", "--force",
-                                              item["worktree"]], env=env, check=False)
+            if not Path(worktree).resolve().is_relative_to(probe):
+                kept.append({**item, "reason": "worktree_outside_the_run"})
+                continue
+            code, _, err = plain_git(env, root, "worktree", "remove", "--force", worktree)
             if code:
                 kept.append({**item, "reason": "worktree_remove_failed: " + err.strip()[:200]})
                 continue
-        code, out, _ = runtime.owner.run(["/usr/bin/git", "-C", str(root), "rev-parse", "--verify", "-q",
-                                          "refs/heads/" + item["branch"]], env=env, check=False)
+        code, tip, _ = plain_git(env, root, "rev-parse", "--verify", "-q", "refs/heads/" + item["branch"])
         if code:
             removed.append(item)
             continue
-        if out.strip() != item["start"]:
+        if tip.strip() != item["start"]:
             kept.append({**item, "reason": "branch_moved_since_the_run_made_it"})
             continue
-        code, _, err = runtime.owner.run(["/usr/bin/git", "-C", str(root), "branch", "-D", item["branch"]],
-                                         env=env, check=False)
+        code, _, err = plain_git(env, root, "branch", "-D", item["branch"])
         (kept if code else removed).append({**item, **({"reason": err.strip()[:200]} if code else {})})
     return {"removed": removed, "kept": kept}
 
@@ -303,14 +340,15 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
         kind = rows[key]["herdr_kind"]
         agent = {"id": key}
         report["agents"].append(agent)
-        program = ci.executable(fixture_bin, kind)
-        if not program:
-            cells.settle_agent(table, key, f"CLI not installed: {kind} is not on PATH")
-            continue
         secret = ci.not_configured(kind, fixture_bin)
         if secret:
             agent["not_configured"] = secret
             cells.settle_agent(table, key, f"not configured ({secret})")
+            continue
+        program = ci.executable(fixture_bin, kind)
+        if not program:
+            agent["cli_missing"] = kind
+            cells.settle_agent(table, key, f"CLI not installed: {kind} is not on PATH")
             continue
         launch = ci.wrapper(runtime, program, kind, os.environ.get("PATH", ""),
                             runtime.probe / f"fixture-{kind}.config" if fixture_bin else None)
@@ -325,6 +363,13 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
                 continue
         ready.append(key)
     return ready
+
+
+def budget_failures(agents):
+    """A signed-in run's agents over their request budget, by name (PRD B29)."""
+    return [f"request_budget_exceeded: {agent['id']} made {agent['requests']} model requests, "
+            f"budget {agent['request_budget']}" for agent in agents
+            if agent.get("request_budget") is not None and agent.get("requests", 0) > agent["request_budget"]]
 
 
 def main(argv=None):
@@ -393,10 +438,12 @@ def main(argv=None):
         runtime = Runtime(checkout, run, operator, owner, herdr_bin=herdr,
                           home=run / "probe/daemon-home")
         report["package"] = str(package(runtime))
-        # Codex's sessions belong in its private home, never the operator's.
-        sessions = runtime.home / ".codex/sessions"
-        if sessions.is_symlink():
-            sessions.unlink()
+        # Codex's sessions belong in its private home, never the operator's, and
+        # in CI mode Claude's do too: its agents run in this home.
+        for relative in (".codex/sessions",) if local else (".codex/sessions", ".claude/projects"):
+            sessions = runtime.home / relative
+            if sessions.is_symlink():
+                sessions.unlink()
         write_private(runtime.bin / "hide", ("#!/bin/sh\nexec " + shlex.quote(str(runtime.hide)) + ' "$@"\n').encode())
         (runtime.bin / "hide").chmod(0o700)
         if local:
@@ -462,11 +509,6 @@ def main(argv=None):
         if local:
             # Before the cleanup, which removes the trust the candidate recorded with its worktrees.
             check_operator_trust(report, operator, run, "during")
-        if runtime and report["created"]:
-            try:
-                report["repository_cleanup"] = remove_created(runtime, root, report["created"])
-            except Exception as error:
-                report["repository_cleanup"] = {"removed": [], "kept": report["created"], "failure": str(error)}
         try:
             if runtime:
                 report["cleanup"] = runtime.close()
@@ -479,6 +521,12 @@ def main(argv=None):
                 owner.close()
             except Exception as cleanup_error:
                 report["cleanup"]["failures"].append(str(cleanup_error))
+        if runtime:
+            # After every process ended, so no agent still writes in a worktree.
+            try:
+                report["repository_cleanup"] = remove_created(runtime, root, report["created"], run_id)
+            except Exception as error:
+                report["repository_cleanup"] = {"removed": [], "kept": report["created"], "failure": str(error)}
         if guard:
             try:
                 report["configuration"] = guard.finish()
@@ -495,11 +543,7 @@ def main(argv=None):
                         or (report.get("repository_cleanup") or {}).get("kept"))
     # An interrupted run says so with 3 whatever it measured, or 2 when its cleanup is unconfirmed.
     code = (2 if setup_failed else 3) if interrupted else cells.exit_code(table, selected, setup_failed=setup_failed)
-    # A login lane over an agent's request budget fails by that name (PRD B29).
-    report["budget_failures"] = [f"request_budget_exceeded: {agent['id']} made {agent['requests']} model requests, "
-                                 f"budget {agent['request_budget']}" for agent in report["agents"]
-                                 if not local and not fixture_bin and agent.get("request_budget") is not None
-                                 and agent.get("requests", 0) > agent["request_budget"]]
+    report["budget_failures"] = budget_failures(report["agents"]) if not local and not fixture_bin else []
     if report["budget_failures"] and code in (0, 3):
         code = 1
     report["exit_code"] = code

@@ -16,6 +16,7 @@ import datetime
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import tomllib
 
@@ -181,3 +182,15 @@ def operator_trust(operator, run):
         found[str(claude)] = [f"projects.{json.dumps(key)}.hasTrustDialogAccepted" for key, entry in projects.items()
                               if ours(key) and isinstance(entry, dict) and "hasTrustDialogAccepted" in entry]
     return found
+
+
+def claude_session_folders(operator, run):
+    """The folders Claude keeps in the operator's ~/.claude/projects for a
+    path of this run, by exact path: Claude names each after its working
+    folder with every character but a letter or digit as `-`."""
+    projects = operator / ".claude/projects"
+    if not projects.is_dir():
+        return []
+    prefixes = {re.sub(r"[^A-Za-z0-9]", "-", str(path)) for path in (run.absolute(), run.resolve())}
+    return sorted(str(entry) for entry in projects.iterdir()
+                  if any(entry.name == prefix or entry.name.startswith(prefix + "-") for prefix in prefixes))

@@ -33,6 +33,48 @@ class Login(unittest.TestCase):
         self.assertFalse(passed)
         self.assertIn("::error title=agent journey claude-code::reply: rate_limit", notes)
 
+    def test_a_refused_login_or_a_missing_cli_with_the_key_set_fails(self):
+        for agent, message in (({"id": "codex", "login": "codex login --with-api-key refused: bad key"},
+                                "::error title=agent journey codex::login refused: codex login --with-api-key refused: bad key"),
+                               ({"id": "codex", "cli_missing": "codex"},
+                                "::error title=agent journey codex::codex is not installed, though the job installs it")):
+            with self.subTest(agent=agent):
+                passed, notes = lane.judge(report({}, [agent]), "login")
+                self.assertFalse(passed)
+                self.assertIn(message, notes)
+
+    def test_an_agent_without_its_key_is_a_notice(self):
+        passed, notes = lane.judge(report({}, [{"id": "codex", "not_configured": "HIDE_CODEX_API_KEY"}]), "login")
+        self.assertTrue(passed)
+        self.assertTrue(notes[0].startswith("::notice "))
+
+    def test_an_isolation_exit_fails_either_lane(self):
+        for name in ("login", "fixture"):
+            with self.subTest(lane=name):
+                passed, notes = lane.judge(report({}, [], exit_code=2, fixture=name == "fixture"), name)
+                self.assertFalse(passed)
+                self.assertIn("::error title=agent journey::the journey exited 2: isolation, setup or cleanup failed", notes)
+
+
+class Fixture(unittest.TestCase):
+    def table(self, **override):
+        cells = {name: {"status": "pass", "reason": ""} for name in lane.FIXTURE_CELLS}
+        cells["start_untrusted"] = {"status": "not measured", "reason": "a stand-in has no folder question"}
+        return {agent: {**cells, **override} for agent in lane.AGENTS}
+
+    def test_every_imitated_cell_passing_passes(self):
+        self.assertEqual(lane.judge(report(self.table(), [], fixture=True), "fixture"), (True, []))
+
+    def test_an_imitated_cell_not_passing_fails(self):
+        passed, notes = lane.judge(report(self.table(resume={"status": "not measured", "reason": "stopped"}), [],
+                                          fixture=True), "fixture")
+        self.assertFalse(passed)
+        self.assertIn("::error title=agent journey codex::resume is not measured, a stand-in passes it: stopped", notes)
+
+    def test_each_lane_refuses_the_other_lanes_report(self):
+        self.assertFalse(lane.judge(report(self.table(), []), "fixture")[0])
+        self.assertFalse(lane.judge(report(self.table(), [], fixture=True), "login")[0])
+
 
 if __name__ == "__main__":
     unittest.main()

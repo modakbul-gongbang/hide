@@ -4,9 +4,10 @@
 Usage: agent-journey-lane.py <report.json> --lane fixture|login
 
 The fixture lane passes only when every cell the stand-ins imitate passed for
-both agents. The login lane fails on a failed cell, an isolation, setup or
-cleanup failure, or a request budget overrun; an agent with no key is a
-notice, and a turn the provider answered nothing because the key's day was
+both agents. Either lane fails on a failed cell, an isolation, setup or
+cleanup failure (the journey's exit 2), or a request budget overrun; the login
+lane also fails when an agent whose key is set is refused its login or its CLI
+is missing, as the job installed it. An agent with no key is a notice, and a turn the provider answered nothing because the key's day was
 spent is a `Not measured` warning, which keeps the lane from being green in
 the nightly report (scripts/ci-flaky-report.py), and neither fails it. Each
 finding is printed as a GitHub annotation; the exit code is the lane's.
@@ -34,6 +35,9 @@ def judge(report, lane):
         return False, [annotation("error", "agent journey", "the fixture lane read a report that is not a fixture run")]
     if lane == "login" and report.get("fixture"):
         return False, [annotation("error", "agent journey", "the login lane read a fixture report")]
+    if report.get("exit_code") == 2:
+        passed = False
+        notes.append(annotation("error", "agent journey", "the journey exited 2: isolation, setup or cleanup failed"))
     for failure in report.get("failures", []):
         passed = False
         notes.append(annotation("error", "agent journey setup", failure.get("reason", "setup failed")))
@@ -63,6 +67,13 @@ def judge(report, lane):
                     notes.append(annotation("error", f"agent journey {agent}",
                                             f"{name} is {cell['status']}, a stand-in passes it: {cell['reason']}"))
     for agent in report.get("agents", []):
+        if lane == "login" and agent.get("login"):
+            passed = False
+            notes.append(annotation("error", f"agent journey {agent['id']}", f"login refused: {agent['login']}"))
+        if lane == "login" and agent.get("cli_missing"):
+            passed = False
+            notes.append(annotation("error", f"agent journey {agent['id']}",
+                                    f"{agent['cli_missing']} is not installed, though the job installs it"))
         if agent.get("not_configured"):
             notes.append(annotation("notice", f"agent journey {agent['id']}",
                                     f"not configured (no {agent['not_configured']} secret); its signed-in journey stays unproven"))
