@@ -400,9 +400,13 @@ class Journey:
         try:
             self.runtime.wait(lambda: (agent := self.herdr_agent()) and agent.get("interactive_ready", True)
                               and agent.get("agent_status") in ("idle", "done") and not agent.get("launch_pending"), 60)
-        except ProcessError:
+        except ProcessError as error:
             if self.runtime.owner.cancelled.is_set():
                 raise
+            agent = self.herdr_agent() or {}
+            raise ProcessError(f"agent_not_ready_for_input: Herdr reads {agent.get('agent_status')}, "
+                               f"interactive_ready {agent.get('interactive_ready')}, "
+                               f"launch_pending {agent.get('launch_pending')}") from error
 
     def untrusted(self, repository):
         """A start in a repository the account never trusted, with no preparation."""
@@ -423,11 +427,12 @@ class Journey:
                 return
             self.agent, self.session, self.checkout = answer["value"]["id"], answer["value"]["session"], worktree.resolve()
             self.reference = None
-            turn, _read, record["activities"] = self.wait_turn(0, value)
+            turn, read, record["activities"] = self.wait_turn(0, value)
             native = self.herdr_agent() or {}
-            record["herdr_agent"], record["turn"] = native, turn
+            record["herdr_agent"], record["turn"], record["read"] = native, turn, read
             self.settle("start_untrusted", cells.start_verdict(spawned, turn,
-                                                               cells.emitter_verdict(native.get("agent_session"), self.kind)),
+                                                               cells.emitter_verdict(native.get("agent_session"), self.kind),
+                                                               cells.reply_verdict(read, self.session, value)),
                         self.evidence("start-untrusted", record))
         finally:
             self.pane = saved_pane

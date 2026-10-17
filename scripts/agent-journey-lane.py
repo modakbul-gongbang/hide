@@ -18,10 +18,9 @@ import json
 from pathlib import Path
 import sys
 
-AGENTS = ("claude-code", "codex")
-# What the stand-ins imitate (web/e2e/shims/live-check.h); the folder
-# question of a never-trusted repository is the login lane's.
-FIXTURE_CELLS = ("start", "reply", "letter", "sleep_wake", "resume")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from agent_journey.cells import BUILT_AGENTS as AGENTS  # noqa: E402
+from agent_journey.ci import FIXTURE_CELLS  # noqa: E402
 
 
 def escaped(text):

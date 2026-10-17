@@ -196,11 +196,12 @@ def emitter_verdict(session, kind):
     return FAIL, "Herdr integration did not report the session (source " + str(source) + ")"
 
 
-def start_verdict(spawn, turn, emitter):
-    for status, reason in (spawn, turn, emitter):
+def start_verdict(*verdicts):
+    """The first verdict that did not pass, or all of their reasons."""
+    for status, reason in verdicts:
         if status != PASS:
             return status, reason
-    return PASS, "; ".join(reason for _, reason in (spawn, turn, emitter))
+    return PASS, "; ".join(reason for _, reason in verdicts)
 
 
 def reply_verdict(read, session, token, after=0):

@@ -534,7 +534,11 @@ def main(argv=None):
                 owner.close()
             except Exception as cleanup_error:
                 report["cleanup"]["failures"].append(str(cleanup_error))
-        if runtime:
+        if runtime and not report["cleanup"].get("processes_confirmed"):
+            # An agent that may still run keeps its worktree and branch.
+            report["repository_cleanup"] = {"removed": [], "kept": [
+                {**item, "reason": "processes_unconfirmed"} for item in report["created"]]}
+        elif runtime:
             # After every process ended, so no agent still writes in a worktree.
             try:
                 report["repository_cleanup"] = remove_created(runtime, root, report["created"],
