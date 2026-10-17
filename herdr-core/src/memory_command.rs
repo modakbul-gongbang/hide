@@ -1157,7 +1157,11 @@ mod tests {
             fixture.stale(caller()),
             Err("memory_stale_not_received".into())
         );
-        for nobody in [MemoryCaller::Person, MemoryCaller::Agent(None), MemoryCaller::Checkout] {
+        for nobody in [
+            MemoryCaller::Person,
+            MemoryCaller::Agent(None),
+            MemoryCaller::Checkout,
+        ] {
             assert_eq!(
                 fixture.stale(nobody),
                 Err("memory_stale_session_required".into())
@@ -1180,7 +1184,11 @@ mod tests {
 
         let released = fixture.release(caller()).unwrap();
         assert_eq!(
-            (&released["outcome"], &released["caller"], &released["report"]),
+            (
+                &released["outcome"],
+                &released["caller"],
+                &released["report"]
+            ),
             (&json!("released"), &json!("agent"), &json!("spent"))
         );
         assert_eq!(
