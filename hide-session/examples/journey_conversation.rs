@@ -63,9 +63,9 @@ fn read(
             hide_session::read_conversation(home, agent, &path, &scope, checkpoint.take())
                 .map_err(|error| format!("session_conversation_read_failed: {error}"))
         })?;
-        events.extend(page.events.into_iter().map(|event| {
-            serde_json::json!({"role": event.role, "kind": event.kind, "text": event.text})
-        }));
+        events.extend(page.events.into_iter().map(
+            |event| serde_json::json!({"role": event.role, "kind": event.kind, "text": event.text}),
+        ));
         if !page.has_more {
             return Ok(serde_json::json!({"path": path, "events": events}));
         }
