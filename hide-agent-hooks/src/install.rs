@@ -37,6 +37,9 @@ pub enum InstallFailure {
     UnexpectedShape { path: String, detail: String },
     /// The write itself failed.
     NotWritable { path: String, detail: String },
+    /// The file says no to the change: what it holds is the operator's
+    /// decision, which Hide does not override.
+    Refused { path: String, detail: String },
     /// Hide's entry points at a helper that is no longer on disk, so the hook
     /// runs nothing. Reinstalling from the running app repairs it.
     HelperMissing { path: String, helper: String },
@@ -54,6 +57,7 @@ impl InstallFailure {
                 format!("{path} has an unexpected shape: {detail}")
             }
             Self::NotWritable { path, detail } => format!("{path} could not be written: {detail}"),
+            Self::Refused { path, detail } => format!("{detail} ({path})"),
             Self::HelperMissing { helper, .. } => {
                 format!("the installed hook points at {helper}, which is missing")
             }
