@@ -33,9 +33,8 @@ const PUMP_TICK: Duration = Duration::from_millis(250);
 /// removal, plugin uninstall and the remaining kit components.
 const KIT_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// Where the core's own machine, and a node that dials it, links `hide`,
-/// under that node's home.
-pub(crate) const LOCAL_CLI_DIR: &str = "~/.local/bin";
+/// Where the core's own machine links `hide`, under its node's home.
+const LOCAL_CLI_DIR: &str = "~/.local/bin";
 
 /// The hook diagnosis is two small file reads.
 const HOOK_DIAGNOSIS_TIMEOUT: Duration = Duration::from_secs(10);

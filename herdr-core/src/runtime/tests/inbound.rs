@@ -1154,16 +1154,19 @@ fn machine_kit(cli: hide_kit::ComponentState) -> hide_kit::KitReport {
 
 /// A machine the core moved off dials in as a node and keeps Hide's kit by
 /// the device rules, from the app it runs and through its link: its link
-/// installs it, with the command folder of the node's own home and no Herdr
-/// socket, so the node uses its own; its row shows what the node answered,
-/// and Reinstall repairs it there. Removing the node leaves its kit, since
-/// the node runs Hide itself and registers again on its next link.
+/// installs it, with the command folder a device gets by default (which
+/// `HIDE_HOST_CLI_DIR` moves, so a test never writes the account's own) and
+/// no Herdr socket, so the node uses its own; its row shows what the node
+/// answered, and Reinstall repairs it there. Removing the node leaves its
+/// kit, since the node runs Hide itself and registers again on its next
+/// link.
 #[test]
 fn a_node_that_dials_in_has_its_kit_kept_through_its_link() {
     use hide_kit::{ComponentId, ComponentState};
     use hide_node_link::protocol::KitAction;
     let node = super::device_kit::KitDevice::answering(Ok(machine_kit(ComponentState::Removed)));
     let shared = shared_runtime();
+    shared.lock().unwrap().host_cli_dir = "/private/fixture-bin".to_owned();
     let (link, release) = held_link_to(Arc::clone(&node) as Arc<dyn crate::node_access::NodeLink>);
     shared
         .lock()
@@ -1175,7 +1178,7 @@ fn a_node_that_dials_in_has_its_kit_kept_through_its_link() {
     });
     assert_eq!(
         node.calls(),
-        [(KitAction::Apply, "~/.local/bin".to_owned(), None)]
+        [(KitAction::Apply, "/private/fixture-bin".to_owned(), None)]
     );
     let kit = kit_row(&shared.lock().unwrap(), NODE);
     assert_eq!(kit.unavailable, None);

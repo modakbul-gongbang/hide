@@ -231,6 +231,30 @@ fn install_layout(executable: &Path) -> HostResult<(PathBuf, String)> {
     })
 }
 
+/// The programs a build Hide places holds beside its `hided`, which the kit
+/// links and names in the hooks it writes.
+const BUILD_PROGRAMS: [&str; 2] = ["hide", "hide-agent-hooks"];
+
+/// The root and build of a program Hide placed for the account at `home`:
+/// in that account's own helper root (`~/.hide/host-helper`), in a build
+/// folder holding the kit's other programs beside it. A copy anywhere else,
+/// or a lone `hided` there, is no build Hide placed, so it installs nothing
+/// into the account: a development build copied into a folder of that
+/// name, or a fixture's build while HOME is the operator's.
+pub(crate) fn placed_build(executable: &Path, home: &Path) -> Option<(PathBuf, String)> {
+    let (root, version) = build_layout(executable)?;
+    let own = hide_kit::layout::helper_root(home);
+    let canonical = hide_platform::fs::identity::canonical;
+    let in_own_root = root == own
+        || matches!((canonical(&root), canonical(&own)), (Ok(root), Ok(own)) if root == own);
+    let whole = BUILD_PROGRAMS.iter().all(|program| {
+        root.join(&version)
+            .join(format!("{program}{}", std::env::consts::EXE_SUFFIX))
+            .is_file()
+    });
+    (in_own_root && whole && executable.is_file()).then_some((root, version))
+}
+
 /// The root and build of a program at `<root>/<16 hex>/<program>`, the
 /// folder every install of a build into a helper root makes.
 pub(crate) fn build_layout(executable: &Path) -> Option<(PathBuf, String)> {
@@ -642,34 +666,67 @@ mod tests {
         }
     }
 
+    /// Writes each of `programs` into `folder` as this system names a
+    /// program, and answers the path of the first.
+    fn programs(folder: &Path, programs: &[&str]) -> PathBuf {
+        std::fs::create_dir_all(folder).unwrap();
+        for program in programs {
+            let file = folder.join(format!("{program}{}", std::env::consts::EXE_SUFFIX));
+            std::fs::write(file, b"program").unwrap();
+        }
+        folder.join(format!("{}{}", programs[0], std::env::consts::EXE_SUFFIX))
+    }
+
     /// A core or a node installs the kit only from a program Hide put on
-    /// the machine: the app's package, or a build placed under a helper
-    /// root, which a moved core's login item runs. A development build has
-    /// no kit place, whatever folder it sits in.
+    /// the machine: the app's package on each system (a macOS bundle, a
+    /// Linux or Windows package's resources, a Windows build's runtime
+    /// copy), or a whole build in the account's own helper root, which a
+    /// moved core's login item runs. A copy of a build anywhere else, a
+    /// lone `hided` in a build folder, a development build, or a node with
+    /// no home installs nothing into the account.
     #[test]
-    fn a_core_installs_from_its_package_or_a_placed_build_and_never_from_a_build_directory() {
+    fn a_core_installs_from_its_package_or_a_placed_build_and_never_from_another_copy() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let place = |executable: &Path| KitPlace::of_program(executable, Some(&home));
+
         assert_eq!(
-            KitPlace::of_program(Path::new("/Applications/hide.app/Contents/Resources/hided")),
+            place(Path::new("/Applications/hide.app/Contents/Resources/hided")),
             KitPlace::Bundled(PathBuf::from("/Applications/hide.app/Contents/Resources"))
         );
+        let package = dir.path().join("hide-package");
+        programs(&package, &["hide"]);
+        let resources = package.join("resources");
+        let unpacked = programs(&resources, &["hided"]);
+        std::fs::write(resources.join("app.asar"), b"shell").unwrap();
+        assert_eq!(place(&unpacked), KitPlace::Bundled(resources));
+        let copy = home.join(".hide/runtime/0.4.0-0123456789ab");
+        let runtime = programs(&copy, &["hided", "hide", "hide-agent-hooks", "herdr"]);
+        std::fs::write(copy.join(hide_kit::runtime::MARKER), "0.4.0-0123456789ab").unwrap();
+        assert_eq!(place(&runtime), KitPlace::Bundled(copy));
+
+        let helper_root = hide_kit::layout::helper_root(&home);
+        let whole = ["hided", "hide", "hide-agent-hooks"];
+        let placed = programs(&helper_root.join("0123456789abcdef"), &whole);
         assert_eq!(
-            KitPlace::of_program(Path::new(
-                "/Users/me/.hide/host-helper/0123456789abcdef/hided"
-            )),
+            place(&placed),
             KitPlace::Build {
-                root: PathBuf::from("/Users/me/.hide/host-helper"),
+                root: helper_root.clone(),
                 version: "0123456789abcdef".to_owned(),
             }
         );
-        for elsewhere in [
-            "/work/hide/target/debug/hided",
-            "/work/hide/target/release/hided",
-            "/Users/me/.hide/host-helper/current/hided",
-        ] {
+        assert_eq!(KitPlace::of_program(&placed, None), KitPlace::Standalone);
+
+        let stray = programs(&dir.path().join("Downloads/0123456789abcdef"), &whole);
+        let lone = programs(&helper_root.join("fedcba9876543210"), &["hided"]);
+        let current = helper_root.join("current/hided");
+        let debug = programs(&dir.path().join("hide/target/debug"), &whole);
+        for elsewhere in [stray, lone, current, debug] {
             assert_eq!(
-                KitPlace::of_program(Path::new(elsewhere)),
+                place(&elsewhere),
                 KitPlace::Standalone,
-                "{elsewhere}"
+                "{}",
+                elsewhere.display()
             );
         }
     }

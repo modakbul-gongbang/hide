@@ -741,13 +741,12 @@ fn owner_loop(
 ) {
     // The core's own node answers for the home the core reads and writes
     // for: the configured one, else the process's, as the core decides.
-    let mut own_node = hide_node::Local::new(
-        options
-            .home
-            .as_ref()
-            .map(std::path::PathBuf::from)
-            .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from)),
-    );
+    let home = options
+        .home
+        .as_ref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from));
+    let mut own_node = hide_node::Local::new(home.clone());
     // What the node measured of each repository's worktrees outlives the
     // daemon, in the core's state folder.
     let state_dir = std::path::Path::new(&options.app_state_path)
@@ -758,12 +757,15 @@ fn owner_loop(
         .keeping_worktree_facts_in(hide_kit::layout::worktree_facts(&state_dir))
         .keeping_feedback_in(state_dir);
     // The install kit's parts ship beside this binary: in the app bundle, or
-    // in the build folder a move or a core update placed under the helper
-    // root, which a moved core's login item runs. A daemon anywhere else, a
-    // development build among them, installs nothing (PRD device-parity
-    // D-19).
+    // in the build folder a move or a core update placed in this account's
+    // helper root, which a moved core's login item runs. A daemon anywhere
+    // else, a development build among them, installs nothing (PRD
+    // device-parity D-19).
     if let Ok(executable) = std::env::current_exe() {
-        own_node = own_node.with_kit(hide_host::serve::KitPlace::of_program(&executable));
+        own_node = own_node.with_kit(hide_host::serve::KitPlace::of_program(
+            &executable,
+            home.as_deref(),
+        ));
     }
     let own_herdr = options
         .herdr_socket_path

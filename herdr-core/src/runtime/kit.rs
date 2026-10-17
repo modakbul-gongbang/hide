@@ -988,15 +988,12 @@ impl Runtime {
             self.device_kit_running.remove(device_id);
             return None;
         };
-        // A node that dials in links `hide` where this machine's own kit
-        // does, in its own home; a device where its consent says.
-        let cli_dir = match registration.origin {
-            crate::model::LinkOrigin::Inbound => crate::kit::LOCAL_CLI_DIR.to_owned(),
-            crate::model::LinkOrigin::Dialed { .. } => registration
-                .host_consent
-                .and_then(|consent| consent.cli_dir)
-                .unwrap_or_else(|| self.host_cli_dir.clone()),
-        };
+        // A node that dials in has no consent, so it links `hide` where a
+        // device would by default, in its own home.
+        let cli_dir = registration
+            .host_consent
+            .and_then(|consent| consent.cli_dir)
+            .unwrap_or_else(|| self.host_cli_dir.clone());
         let daemon_off_run =
             matches!(&job, KitJob::Apply(scope) if scope.codex_daemon_off).then(|| {
                 self.codex_daemon_off_runs += 1;
