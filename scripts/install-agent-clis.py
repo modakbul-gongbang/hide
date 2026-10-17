@@ -15,20 +15,23 @@ from its report.
 """
 
 import argparse
+import hashlib
 import os
 from pathlib import Path
+import platform
 import shutil
 import subprocess
 import sys
+import urllib.request
 
 CHECKOUT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(CHECKOUT / "scripts"))
 from agent_journey.clis import TABLE, matches, table as pins  # noqa: E402
 
 WINDOWS = os.name == "nt"
-# Each vendor's documented installer for a pinned release.
+# Where each pinned release comes from: the vendor's installer, or its release files.
 GROK_INSTALLER = "https://x.ai/cli/install.sh"
-OMP_INSTALLER = "https://omp.sh/install"
+OMP_RELEASES = "https://github.com/can1357/oh-my-pi/releases/download"
 
 
 def table():
@@ -79,22 +82,33 @@ def grok(row, prefix):
 
 
 def omp(row, prefix):
-    """omp's installer takes a release tag in its binary mode and the folder
-    as PI_INSTALL_DIR; on Windows its PowerShell form does, and also adds the
-    folder to the account's PATH and names Git Bash in omp's settings, which
-    a disposable runner may keep."""
+    """omp's release on GitHub: the binary for this system, checked against
+    the release's SHA256SUMS.txt. The installer at omp.sh resolves a release
+    through a build server that answered `no_build` for every version on
+    2026-10-18, while each release carries its binaries."""
+    machine = platform.machine().lower()
+    arch = "arm64" if machine in ("arm64", "aarch64") else "x64"
+    system = "windows" if WINDOWS else "darwin" if sys.platform == "darwin" else "linux"
+    asset = f"omp-{system}-{arch}" + (".exe" if WINDOWS else "")
+    base = f"{OMP_RELEASES}/v{row['version']}"
+    sums = fetch(f"{base}/SHA256SUMS.txt").decode()
+    expected = next((line.split()[0] for line in sums.splitlines() if line.split()[1:] == [asset]), None)
+    if not expected:
+        raise SystemExit(f"omp: v{row['version']} lists no {asset} in SHA256SUMS.txt")
+    binary = fetch(f"{base}/{asset}")
+    if hashlib.sha256(binary).hexdigest() != expected:
+        raise SystemExit(f"omp: {asset} of v{row['version']} does not match its SHA256SUMS.txt")
     folder = prefix / "omp"
-    if WINDOWS:
-        shell = shutil.which("pwsh") or shutil.which("powershell")
-        if not shell:
-            raise SystemExit("omp: PowerShell is not on PATH")
-        run([shell, "-NoProfile", "-NonInteractive", "-Command",
-             f"& ([scriptblock]::Create((Invoke-RestMethod {OMP_INSTALLER}.ps1))) -Binary -Ref ('v' + $env:OMP_REF)"],
-            {"PI_INSTALL_DIR": str(folder), "OMP_REF": row["version"]})
-        return folder / "omp.exe"
-    run(["sh", "-c", f'curl -fsSL {OMP_INSTALLER} | sh -s -- --binary --ref "v$0"', row["version"]],
-        {"PI_INSTALL_DIR": str(folder)})
-    return folder / "omp"
+    folder.mkdir(parents=True, exist_ok=True)
+    program = folder / ("omp.exe" if WINDOWS else "omp")
+    program.write_bytes(binary)
+    program.chmod(0o755)
+    return program
+
+
+def fetch(url):
+    with urllib.request.urlopen(url, timeout=300) as answer:
+        return answer.read()
 
 
 def agy(row, prefix):
