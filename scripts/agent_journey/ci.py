@@ -30,6 +30,11 @@ LOGINS = {
 
 # A stand-in asks no folder question, so its start anywhere says nothing of one.
 FIXTURE_UNTRUSTED = "not measured: a stand-in has no folder question; the login lane measures it"
+# Cells the C stand-in does not imitate: it answers no question from its
+# start's context, forks nothing, writes no title and no token usage. The
+# keyless lane measures them once it runs the pinned CLIs on a fake model.
+FIXTURE_UNIMITATED = {cell: "the C stand-in does not imitate it; the signed-in lane measures it"
+                      for cell in ("guidance_memory", "fork", "title", "usage")}
 
 # What a fixture stand-in cannot show, said in its report (PRD B27).
 FIXTURE_LIMITS = [

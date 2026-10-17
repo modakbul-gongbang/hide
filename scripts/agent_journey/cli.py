@@ -28,10 +28,10 @@ from agent_live_check.protection import (ConfigGuard, ProtectionError, beneath, 
 from agent_live_check.runtime import Runtime, clean_env
 from agent_live_check.sandbox import WriteSandbox
 
-from . import ci, cells, quota
+from . import ci, cells, memory, quota
 from .controller import Controller
 from .daemon import Daemon
-from .journey import Journey
+from .journey import STEPS, Journey, token
 from .local import (ROUTES, allow_one_shot_references, claude_session_folders, codex_login_refusal, operator_trust,
                     route, trust_codex, wrapper)
 from .report import save, table_lines
@@ -418,6 +418,9 @@ def main(argv=None):
     reader = checkout / "target/debug/examples/journey_conversation"
     if not reader.is_file():
         refuse("build_the_reader_first: bash scripts/verify-cargo.sh build -p hide-session --example journey_conversation")
+    card_writer = checkout / "target/debug/examples/journey_memory"
+    if not card_writer.is_file():
+        refuse("build_the_memory_card_writer_first: bash scripts/verify-cargo.sh build -p hide-memory --example journey_memory")
     slug = ("agent-journey-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
             + "-" + os.urandom(3).hex())
     run = (args.run_dir or checkout / "agents/runs" / slug).absolute()
@@ -476,8 +479,14 @@ def main(argv=None):
             if fixture_bin:
                 for key in ready:
                     ci.fixture_config(runtime, rows[key]["herdr_kind"])
+                    for name, reason in ci.FIXTURE_UNIMITATED.items():
+                        cells.settle(table, key, name, cells.NOT_MEASURED, reason)
             controller = Controller(runtime)
             report["controller"] = controller.start()
+            # Before any agent starts, so each start's guidance carries it.
+            card = report["memory"] = (memory.seed(runtime, daemon, root, card_writer, token())
+                                       if any(table[key][memory.CELL]["status"] == cells.PENDING for key in ready)
+                                       else None)
             for key in ready:
                 agent = next(row for row in report["agents"] if row["id"] == key)
                 journey = Journey(runtime, daemon, controller, table, rows[key], root, agent, reader,
@@ -488,8 +497,8 @@ def main(argv=None):
                                          else {"args": [], "env": ci.route_names(rows[key]["herdr_kind"], fixture_bin)}),
                                   model=rows[key]["model_flag"] and models.get(key),
                                   quota=quota_rows)
-                for step in ("start", "letter", "sleep_wake", "resume"):
-                    journey.step(step)
+                for step in STEPS:
+                    journey.step(step, *((card,) if step == memory.CELL else ()))
                 untrusted_reason = (ROUTES[rows[key]["herdr_kind"]]["untrusted"] if local else
                                     ci.FIXTURE_UNTRUSTED if fixture_bin else None)
                 if untrusted_reason:

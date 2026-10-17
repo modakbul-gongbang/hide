@@ -335,7 +335,14 @@ Every prompt asks only for a fresh token (`Reply with exactly <token>`), so a mo
 | `sleep_wake` | After the daemon's Sleep event the row reads asleep, and after Wake it runs again |
 | `resume` | The operator opens the woken agent (`focus_pane`), its terminal takes this screen's keys, a typed token prompt is answered in the session it slept in, the row reads idle after that answer, and Herdr reports the same session id |
 | `start_untrusted` | A start in a repository the account never trusted, with no preparation, passes once Hide has recorded the trust of the worktree it made |
+| `integration` | This Mac's kit row in the snapshot reads Hide's hook and Herdr's integration installed (the kit calls Herdr's current) at locations inside the HOME the agent reads its configuration from, and Herdr reports the agent's session as `herdr:<kind>` |
+| `guidance_memory` | A rule card the run wrote into its private state before any start (`hide-memory`'s `journey_memory` example) carries a fresh token in its title, and a turn asked `Run no tool. Reply with exactly the uppercase code in the title of your only Project Memory card.` is answered with it; the question shares no word with the card, so the card came from the start's index and not from prompt-time Memory |
+| `fork` | After the journey sends Fork agent's `fork_pane` as the pane menu does, a row whose `forked_from` names the source shows a session of its own, Herdr reports that session as `herdr:<kind>`, and `hide agent list` registers the fork with no parent and the source as its origin |
+| `title` | The row's `identity_label` reads a title other than the agent's name (the contract's `untitled`); whether Hide's label sentences reached the row is reported beside it |
+| `usage` | With the usage window hint the shell sends while it is on screen, Hide's usage reads the agent's consumption with model calls in it; the run's HOME holds no other session, so they are the run's |
 
+The journey runs them in this order, each from the state the last left: `start` and `reply`, `integration`, `guidance_memory`, `letter`, `fork` (before Sleep, while the source still runs the session it copies), `sleep_wake`, `resume`, `title`, `usage`, then `start_untrusted`.
+Only `start`, `start_untrusted`, `guidance_memory`, `letter` and `resume` start a turn; the others judge what Hide shows of them and spend no model request.
 The cells an adapter declares come from `contracts/agent-journey.json`, which `hide-agent-adapter` generates and its contract test keeps current ([contracts/README.md](../contracts/README.md#agent-journey)).
 It does not prove the desktop window, a physical keyboard, an agent other than the declared rows, or a model, provider or CLI version other than the ones its report names.
 
@@ -345,6 +352,7 @@ Every cell reads `pass`, `fail`, `not measured`, `N/A` or `excluded`, with a rea
 - `N/A` is a cell the adapter does not declare.
 - `not measured` is a cell the run could not reach without touching the operator's state or spending what it must not: a CLI that is missing or signed out (the journey never signs in), a Codex login copy older than 7 days, a repository Claude was never trusted in, a cell whose earlier step failed or was not measured (`prerequisite cell failed (<cell>)`, `prerequisite cell not measured (<cell>)`), a stopped run, and `not built in this cycle`.
   Claude's never-trusted start is `not measured` locally, since it would leave an entry in the operator's shared `~/.claude.json`; CI mode measures it in its disposable HOME.
+  Claude's `usage` is `not measured` locally too: Claude writes its sessions under the operator's HOME for its keychain sign-in, and the candidate's usage ledger reads only its own HOME.
 - `excluded` is an agent the operator took out of the journey, with the date: Cursor, `excluded: operator decision 2026-10-17`.
   `--agents cursor` is refused, and an excluded cell counts toward no exit code and no release's list of blanks.
 
@@ -369,7 +377,7 @@ Never run a cargo build or test while it runs: either relinks `target/debug` und
 
 `.github/workflows/agent-journey.yml` runs the journey with `--mode ci`, where each agent runs in the runner's disposable HOME with no sandbox, on Linux and macOS.
 Windows has neither lane yet: the harness under the journey is Unix-only, and [INSTALL.md](INSTALL.md#what-each-system-supports) says what closes it.
-- The stand-in lane (`fixture`) puts the compiled `web/e2e/shims/claude-shim.c` in place of Claude Code and Codex with `--fixture-bin` and passes only when both pass `start`, `reply`, `letter`, `sleep_wake` and `resume`.
+- The stand-in lane (`fixture`) puts the compiled `web/e2e/shims/claude-shim.c` in place of Claude Code and Codex with `--fixture-bin` and passes only when both pass `start`, `reply`, `letter`, `sleep_wake` and `resume`, and fail none; `integration` is measured there too, and `guidance_memory`, `fork`, `title` and `usage` read `not measured`, since the C stand-in imitates none of them.
   The stand-in runs the hook commands the kit installed and writes each CLI's session file format, so a change that breaks the journey's verdicts, the hooks' path into Hide or the cleanup fails it; its report is marked `fixture` with what a stand-in cannot show, and is never a release's agent evidence.
   `pr.yml` runs it on Linux when the journey's code or the shims change (`scripts/ci-plan.py`), `nightly.yml` and `release.yml` every time.
 - The signed-in lane (`login`, nightly and release) signs each agent in with the CI account's key: `HIDE_CLAUDE_API_KEY` as Claude's `ANTHROPIC_API_KEY`, `HIDE_CODEX_API_KEY` through `codex login --with-api-key`.

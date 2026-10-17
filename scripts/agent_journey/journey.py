@@ -16,7 +16,7 @@ import time
 from agent_live_check.processes import ProcessError
 from agent_live_check.protection import write_private
 
-from . import cells
+from . import cells, fork, kit, memory, title, usage
 from .ci import redact
 from .quota import model_requests, spent_quota
 
@@ -32,6 +32,12 @@ VIEW_COLS, VIEW_ROWS = 120, 40
 # Refusals the product answers while the same spawn is still under way, each
 # saying to ask again with the same intent.
 RETRY = ("request_timeout", "spawn_busy", "native_identity_unavailable")
+# The cells each measured by a module of its own, judging what Hide shows.
+MEASURES = {module.CELL: module.measure for module in (kit, memory, fork, title, usage)}
+# The steps of one agent's journey in order, each from the state the last
+# left: the cells that only read what Hide shows come where that state is,
+# the fork before Sleep so its source still runs the session it copies.
+STEPS = ("start", "integration", "guidance_memory", "letter", "fork", "sleep_wake", "resume", "title", "usage")
 
 
 def created_branch(runtime, repository, branch, worktree):
@@ -177,11 +183,14 @@ class Journey:
         """Runs one step; a transport failure or a bound it reached fails the
         step's open cell with that reason, and cancellation stops the run."""
         try:
-            getattr(self, name)(*args)
+            if name in MEASURES:
+                MEASURES[name](self, *args)
+            else:
+                getattr(self, name)(*args)
         except ProcessError as error:
             if self.runtime.owner.cancelled.is_set():
                 raise
-            for cell in self.STEP_CELLS[name]:
+            for cell in self.STEP_CELLS.get(name, (name,)):
                 if self.table[self.id][cell]["status"] == cells.PENDING:
                     self.settle(cell, (cells.FAIL, str(error)))
                     break
