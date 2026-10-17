@@ -181,7 +181,7 @@ A quiet row also waits while a pull request it is responsible for has checks run
 A pull request counts while it is open and its checks rollup is pending with at least one check actually running (`GhCheck::is_running`): a required check that has never reported (`EXPECTED`) may never run, so a pull request whose only pending checks are expected holds nothing.
 A project whose GitHub status is stale, unavailable or unreadable holds nothing either, because its last answer may be long over.
 Each exclusion writes one `checks_wait.excluded` diagnostic per pane, pull request and reason (`stale` or `expected_only`), so the log says why a row did not wait.
-A device's rows link no pull request, so they never wait on checks.
+A device's rows never wait on checks: `lay_checks` places only this machine's panes, so a pull request a node reads for its own project reaches that node's rows through the link record and its PR card (`links.rs::link_projects`, `open_links`), never as a wait, and a device this core does not read links none.
 The wait is `wait: checks` with `checks_wait`, the pull request's number, on the row (`own_wait` takes it after a background task and before a reply), and its line, with no sentence, says `대기 · CI · PR #N`.
 
 A turn that ends having just printed a pull request's address is not a stop until GitHub has answered for it (D-09): the sighting sets off a GitHub read (`projects.rs`, `Sighted.owed`), and until that read lands or fails the row waits on that pull request the same way, so a turn that opened a pull request with checks about to start is never announced finished first.

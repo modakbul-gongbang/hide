@@ -2802,7 +2802,7 @@ impl Runtime {
                 {
                     self.record_created_device_tab(target_id, tab_id, cwd);
                 }
-                self.acknowledge_memory_navigation(target_id, request_id);
+                self.acknowledge_choice(target_id, request_id);
                 let mut receipt = String::new();
                 if let Some(tab_id) = created_tab_id.as_deref() {
                     receipt.push_str(&format!("; created tab {tab_id}"));
