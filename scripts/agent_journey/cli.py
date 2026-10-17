@@ -423,16 +423,16 @@ def main(argv=None):
     run = (args.run_dir or checkout / "agents/runs" / slug).absolute()
     if run.exists() or run.is_symlink() or not beneath(run, checkout / "agents/runs"):
         refuse("report_directory_must_be_new_and_local_only")
-    private_directory(run)
     root = measured_repository(checkout)
     run_id = slug.removeprefix("agent-journey-") if not args.run_dir else run.name
-    rows = {row["id"]: row for row in contract}
-    table = cells.plan(contract, selected)
     measured = [key for key in selected if key in cells.BUILT_AGENTS]
     # The cleanup deletes the run's branch names, so none may be there before it starts.
     taken = taken_branches(root, [f"journey/{run_id}-{key}" for key in measured])
     if taken:
         refuse(f"journey_branch_exists: {', '.join(taken)} is in {root}; remove it or choose another --run-dir")
+    private_directory(run)
+    rows = {row["id"]: row for row in contract}
+    table = cells.plan(contract, selected)
     report = {"format": 1, "mode": args.mode, "fixture": bool(fixture_bin), "selected": selected, "models": models,
               "herdr": {}, "agents": [], "table": table, "systems": systems(args.mode), "configuration": {},
               **({"fixture_limits": ci.FIXTURE_LIMITS} if fixture_bin else {}),
