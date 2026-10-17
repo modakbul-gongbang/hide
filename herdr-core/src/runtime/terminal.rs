@@ -403,21 +403,26 @@ impl Runtime {
             .map(|pane| (pane.pane_id.as_str(), pane))
             .collect();
         for (workspace, offline) in local.chain(remote) {
+            let wait = self.helper_link_wait(&workspace.device_id);
             for pane in workspace
                 .checkouts
                 .iter()
                 .flat_map(|checkout| &checkout.tabs)
                 .flat_map(|tab| &tab.panes)
             {
+                let header = crate::agent_state::header::of(
+                    pane,
+                    agents.get(pane.id.as_str()).copied(),
+                    transports.get(pane.id.as_str()).copied(),
+                    workspace,
+                    offline,
+                );
                 headers.insert(
                     pane.id.clone(),
-                    crate::agent_state::header::of(
-                        pane,
-                        agents.get(pane.id.as_str()).copied(),
-                        transports.get(pane.id.as_str()).copied(),
-                        workspace,
-                        offline,
-                    ),
+                    match wait {
+                        Some(wait) => crate::agent_state::header::waiting_on_link(header, wait),
+                        None => header,
+                    },
                 );
             }
         }

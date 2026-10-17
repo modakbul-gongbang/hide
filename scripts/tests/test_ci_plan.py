@@ -521,6 +521,9 @@ def runner_jobs(block):
         shards = int(re.search(r"\n      shards: (\d+)", block).group(1))
         # With more than one shard a `build` job precedes them.
         return shards + (1 if shards > 1 else 0)
+    if "uses: ./.github/workflows/desktop-e2e.yml" in block:
+        # Each shard builds in place.
+        return int(re.search(r"\n      shards: (\d+)", block).group(1))
     if "uses: ./.github/workflows/os-contract.yml" in block or "uses: ./.github/workflows/agy-contract.yml" in block:
         return len(json.loads(re.search(r"systems: '(\[[^']*\])'", block).group(1)))
     if "uses: ./.github/workflows/package.yml" in block:
@@ -610,7 +613,12 @@ class Workflows(unittest.TestCase):
     def test_the_most_a_pull_request_starts_is_the_count_testing_md_states(self):
         jobs = pr_jobs()
         most = 2 + sum(runner_jobs(jobs[lane]) for lane in ci.LANES)
-        self.assertLess(most, 23, "the run before the macOS and merge work started 23 jobs")
+        # The 2026-10-05 run started 23 jobs. Since then the macOS desktop
+        # suite's second shard and the fifth and sixth web shards were added
+        # because the suites outgrew their shards' step caps, which a smaller
+        # queue does not fix (docs/TESTING.md, "Balancing the e2e shards"); a
+        # job beyond these is a new decision, made with this number.
+        self.assertLessEqual(most, 25, "a full run starts more jobs than the e2e shards that keep their steps under the cap need")
         testing = (ROOT / "docs/TESTING.md").read_text()
         self.assertIn(f"starts at most {most} jobs", testing)
 

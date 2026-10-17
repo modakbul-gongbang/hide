@@ -1451,9 +1451,10 @@ pub(crate) mod tests {
             .iter_mut()
             .find(|status| status.target_id == device)
             .expect("registered device status");
+        // A Reconnect keeps the last session on screen until the new
+        // coordinator publishes its own, so only the connection starts over.
         status.state = "not_connected".into();
         status.message = None;
-        assert!(status.session.is_none());
     }
 
     pub(crate) fn fixture(

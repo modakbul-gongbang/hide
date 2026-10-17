@@ -844,10 +844,15 @@ async fn prepare(
     let Some(own_socket) = own_socket else {
         return Err(failed);
     };
-    let own_label = crate::host_name().unwrap_or_else(|| source.node.clone());
-    let (change, ids) =
-        driver::forward_change(&source, &env.home, &own_label, own_socket, target_socket)
-            .map_err(|failure| fail(CheckId::Connection, format!("{failure:?}")))?;
+    let host_name = crate::host_name();
+    let (change, ids) = driver::forward_change(
+        &source,
+        &env.home,
+        host_name.as_deref(),
+        own_socket,
+        target_socket,
+    )
+    .map_err(|failure| fail(CheckId::Connection, format!("{failure:?}")))?;
     // A retry keeps its intent, so the copy the device holds from it is
     // checked by digest rather than sent again.
     let intent = retry

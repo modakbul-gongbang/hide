@@ -1396,6 +1396,9 @@ The top row's icons are Overview and Open server; the Files badge is on the rail
 Retired `toggle_sidebar_view`, `project_home` and `sidebar_agents` (the removed Agents overview) stored bindings are ignored without losing other valid bindings, with a diagnostic.
 
 A device that is not connected shows the top row and its reconnect view with no tab strip.
+A device's Workspace that lost its connection keeps the last state on screen under one line, `<device> is not connected. Showing the last state it reported; nothing is sent until it reconnects.`, with `Reconnect`; the line names a refused host key or sign-in by its class (`Host key changed`, `Sign-in refused`) with what to do in its tooltip, and never carries the words the connection failed with, which are the device row's in Settings and the diagnostic log's.
+`Reconnect` pressed while the device still does not answer is a new attempt, not a new device: the last state stays, the Overview's age still says when it first stopped answering, and a Reinstall queued for it waits for the link.
+A pane of a device whose link comes back by itself reads `reconnecting…` in its band and returns with the link (the device's Herdr answering again retries the link at once); `unavailable` is left for a pane that waits for the operator or has no terminal service.
 The list shows the device's Needs You and Done and projects with their operator-owned roots.
 Needs You and Done stand still above the projects: the project list scrolls under them and never carries them off, and past half the sidebar's height they scroll on their own.
 Opening a raised row that leaves its section, a Done row once read, moves the next row up into its place, so the operator opens one after another from the same spot while the project list brings each one's tree row into view below (`web/e2e/projects-sidebar.spec.ts`).
@@ -1517,11 +1520,12 @@ Add project opens one centered `Add a project` dialog from each of its entry poi
 With projects registered the Projects title's + is the only one on screen; with none it and the empty Home's button are the two (PRD first-run-onboarding B51, B52).
 Only the desktop app offers it, because the native folder picker is how a local project is added: a plain browser tab draws none of those entry points and has no chord for it.
 The Host selector lists this Mac and every registered device, and starts on the focused device.
+This Mac here is the machine the window runs on, which on a window of a machine whose core runs elsewhere is not the core's (`hostWays` in `web/src/addProject.ts`).
 On this Mac the primary `Browse folder` row holds the keyboard, so Enter activates it; it opens macOS's own folder picker as a sheet on the window, which can also make a new folder, and a cancelled pick leaves the dialog as it was.
 The chosen folder is registered with one `create_workspace`; the dialog closes when the project appears, and says `Adding <folder>…` until then.
 A refusal stays inside the dialog as an alert naming the folder, and the dialog stays open for another pick: `already_registered` from the shell's own registrations, before anything is sent, and `outside_home`, `home_root`, `not_found`, `not_a_directory` or `invalid_path` from hided's `$HOME` line, or the core's own error.
-A device's folders are not this Mac's to browse, so on a device the dialog shows a `~/` path field instead, sent to that device's helper through the same event, with its refusal shown the same way.
-On this Mac an `Other ways to add` group sits under Browse folder, one row per way, each opening its own view of the same dialog with a `Back` that returns to the first view and puts the keyboard on the row it came from.
+Another machine's folders are not this window's to browse, so on a device, the core's machine seen from a node's window included, the dialog shows a `~/` path field instead, sent to that machine's node through the same event, with its refusal shown the same way.
+On the core's machine, the one a new project can be made on, an `Other ways to add` group sits under Browse folder or the path field, one row per way, each opening its own view of the same dialog with a `Back` that returns to the first view and puts the keyboard on the row it came from; on a node's window it sits under the core's machine and its views offer no folder picker, since the picker would show this machine's folders.
 `Clone from URL` (web owner: `web/src/CloneFromUrl.tsx`) shows a `Git URL` field that holds the keyboard, and a `Parent folder` field with a button that opens the same native folder picker; the parent starts beside the most recently added local project, else at home (`~`).
 The folder the URL names is shown as `Clones into a new folder <name>`, and hided is asked whether it is free under that parent, so `Clone` is enabled only for an https, ssh (`git@host:path`, `ssh://`) or `file://` URL, a parent inside home, and a name nothing holds there yet (`already_exists` covers even an empty folder, since a clone never writes into a folder it did not make); each refusal is shown inline under its field.
 While the clone runs the dialog shows Git's stage and percent with a progress bar and a `Cancel` button, and the fields and `Back` wait; closing the dialog leaves the clone running, and opening it again shows it.
@@ -1771,6 +1775,7 @@ The project identity is scoped by device, following the sidebar's Project > Work
 Both the recent-panel and project switchers show at most nine rows around the highlight.
 Project rows show the last surface and checkout; panel rows show their project and checkout (collapsed to the checkout alone when both share a name) and their surface type.
 A row's device chip follows its detail line, truncated before it would crowd the detail, with the status mark, title and checkout intact; a device absent from the registration map is named by its actual remote ID rather than presented as local.
+Every device chip on an agent, a child or a descendant names its machine as the device rail does (`machineName`): the window's own machine is This Mac whatever name the core registered it under.
 A panel row whose tab holds exactly one agent pane is titled by that agent's identity with its status mark; a tab with no agent or several keeps the Herdr tab label.
 Recent Panels and Recent Projects history is session-local and retains only existing projects and surfaces; a deleted highlight moves to the next surviving entry without reordering the held cycle, and if none survives, the cycle cancels and keeps the current selection.
 
@@ -1782,7 +1787,7 @@ This section supersedes PRD home-device-rail rows D-10, D-11, D-27, B3, B4 and B
 Quick device-rail-slack then narrowed the rail to `--size-rail` (48), ran it the sidebar's full height, took the names off the tiles and left Working to the session rows.
 
 This Mac is this document's name for the machine the core runs on; the screen names it as its system does, This Mac on macOS, This PC on Windows and This computer on Linux, in the interface language (`common.thisMac`, `common.thisPc`, `common.thisComputer`: `이 Mac`, `내 PC`, `이 컴퓨터` in Korean).
-The core sends no word for it: its device row has no `label`, only its system in `host.platform`, and every surface that names it, the sidebar title, the rail, Home, Settings, the Overview's device switch, the start panel, ⌘K and the phone's start sheet, words it from that system (`systemMachineKey` and `machineName` in `web/src/screenMachine.ts`), so one screen never shows it in two languages.
+The core sends no word for it: its device row has no `label` but the one it kept from a move (below), only its system in `host.platform`, and every surface that names it, the sidebar title, the rail, Home, Settings, the Overview's device switch, the start panel, ⌘K and the phone's start sheet, words it from that system (`systemMachineKey` and `machineName` in `web/src/screenMachine.ts`), so one screen never shows it in two languages.
 The rail is always shown, even when This Mac is the only device: the sidebar's full-height left column, with the single sidebar list to its right and the device title above it in the window's top row, holding This Mac, each registered device in the core's order, and a `+` (`기기 추가`, a dashed tile) directly under the last device tile.
 The stored sidebar width stays the content column's; the rail adds `--size-rail` to its left while it shows, and the drag edge sits on the content column.
 Each tile is a 32 rounded square with no name under it: This Mac draws the laptop glyph and a device the monogram of its name, the first letter of each of its first two words, split at spaces, dots, dashes and underscores (`Mac mini` → `Mm`, `build-box` → `Bb`, `mini` → `M`); the tile's hint, shown to its right, is the name followed by `연결 안 됨` or each count it marks in full (`mini · Needs You 12 · Done 1`), since the pill stops at `9+`.
@@ -1803,10 +1808,11 @@ The View menu of the desktop app carries `Toggle device rail` (`toggle_device_ra
 The hidden state is the core's `ui_state.device_rail_visible`, kept beside `left_sidebar_visible`, so it survives a restart.
 
 A device's Workspace in front wears the device color, `--device-remote`: a band at the start of the top row's Workspace path with the server glyph and the device's name, truncated, and a border of the same color around its panes; this machine's Workspace has neither.
+Which machine is a device is the window's to say (`awayDevice` in `web/src/screenMachine.ts`): on a window of a machine whose core runs elsewhere, its own Workspaces wear neither and the core's machine's wear both.
 
 A machine whose core runs on another machine (ARCHITECTURE.md, A core on another machine) is a device on that core's rail like any other, named by its host name.
 Its `다시 연결` is answered that the machine reconnects by itself, and removing it ends its connection until it attaches again; neither adds a state or a line of its own.
-The window's own machine is always the first tile and the one named This Mac (`이 Mac`), the laptop glyph (`web/src/screenMachine.ts`, `windowFirst`); on a window of a machine whose core runs elsewhere, the core's machine follows it, named by the name its machine gives itself.
+The window's own machine is always the first tile and the one named This Mac (`이 Mac`), the laptop glyph (`web/src/screenMachine.ts`, `windowFirst`); on a window of a machine whose core runs elsewhere, the core's machine follows it, named by the name the operator registered it under before the core moved to it, which the core keeps (`machine_label`, ARCHITECTURE.md, Moving the core), and by the name its machine gives itself when it has none.
 The tile of the machine that runs the core wears a crown notched into its bottom-left corner (`--size-rail-crown` in a `--size-rail-badge` notch, the corner the `×` and the marks leave free), and its hint adds `core 실행 중`; the crown shows only once a machine dials in to a core, that is on a node's window or while any device dials in, since with one core and its devices nothing needs telling apart (PRD core-host-node-move B2).
 
 A window on a machine whose core runs elsewhere shows its core's state and takes its strip, in the place and size of the connection badge, when the core cannot draw it (W1 to W3, B16):
@@ -2001,6 +2007,7 @@ A stale result is checked against the live result set before execution.
 ### File search
 
 ⌘P lists what hided's index ranked for the typed query, with the same focused query field and first-result selection, and never executes results from a previous query or checkout while its asynchronous index is updating.
+The index follows files made or removed after it was built, on this machine and on a device: opened five seconds or more after its last walk, ⌘P lists the old files at once and says `Indexing…` only while it has none, and the list updates in place when the new walk lands.
 ↵ opens the highlighted file; ⌘↵ opens it beside the active View area, and the footer hint says so.
 
 ## Pane header lineage and ownership
@@ -2091,13 +2098,13 @@ All pages use the four interface languages, existing settings rows, system contr
 
 Settings opens as one modal, from ⌘,, the sidebar's gear and the desktop menu's Settings…, about 880 wide (`--size-settings-sheet-w`) and as wide and tall as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side (PRD settings-left-nav B1, B13).
 Its left is a list of pages and its right the chosen page; the list keeps its width (`--size-settings-nav-w`) and its place while only the page scrolls, down to the smallest window, 720×480 (B12, B13).
-The list reads, top to bottom: the group name `App` with General, Notifications, Usage, Devices and Shortcuts, the group name this window's machine goes by (`This Mac`, as the sidebar calls it) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
+The list reads, top to bottom: the group name `App` with General, Notifications, Usage, Devices and Shortcuts, the group name the core's machine goes by (`This Mac`, as the sidebar calls it, and its name on a window of a machine whose core runs elsewhere, since Hide AI, Mobile and GitHub are the core's machine's) with Agents, Hide AI, Mobile and GitHub, and About apart at the list's foot (B2).
 Its top inset uses `spacing-sm` and group labels use `spacing-xs` above and below, so the additional Usage page fits at 720×480 with the default Interface text without shrinking row targets.
 When larger Interface text makes the list overflow, its grouped pages scroll independently while About stays pinned at the foot; every page remains reachable by pointer or keyboard, and scrolling either the list or the page does not move the other.
 Each page has its mark and its name, the names are the same in every language, and a group name is a label, never a page.
 The chosen page has the selection fill; Up and Down move through the list and show each page as they go, Home and End reach its ends, and Tab leaves the list for the close button (and a remote device's chip before it) and then the page, which takes focus itself with a ring so the keyboard can scroll it before reaching its first control (B3).
 A page has its title and no description line (B4).
-While a remote device is selected, a small device chip beside the page title says that selecting it changes where files, Git and panes run, not where Settings are kept; with This Mac selected the chip is absent and no sentence about ownership is shown.
+While another machine than the window's is selected, a small device chip beside the page title names it and says that selecting it changes where files, Git and panes run, not where Settings are kept; with This Mac selected the chip is absent and no sentence about ownership is shown, and on a window of a machine whose core runs elsewhere This Mac is that machine and the core's machine has the chip.
 Esc and the close button close Settings and leave the screen under it as it was (B14).
 Settings opens on General unless the way in names a page: Explorer's and a device row's Add device open Devices with its Add dialog in front, Memory's and Factory's Hide AI links open Hide AI, and the first-run wizard's phone link opens Mobile (B11).
 
@@ -2187,6 +2194,7 @@ The list is a radio group: the arrow keys move between the Hosts that can be cho
 Advanced, closed at first, holds `What Hide installs there` in three lines (the helper and the `hide` command, hooks and Herdr integrations for the agents turned on, and that removing the device takes them off) and the Herdr socket; the description above the list says Hide installs its helper on the device, so adding is still the one place the kit is agreed to (device-parity D-12).
 The ⋯ menu offers Select, Connection details…, Allow and install… (a device whose helper is not allowed) or Revoke helper… (one that is), and, after a separator, Remove…; This Mac's menu has Select and Connection details… only.
 Revoke helper… and Remove… ask before they act, with the same confirmations and events as before; no button is focused when a confirmation opens.
+Revoking the helper stops the device's terminals with its link, and the Revoke confirmation says so: its panes read `helper not allowed · allow it in Settings > Devices` in their band at once, take no key, and come back when Allow and install… gives the link again.
 Connection details is a dialog with the helper's state and folder, the helper program, the folder of the `hide` command and the SSH host key the consent is bound to, then every part of Hide's kit with a mark, its name and where it is when installed or its state and reason when not.
 Installed is ✓, not on this machine is –, turned off is ○, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology, and a part that is not on the machine says so once, without repeating its reason.
 A healthy kit is on no row.
@@ -2199,7 +2207,7 @@ Removing a device asks once, names in one line what comes off that device (with 
 When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
 The page has no per-device agents line, no coordination retirement row and no Codex per pane row: the kit no longer turns Codex's shared daemon off, and a machine's agents are on the Agents tab.
 
-The rows put the window's own machine first, named This Mac, and name the core's machine by the name it gives itself on a window of another machine (PRD core-host-node-move B2, `web/src/screenMachine.ts`).
+The rows put the window's own machine first, named This Mac, and name the core's machine on a window of another machine by the name it was registered under before the core moved to it, else the name it gives itself (PRD core-host-node-move B2, `web/src/screenMachine.ts`).
 The row of the machine that runs the core always wears a `core` badge with the hint `core 실행 중`, a one-Mac setup included, unlike the rail's crown (Q11 of the plan; B1 keeps the one-Mac rail unchanged).
 Test and Retry are offered for a device this core dials, never for a machine that dials in, which has no SSH alias here.
 A connected device this core dials offers `core를 이 기기로 옮기기…` in its ⋯ menu, dimmed with `연결 안 됨` while it is not connected; a window of a machine whose core runs elsewhere offers it on no row.
@@ -2305,7 +2313,7 @@ Every value is the core's `status.background_ai`; the tab sends `ai_settings` ev
 
 ### Settings > Mobile
 
-Mobile is a page of Settings' This Mac group, after Hide AI.
+Mobile is a page of Settings' machine group, after Hide AI; Tailscale runs on the core's machine, so a failing step and the serve entry line name that machine (`Tailscale isn't installed on Mac mini` on a window of another machine, `This Mac` on its own).
 Its switch, 폰에서 hide 열기, is off at first, and its one-line description says it works over Tailscale and only inside the tailnet (PRD settings-cleanup B59).
 While the switch is off hide runs no Tailscale command.
 Turned on, the three Mac checks (Tailscale installed, logged in, MagicDNS and HTTPS on for the tailnet) fold into one line, `Tailscale is ready`, once they all pass (B57); a failing step shows only itself with a warning and its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link) and nothing for the steps that passed or still wait.
