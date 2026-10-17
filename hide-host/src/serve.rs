@@ -1210,17 +1210,35 @@ pub fn handle_with_progress(
                     .map_err(|error| HostError::new(ErrorCode::Io, error.to_string()))?,
             )
         }
-        Call::AntigravityTrust { path, trusted } => {
-            let home = env.home("antigravity_trust_home_unavailable")?;
+        Call::AgentTrust {
+            agent,
+            path,
+            trusted,
+        } => {
+            use hide_agent_hooks::folder_trust::{self, Agent, Tools};
+            let agent = hide_agent_adapter::adapter(&agent)
+                .and_then(|adapter| adapter.start)
+                .and_then(Agent::of)
+                .ok_or_else(|| {
+                    HostError::new(ErrorCode::InvalidPath, "agent_trust_agent_unknown")
+                })?;
+            let home = env.home("agent_trust_home_unavailable")?;
             let home = Path::new(&home);
             let folder = antigravity_folder(&path).ok_or_else(|| {
-                HostError::new(ErrorCode::InvalidPath, "antigravity_trust_path_invalid")
+                HostError::new(ErrorCode::InvalidPath, "agent_trust_path_invalid")
             })?;
             let folder = folder.as_path();
+            let codex = (agent == Agent::Codex)
+                .then(|| hide_ai::resolve_binary(Path::new("codex")))
+                .flatten();
+            let tools = Tools {
+                codex: codex.as_deref(),
+                stop: &env.stop,
+            };
             if trusted {
-                hide_agent_hooks::antigravity_trust::trust_worktree(home, folder)
+                folder_trust::trust_worktree(agent, home, folder, tools)
             } else {
-                hide_agent_hooks::antigravity_trust::forget(home, folder).map(drop)
+                folder_trust::forget(agent, home, folder, tools).map(drop)
             }
             .map_err(|failure| HostError::new(ErrorCode::Io, failure.message()))?;
             to_value(())

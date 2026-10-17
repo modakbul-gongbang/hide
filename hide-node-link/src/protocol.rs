@@ -162,7 +162,13 @@ use crate::error::HostError;
 /// row may wait on its pull request's checks (`wait: checks`) and its status
 /// codes add `unfinished` (status-marks-simplify). A screen relayed through a
 /// node on 40 would draw none of it, so it is refused at Hello and upgraded.
-pub const PROTOCOL_VERSION: u32 = 41;
+/// 42: `antigravity_trust` becomes `agent_trust`, which names the agent whose
+/// folder trust it records or takes out, for Claude Code and Codex as for agy
+/// (docs/agent-hooks.md, Folder trust for the worktrees Hide makes). A helper
+/// on 41 would refuse the call, so a Claude Code or Codex start in a worktree
+/// Hide made on that device would wait at the agent's own trust question; it
+/// is refused at Hello and upgraded.
+pub const PROTOCOL_VERSION: u32 = 42;
 
 /// What agy's index held in a checkout before Hide typed `/fork`
 /// ([`Call::AntigravityForkMark`]).
@@ -564,10 +570,12 @@ pub enum Call {
         cwd: String,
         mark: AntigravityForkMark,
     },
-    /// Records (`trusted`) or takes out agy's trust of a worktree Hide made,
-    /// in the node account's agy settings
-    /// (`hide_agent_hooks::antigravity_trust`).
-    AntigravityTrust {
+    /// Records (`trusted`) or takes out an agent's trust of a worktree Hide
+    /// made, in the node account's own settings of that agent
+    /// (`hide_agent_hooks::folder_trust`). `agent` is the start's kind, as
+    /// the adapter names it.
+    AgentTrust {
+        agent: String,
         path: String,
         trusted: bool,
     },
@@ -885,7 +893,7 @@ impl Call {
             | Self::AgentInstalled { .. }
             | Self::AntigravityForkMark { .. }
             | Self::AntigravityFork { .. }
-            | Self::AntigravityTrust { .. }
+            | Self::AgentTrust { .. }
             | Self::ShellIntegration
             | Self::ProcessStarts { .. }
             | Self::ProcessDescendants { .. }

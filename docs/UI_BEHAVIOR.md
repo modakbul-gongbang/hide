@@ -1396,6 +1396,9 @@ The top row's icons are Overview and Open server; the Files badge is on the rail
 Retired `toggle_sidebar_view`, `project_home` and `sidebar_agents` (the removed Agents overview) stored bindings are ignored without losing other valid bindings, with a diagnostic.
 
 A device that is not connected shows the top row and its reconnect view with no tab strip.
+A device's Workspace that lost its connection keeps the last state on screen under one line, `<device> is not connected. Showing the last state it reported; nothing is sent until it reconnects.`, with `Reconnect`; the line names a refused host key or sign-in by its class (`Host key changed`, `Sign-in refused`) with what to do in its tooltip, and never carries the words the connection failed with, which are the device row's in Settings and the diagnostic log's.
+`Reconnect` pressed while the device still does not answer is a new attempt, not a new device: the last state stays, the Overview's age still says when it first stopped answering, and a Reinstall queued for it waits for the link.
+A pane of a device whose link comes back by itself reads `reconnecting…` in its band and returns with the link (the device's Herdr answering again retries the link at once); `unavailable` is left for a pane that waits for the operator or has no terminal service.
 The list shows the device's Needs You and Done and projects with their operator-owned roots.
 Needs You and Done stand still above the projects: the project list scrolls under them and never carries them off, and past half the sidebar's height they scroll on their own.
 Opening a raised row that leaves its section, a Done row once read, moves the next row up into its place, so the operator opens one after another from the same spot while the project list brings each one's tree row into view below (`web/e2e/projects-sidebar.spec.ts`).
@@ -2001,6 +2004,7 @@ A stale result is checked against the live result set before execution.
 ### File search
 
 ⌘P lists what hided's index ranked for the typed query, with the same focused query field and first-result selection, and never executes results from a previous query or checkout while its asynchronous index is updating.
+The index follows files made or removed after it was built, on this machine and on a device: opened five seconds or more after its last walk, ⌘P lists the old files at once and says `Indexing…` only while it has none, and the list updates in place when the new walk lands.
 ↵ opens the highlighted file; ⌘↵ opens it beside the active View area, and the footer hint says so.
 
 ## Pane header lineage and ownership
@@ -2187,6 +2191,7 @@ The list is a radio group: the arrow keys move between the Hosts that can be cho
 Advanced, closed at first, holds `What Hide installs there` in three lines (the helper and the `hide` command, hooks and Herdr integrations for the agents turned on, and that removing the device takes them off) and the Herdr socket; the description above the list says Hide installs its helper on the device, so adding is still the one place the kit is agreed to (device-parity D-12).
 The ⋯ menu offers Select, Connection details…, Allow and install… (a device whose helper is not allowed) or Revoke helper… (one that is), and, after a separator, Remove…; This Mac's menu has Select and Connection details… only.
 Revoke helper… and Remove… ask before they act, with the same confirmations and events as before; no button is focused when a confirmation opens.
+Revoking the helper stops the device's terminals with its link, and the Revoke confirmation says so: its panes read `helper not allowed · allow it in Settings > Devices` in their band at once, take no key, and come back when Allow and install… gives the link again.
 Connection details is a dialog with the helper's state and folder, the helper program, the folder of the `hide` command and the SSH host key the consent is bound to, then every part of Hide's kit with a mark, its name and where it is when installed or its state and reason when not.
 Installed is ✓, not on this machine is –, turned off is ○, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology, and a part that is not on the machine says so once, without repeating its reason.
 A healthy kit is on no row.
