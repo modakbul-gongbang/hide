@@ -128,16 +128,17 @@ jobs:
       APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
 
   # The agent journey on the release's commit: the stand-ins on Linux and
-  # macOS, and Claude Code and Codex signed in with the CI keys when they are
-  # set (docs/VERIFICATION.md, Agent journey). A failed cell, isolation or
-  # cleanup stops the release; an agent without its key is a notice.
+  # macOS, the Windows forms, and Claude Code and Codex signed in with the CI
+  # keys on all three systems when they are set (docs/VERIFICATION.md, Agent
+  # journey). A failed cell, isolation or cleanup stops the release; an agent
+  # without its key is a notice.
   agent-journey:
     needs: [test, main-verified]
     uses: ./.github/workflows/agent-journey.yml
     permissions:
       contents: read
     with:
-      systems: '["linux","macos"]'
+      systems: '["linux","macos","windows"]'
       live: true
     secrets:
       HIDE_CLAUDE_API_KEY: ${{ secrets.HIDE_CLAUDE_API_KEY }}
