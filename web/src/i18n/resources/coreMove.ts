@@ -296,7 +296,7 @@ const zhCN = {
   "coreMove.fix.sleep": "请关闭睡眠",
   "coreMove.fix.build": "请在两台机器上使用相同构建",
   "coreMove.fix.ai": "请在 {{machine}} 上登录 Hide AI 的智能体",
-  "coreMove.fix.ai_setup": "请在 设置 › Hide AI 中开启并选择一个智能体",
+  "coreMove.fix.ai_setup": "请在设置 › Hide AI 中开启并选择一个智能体",
   "coreMove.fix.dormant": "请唤醒休眠的智能体",
   "coreMove.strip.moving": "正在将 core 移到 {{to}}",
   "coreMove.strip.movingEuro": "正在将 core 移到 {{to}}",
