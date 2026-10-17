@@ -414,7 +414,7 @@ The desktop `@platform` tests run on Windows in a pull request (`windows-desktop
 
 ### How many jobs a run starts
 
-A run that plans every lane a pull request can plan starts at most 22 jobs, down from 23 (the 2026-10-05 shape of run `37324202934`, before the macOS and mailbox work), and `scripts/tests/test_ci_plan.py` counts them from the workflows:
+A run that plans every lane a pull request can plan starts at most 23 jobs, as many as the 2026-10-05 shape of run `37324202934` before the macOS and mailbox work brought it to 22 and the agent journey's Linux job added one, and `scripts/tests/test_ci_plan.py` counts them from the workflows:
 
 | Jobs | Count | Why |
 | --- | --- | --- |
@@ -424,6 +424,7 @@ A run that plans every lane a pull request can plan starts at most 22 jobs, down
 | `web e2e` (Linux) | 5 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and four shards instead of six, dealt by recorded durations; fewer jobs queue at the 20-job limit, and a shard's time at four is measured after merge |
 | `os contract` (Linux, Windows), `os contract (macOS)` | 3 | one job per system, the macOS leg planned only for its two crates |
 | `agy contract` (Windows) | 1 | agy's hook block, trust, conversations and Hide AI backend, and the real agy reading Hide's block, where the hook commands and install folder differ; `rust` runs the same tests on Linux and the nightly runs all three systems |
+| `agent journey` (Linux) | 1 | the journey on the compiled Claude and Codex stand-ins, planned only for the journey's code, its contract and the stand-ins; the nightly and a release run every system and the signed-in lane ([VERIFICATION.md](VERIFICATION.md#agent-journey)) |
 | `remote mailbox` | 1 | the lane that was the tail of the macOS `@platform` job, now on Linux and, in the nightly, on macOS |
 | `desktop e2e` | 1 | the only macOS job of the desktop app's own changes |
 | `package` (Windows, Linux, macOS) | 3 | `package.yml`'s jobs, planned only for what goes into a package; before the lane its Windows and Linux jobs ran on the same paths outside `verify` |

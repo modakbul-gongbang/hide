@@ -122,6 +122,22 @@ jobs:
     secrets:
       HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
 
+  # The agent journey: the stand-ins and, when the CI account's keys are set,
+  # Claude Code and Codex signed in, on Linux and macOS (one system's on that
+  # system's hand run); docs/VERIFICATION.md, Agent journey.
+  agent-journey:
+    name: agent journey
+    if: ${{ inputs.lane != 'windows' && inputs.lane != 'agy' }}
+    uses: ./.github/workflows/agent-journey.yml
+    permissions:
+      contents: read
+    with:
+      systems: ${{ inputs.lane == 'linux' && '["linux"]' || inputs.lane == 'macos' && '["macos"]' || '["linux","macos"]' }}
+      live: true
+    secrets:
+      HIDE_CLAUDE_API_KEY: ${{ secrets.HIDE_CLAUDE_API_KEY }}
+      HIDE_CODEX_API_KEY: ${{ secrets.HIDE_CODEX_API_KEY }}
+
   # The whole desktop suite runs on macOS, the system the desktop app is written
   # against. Linux and Windows run only the tests tagged `@platform`: what the
   # desktop host does differently on that system (its processes and local
@@ -178,7 +194,7 @@ jobs:
 
   report:
     name: nightly report
-    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, agy-contract-all, desktop-e2e, perf, verify, package]
+    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, agy-contract-all, agent-journey, desktop-e2e, perf, verify, package]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10

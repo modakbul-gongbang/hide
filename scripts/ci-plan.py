@@ -41,6 +41,7 @@ LANES = (
     "os-contract",
     "os-contract-macos",
     "agy-contract",
+    "agent-journey",
     "windows-check",
     "windows-e2e",
     "windows-desktop",
@@ -223,7 +224,16 @@ POLICY_ONLY = (
 # check`, so neither is web-only or desktop-only.
 WEB_E2E_LANES = {"checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-desktop", "windows-check"}
 DESKTOP_E2E_LANES = {"checks", "desktop-e2e", "windows-desktop", "windows-check"}
+# The agent journey's keyless lane runs its code on the compiled stand-ins
+# (`agent-journey.yml`); the stand-ins' sources are also the e2e's.
+JOURNEY_LANES = {"agent-journey"}
 NAMED_LANES = (
+    ("web/e2e/shims/claude-shim.c", WEB_E2E_LANES | JOURNEY_LANES),
+    ("web/e2e/shims/live-check.h", WEB_E2E_LANES | JOURNEY_LANES),
+    ("scripts/agent_journey/*", JOURNEY_LANES),
+    ("scripts/agent-journey-check.py", JOURNEY_LANES),
+    ("scripts/agent-journey-lane.py", JOURNEY_LANES),
+    ("contracts/agent-journey.json", JOURNEY_LANES),
     ("web/e2e/*", WEB_E2E_LANES),
     ("desktop/e2e/*", DESKTOP_E2E_LANES),
     ("web/playwright.config.ts", {"checks", "web-e2e", "windows-e2e"}),
@@ -253,6 +263,7 @@ NAMED_LANES = (
     (".github/workflows/desktop-e2e.yml", {"desktop-e2e", "windows-desktop"}),
     (".github/workflows/os-contract.yml", {"os-contract", "os-contract-macos"}),
     (".github/workflows/agy-contract.yml", {"agy-contract"}),
+    (".github/workflows/agent-journey.yml", JOURNEY_LANES),
     ("scripts/install-agy.sh", {"agy-contract"}),
     (".github/workflows/remote-mailbox.yml", {"remote-mailbox"}),
     (".github/workflows/package.yml", set()),
