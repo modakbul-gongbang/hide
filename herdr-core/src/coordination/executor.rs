@@ -544,6 +544,7 @@ fn spawn(
         branch,
         path,
         args,
+        launch,
         task,
     } = &command
     else {
@@ -566,6 +567,17 @@ fn spawn(
     if !crate::fork::valid_agent_name(name) {
         return Err("invalid_agent_name".into());
     }
+    // The choice goes before the native arguments, which may end with the
+    // first prompt after `--`.
+    let mut start_args =
+        crate::runtime::agent_choice::launch_arguments(kind, launch).map_err(|detail| {
+            crate::diagnostic!(json!({
+                "component": "spawn", "kind": "spawn.invalid_launch_choice", "intent": intent,
+                "agent_kind": kind, "detail": detail,
+            }));
+            "invalid_launch_choice"
+        })?;
+    start_args.extend(args.iter().cloned());
     // The device probe takes the kind as a program name, so only a kind Hide
     // can start reaches it.
     if machine.is_some() && hide_agent_adapter::start_kind(kind).is_none() {
@@ -942,7 +954,7 @@ fn spawn(
                 shell,
                 name,
                 kind,
-                args.clone(),
+                start_args,
                 codex_daemon,
             )?;
             reserved = serde_json::from_value(mutate(
@@ -966,6 +978,19 @@ fn spawn(
             // closed rather than left running with nothing tracking it.
             close_refused_pane(connector.as_ref(), &reserved, pane, reason);
             return Err(reason.into());
+        }
+        // The child's pane keeps its launch choice for the restarts Hide
+        // makes of it, under the id the core knows the pane by.
+        if let Some(runtime) = client.runtime.upgrade() {
+            let pane_id = if on_node {
+                pane.to_owned()
+            } else {
+                crate::session_sync::remote_pane_id(&child_device, pane)
+            };
+            runtime
+                .lock()
+                .map_err(|_| "delivery_unavailable")?
+                .record_pane_launch(&pane_id, kind, name, &reserved.launch, None);
         }
         let mut child = record(
             &native,
@@ -1579,6 +1604,7 @@ mod tests {
                         branch: "factory/801".into(),
                         path: None,
                         args: Vec::new(),
+                        launch: Default::default(),
                         task: None,
                     },
                 },
@@ -1823,6 +1849,7 @@ mod tests {
                 branch: "topic".into(),
                 path: None,
                 args: Vec::new(),
+                launch: Default::default(),
                 task: None,
             };
             let spawn = super::super::apply(
