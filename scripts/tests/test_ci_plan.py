@@ -384,10 +384,15 @@ class NamedPaths(unittest.TestCase):
                      "contracts/agent-journey.json", ".github/workflows/agent-journey.yml"):
             with self.subTest(path=path):
                 self.assertEqual(self.lanes(path), {"policy", "agent-journey"})
-        for path in ("web/e2e/shims/claude-shim.c", "web/e2e/shims/live-check.h"):
+        for path in ("web/e2e/shims/claude-shim.c", "web/e2e/shims/live-check.h", "web/e2e/shims/spawn-provider.c"):
             with self.subTest(path=path):
                 self.assertEqual(self.lanes(path), {"policy", "checks", "web-e2e", "windows-e2e", "desktop-e2e",
                                                     "windows-desktop", "windows-check", "agent-journey"})
+        for path in ("hide-session/examples/journey_conversation.rs", "hide-agent-hooks/tests/fixtures/fake-codex.py"):
+            with self.subTest(path=path):
+                self.assertIn("agent-journey", self.lanes(path))
+                self.assertIn("rust", self.lanes(path))
+        self.assertNotIn("agent-journey", self.lanes("hide-session/src/lib.rs"))
 
     def test_desktop_e2e_helpers_run_the_desktop_suites_and_windows_unit_tests(self):
         for path in ("desktop/e2e/fixture.ts", "desktop/e2e/fixture-cleanup.unit.ts", "desktop/playwright.config.ts", "desktop/vitest.config.ts"):

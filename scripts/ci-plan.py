@@ -230,9 +230,14 @@ DESKTOP_E2E_LANES = {"checks", "desktop-e2e", "windows-desktop", "windows-check"
 # The agent journey's keyless lane runs its code on the compiled stand-ins
 # (`agent-journey.yml`); the stand-ins' sources are also the e2e's.
 JOURNEY_LANES = {"agent-journey"}
+# Files inside a crate the journey runs as its own tools: Hide's conversation
+# reader and Codex's app-server stand-in.
+JOURNEY_CRATE_FILES = ("hide-session/examples/journey_conversation.rs", "hide-agent-hooks/tests/fixtures/fake-codex.py")
 NAMED_LANES = (
     ("web/e2e/shims/claude-shim.c", WEB_E2E_LANES | JOURNEY_LANES),
     ("web/e2e/shims/live-check.h", WEB_E2E_LANES | JOURNEY_LANES),
+    # The journey's controller builds the desktop e2e's spawn provider.
+    ("web/e2e/shims/spawn-provider.c", WEB_E2E_LANES | JOURNEY_LANES),
     ("scripts/agent_journey/*", JOURNEY_LANES),
     ("scripts/agent-journey-check.py", JOURNEY_LANES),
     ("scripts/agent-journey-lane.py", JOURNEY_LANES),
@@ -363,6 +368,8 @@ def classify(path, status, crates, root):
             lanes.add("os-contract-macos")
         if crate["name"] in AGY_CRATES:
             lanes.add("agy-contract")
+        if path.as_posix() in JOURNEY_CRATE_FILES:
+            lanes.update(JOURNEY_LANES)
         return lanes, f"crate {crate['name']}: {path}", packages
     if parts[0] == "web" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
