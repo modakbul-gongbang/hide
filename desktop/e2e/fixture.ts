@@ -77,7 +77,6 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       // `open_external` must not launch a GUI application during a test.
       HIDE_OPEN_COMMAND: fixtureOpenCommand(undefined, root),
     };
-    fixtureLoginShellPath(home, env.PATH!);
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true });
     throw error;
@@ -328,6 +327,8 @@ async function start(appDir: string, env: Record<string, string>, executablePath
   if (owner.candidates.size + owner.launching >= MAX_CANDIDATES_PER_HOME) throw new Error(`desktop fixture has ${MAX_CANDIDATES_PER_HOME} live or launching candidates; close an owned candidate before launching another`);
   // The bundle is linked when an app is about to run its `hide`, so a fixture that launches nothing needs no build.
   if (env.HIDE_CLI_PATH === bundledExecutable("hide")) linkBundle();
+  // Written at each launch, since a spec may put its own shims on the PATH after `isolate`.
+  fixtureLoginShellPath(env.HOME!, env.PATH!);
   const report = path.join(focusReports.dir, `launch-${focusReports.apps.length + 1}.jsonl`);
   owner.launching++;
   try {
