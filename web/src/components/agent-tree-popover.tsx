@@ -306,7 +306,7 @@ function TreeItem({
   const child = line.agent;
   const parentDevice = parent.device_id ?? remoteTargetOfPane(rest, parent.pane_id) ?? localDeviceId(rest);
   const device = child.device_id ?? remoteTargetOfPane(rest, child.pane_id) ?? localDeviceId(rest);
-  const deviceLabel = child.device_label ?? machineName(rest?.navigator?.devices, device, t);
+  const deviceLabel = machineName(rest?.navigator?.devices, device, t);
   const unavailable = !deviceConnected(rest, device);
   // A child on a device that is not connected draws no mark and says so on its line (status-marks B16).
   const reason = unavailable ? t("agents.line.disconnected", { device: deviceLabel ?? device }) : null;

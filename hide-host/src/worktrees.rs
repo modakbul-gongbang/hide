@@ -1774,24 +1774,37 @@ pub fn remove_worktree(
     }
 }
 
-/// Takes out the agy folder trust Hide recorded for a removed worktree
-/// (PRD antigravity-first-class D-08). The worktree is already gone, so a
-/// trust that cannot be taken out is only recorded: the operator has nothing
-/// to do, and switching agy off still takes it out.
+/// Takes out the folder trust Hide recorded for a removed worktree, in each
+/// agent's own settings (docs/agent-hooks.md, Folder trust for the worktrees
+/// Hide makes). The worktree is already gone, so a trust that cannot be taken
+/// out is only recorded: the operator has nothing to do, its record stays,
+/// and switching the agent off still takes it out.
 fn forget_agent_trust(checkout: &Path) {
+    use hide_agent_hooks::folder_trust::{self, Agent, Tools};
     let Ok(home) = hide_platform::host::home_dir() else {
         return;
     };
-    if let Err(failure) = hide_agent_hooks::antigravity_trust::forget(&home, checkout) {
-        eprintln!(
-            "{}",
-            serde_json::json!({
-                "component": "worktree_removal",
-                "kind": "agent_trust_kept",
-                "checkout": checkout,
-                "reason": failure.message(),
-            })
-        );
+    let stop = crate::kit::process_stop();
+    for agent in Agent::ALL {
+        let codex = (agent == Agent::Codex)
+            .then(|| hide_ai::resolve_binary(Path::new("codex")))
+            .flatten();
+        let tools = Tools {
+            codex: codex.as_deref(),
+            stop: &stop,
+        };
+        if let Err(failure) = folder_trust::forget(agent, &home, checkout, tools) {
+            eprintln!(
+                "{}",
+                serde_json::json!({
+                    "component": "worktree_removal",
+                    "kind": "agent_trust_kept",
+                    "agent": agent.label(),
+                    "checkout": checkout,
+                    "reason": failure.message(),
+                })
+            );
+        }
     }
 }
 

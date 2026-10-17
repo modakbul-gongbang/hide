@@ -32,7 +32,7 @@ import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./setting
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import { frontDeviceId, localDeviceId, railShown } from "./devices";
-import { registeredName } from "./screenMachine";
+import { machineName } from "./screenMachine";
 import { allAgents, boardProjects, type OpenTarget } from "./navigation";
 import { cardOfItem } from "./overviewTasks";
 import { backlogIntent } from "./overviewBacklog";
@@ -247,7 +247,7 @@ export function createActions(send: DispatchFn) {
     const context = remoteContext(rest());
     if (!context) return null;
     if (!remoteConnected(context)) {
-      ui().setNotice({ text: translate("shell.deviceNotConnected", { device: registeredName(context.device), command: translate(command) }), refreshable: false });
+      ui().setNotice({ text: translate("shell.deviceNotConnected", { device: machineName(rest()?.navigator?.devices, context.device.id, translate), command: translate(command) }), refreshable: false });
       return null;
     }
     return { targetId: context.device.id, view: remoteView(context.session), agents: context.session?.agents ?? [] };
@@ -1790,7 +1790,7 @@ export function createActions(send: DispatchFn) {
       const tab = workspaces?.flatMap((row) => row.checkouts).flatMap((row) => row.tabs).find((row) => row.panes.some((pane) => pane.id === paneId));
       if (!tab?.id) return diagnostic(`close_tab: no tab holds ${paneId}`);
       if (targetId && status?.state !== "connected") {
-        const label = rest()?.navigator?.devices?.find((row) => row.id === targetId)?.label ?? targetId;
+        const label = machineName(rest()?.navigator?.devices, targetId, translate);
         ui().setNotice({ text: translate("shell.deviceNotConnected", { device: label, command: translate("shell.command.closeTab") }), refreshable: false });
         return;
       }
@@ -2556,7 +2556,7 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "project_target", payload: { parent, name } });
     },
 
-    /** Makes `path` as a new folder with its own Git repository, then registers it; this Mac only. */
+    /** Makes `path` as a new folder with its own Git repository, then registers it; on the core's machine only, whichever window asks. */
     createProject(path: string, label: string) {
       dispatch({ schema_version: 2, kind: "create_workspace", payload: { path, label, initialize_git: true, new_folder: true } });
     },

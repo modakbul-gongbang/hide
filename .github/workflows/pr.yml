@@ -44,7 +44,7 @@
 # `@platform` tests, the macOS mailbox lane and the rest of the OS contract to
 # `nightly.yml`.
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
-# checks, the whole web end-to-end, dealt out to four shards by `web-e2e.yml`,
+# checks, the whole web end-to-end, dealt out to six shards by `web-e2e.yml`,
 # and the remote mailbox lane over private SSH (`remote-mailbox`).
 # `nightly.yml` runs the web end-to-end's `@platform` tests on macOS, and the
 # rest of the web end-to-end is the same code on every system, so the move of
@@ -500,13 +500,15 @@ jobs:
       lane: linux
       runner: ubuntu-latest
       herdr-platform: linux-x86_64
-      # Four shards: the suite is about 20 job-minutes of tests and every
-      # shard repeats about a minute of setup. Six shards ran 4.5 to 7.5
-      # minutes each (2026-10-05) but 23 of 99 runs waited over 10 minutes for
-      # a Linux shard, because the organization runs 20 jobs at once and a
-      # full run asked for 23. Four shards put two fewer jobs in the queue; each
-      # shard's time at four is measured after merge (docs/TESTING.md).
-      shards: 4
+      # Six shards: the suite is about 68 minutes of tests (4109 s recorded,
+      # 2026-10-18; it was 30 on 2026-10-06) and every shard repeats about two
+      # minutes of setup. Four shards ran 984 to 1111 s of their 1200 s step
+      # (medians over 20 main runs); five would plan 822 s each, over the 720 s
+      # a shard is sized for; six plan 686 s. Six was cut to four on 2026-10-05
+      # because 23 of 99 runs waited over 10 minutes for a Linux shard at the
+      # organization's 20 jobs at once, with a full run asking for 23; a full
+      # run now asks for 25, a web shell change for 14 (docs/TESTING.md).
+      shards: 6
 
   # The remote mailbox crate-boundary lane (hided/tests/it/remote_delivery.rs,
   # docs/TESTING.md), in `remote-mailbox.yml`. It has its own job because it was
@@ -588,6 +590,12 @@ jobs:
       lane: macos
       runner: macos-15
       herdr-platform: macos-aarch64
+      # Two shards: the suite is about 17 minutes of tests (1008 s recorded,
+      # 2026-10-17) and one job ran it in 1048 to 1166 s of its 20-minute
+      # step cap. Two plan about 504 s each, under half the cap, for one more
+      # job of about 4.5 minutes of setup on the five macOS runners; a third
+      # would hold three of the five for the same suite (docs/TESTING.md).
+      shards: 2
 
   # The Electron app on Windows: the desktop tests tagged `@platform` (what
   # the host does differently there: `hide connect` starting hided, the
@@ -607,6 +615,7 @@ jobs:
       lane: windows
       runner: windows-latest
       herdr-platform: windows-x86_64
+      shards: 1
       grep: "@platform"
       keep-screenshots: true
 

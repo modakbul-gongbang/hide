@@ -21,6 +21,7 @@ This is the only part of the tree Hide cannot read from the session snapshot, an
 | Cursor | `~/.cursor/hooks.json`, shared with the operator's hooks |
 
 On Windows `~` is the account's profile folder (`%USERPROFILE%`), where Claude Code, Codex, Grok and Cursor keep these files and OpenCode, Pi and omp load their plugins and extensions from.
+Beside the hooks, Hide records Claude Code's, Codex's and agy's own folder trust for a worktree it made, in each agent's own file ([Folder trust for the worktrees Hide makes](#folder-trust-for-the-worktrees-hide-makes)).
 
 One entry is appended per registered event, and nothing else in the file is touched.
 The common writer retains JSON source spans through `serde_json::value::RawValue`, splicing only owned changes so unrelated members, groups and handlers retain their literal whitespace, ordering and escapes.
@@ -304,6 +305,50 @@ Claude Code and Codex share one deny envelope, `hookSpecificOutput.permissionDec
 Each refusal appends one JSON line (pane id, agent kind, shape, runtime; never the command text, and the same file holds the `daemon.unreachable` lines) to `~/.hide/agent-hooks/spawn-guard.log` (private, capped at 256 KiB with one rotation) and echoes it on standard error, where a hook run by hand shows it.
 The per-call cost is what an ordinary shell call pays: the payload is read within 0.5 seconds and a byte test for `herdr` over the whole payload runs before anything is parsed or spawned, so a call whose payload does not mention `herdr` (its working directory and transcript path included) costs one process start and the [project guardrails](#project-guardrails)' policy read; a path containing `herdr` pays one JSON parse and the lexer as well (numbers in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#the-spawn-guard-hook-on-a-shell-call)).
 `hide-agent-hooks/tests/it/spawn_guard.rs` runs the helper beside a stand-in `hide` for each outcome above, and `src/spawn_guard.rs` holds the parser's table tests.
+
+## Folder trust for the worktrees Hide makes
+
+Claude Code, Codex and agy each ask, the first time they start interactively in a folder they have not been told to trust, whether to trust it, and a delegated child stopped at that question waits for an answer nobody is there to give.
+So before Hide starts one of them in a worktree it made for that start (`hide agent spawn` into a new worktree, a task's agent), it records that agent's own trust of the worktree on the machine that will run it: the core sends `agent_trust` to that machine's node, this Mac's or a connected device's, and the node writes it there (`hide_agent_hooks::folder_trust`).
+A start in a checkout that already existed, the operator's own or an earlier worktree, records nothing, and the agent asks there as it would outside Hide.
+
+| Agent | Where its trust is kept | What Hide adds |
+| --- | --- | --- |
+| Claude Code | `~/.claude.json`, or `~/.claude/.config.json` while Claude Code still keeps that older file and it is not empty | `projects["<worktree>"].hasTrustDialogAccepted: true` |
+| Codex | `~/.codex/config.toml`, written by Codex's own app-server | `[projects."<worktree>"] trust_level = "trusted"` |
+| agy | `~/.gemini/antigravity-cli/settings.json` | the worktree in `trustedWorkspaces` |
+
+Claude Code's and Codex's files are found from the same folder as their hook files (`AgentRuntime::trust_path` beside `config_path`), so the trust and the hooks always land in one place.
+Like the hooks, they are the account's default folders: an agent run with `CLAUDE_CONFIG_DIR` or `CODEX_HOME` pointing elsewhere reads neither Hide's hooks nor its trust, and asks.
+
+The worktree is named by its resolved path, spelled as the agent compares it: with `/` between names for Claude Code on Windows, and in lower case for Codex on Windows, which compares folders there without case.
+The entry names the worktree itself and never the repository it was made from.
+Answering an agent's own question in a linked worktree trusts the repository's main checkout, which is the operator's and would trust every worktree of that repository with it; Claude Code 2.1.302 and Codex 0.163.0 read an entry for the exact folder before the repository's, and trust given to a folder above a repository does not reach into it (measured on 2026-10-17).
+
+Hide keeps which entries it added in its own record, `~/.hide/agent-hooks/<agent>-trust.json` (`claude-trust.json`, `codex-trust.json`, `antigravity-trust.json`), at most 4096 folders that exist per agent; a trust past that is refused with the cap in its reason.
+The record is written before the entry and taken back when the entry could not be written, so Hide never leaves an entry its record does not name.
+An entry that is already there is the operator's: Hide writes nothing and records nothing, so removing the worktree leaves it.
+Removing a worktree Hide made takes out the entries Hide added for it, for each agent, and switching an agent off, or removing the machine from Hide, takes out every entry Hide added for that agent; an entry the operator added, before Hide or after it, stays, and so does what else the agent keeps under the same folder (Claude Code's project settings, a Codex project's other keys).
+The removal runs once the folder is gone, so it finds the entry by the key Hide recorded, compared as the system compares folders: the folder's parent resolved, and on Windows without case and with either separator, so Git's `C:/x` finds Codex's `c:\x`.
+A worktree removed outside Hide (by hand, or by a Factory cleanup that found the folder already gone) leaves its entries until the next trust Hide records for that agent, which takes out every entry of Hide's whose folder is gone in the same write.
+Codex's entries are taken out through its app-server too; with no Codex left to ask, they and Hide's record of them stay until a pass that finds one, and nothing reads them meanwhile.
+
+Every change holds one account lock per agent, and a change waits for it as long as the change holding it can take: one Codex app-server session's whole bound (`codex_trust::SESSION_BOUND`, 21 s) and a second, so a second start while Codex records the first one's trust waits instead of failing.
+The core gives the node twice that and five seconds for the call (`folder_trust::Agent::longest_change`); a Codex that answers, as it does in well under a second, takes about a second.
+The JSON files are rewritten through the same lossless read and compare-before-replace as the hook files, so their other keys and the operator's formatting keep their bytes.
+Claude Code rewrites `~/.claude.json` while it holds its own lock on it, the `.lock` folder beside the file's real path (proper-lockfile resolves a link, so a linked `~/.claude.json` is locked beside its target), and reads the file again under that lock, so Hide changes the file only while it holds the same lock and neither overwrites the other.
+Hide waits up to two seconds for it and takes over a lock older than ten seconds, which Claude Code treats as left by a process that ended, removing only the folder it saw stale; it removes its own lock only while the folder there is still the one it made, and does not write once Claude Code has taken the lock over.
+Hide's own changes never meet at Claude Code's lock, since each holds Hide's lock first; between Hide and Claude Code, a takeover of a stale lock has the moment between the look and the removal that Claude Code's own takeover has.
+Codex's file is never written by Hide: `hide_agent_hooks::codex_trust` starts `codex app-server`, reads the user layer's `projects` with `config/read`, writes the one key with `config/batchWrite` against the version it read, and reads it back, as it does for [Hide's own hooks](#codex-trusts-hides-own-hooks).
+
+A trust that cannot be recorded refuses the start before the agent runs, with `agent_trust_failed: <agent>'s trust of <worktree> could not be recorded (<reason>)`, so no agent waits unseen on its question (PRD antigravity-first-class B20).
+The node refuses to trust a folder that is not a Git worktree, a path written with `.` or `..`, the filesystem root, the home folder or a folder above it, whoever asks.
+When the operator marked the worktree, or the repository's main checkout it was made from, `untrusted` in Codex, Hide does not override that answer: the reason names that folder and says to trust it in Codex or to start the agent there by hand.
+A Codex configuration the operator's organization manages that decides the folder's trust instead, a machine with no Codex Hide can find, a Claude Code lock held past two seconds and a settings file that does not parse refuse the start too, each with its reason; a machine that is not connected refuses it with `agent_trust_unavailable`.
+
+`hide-agent-hooks/src/folder_trust/tests.rs` checks each agent's format, spelling, ownership and removal in a fixture home on every pull request, on Linux in `rust` and on Windows in `windows check`, and `tests/it/codex_folder_trust.rs` runs Codex's through a stand-in app-server on Linux.
+The nightly `agent trust contract` (`.github/workflows/agent-trust-contract.yml`) installs the pinned Claude Code and Codex on all three systems and checks that the real ones read what Hide wrote: Codex's app-server loads a worktree's own settings once Hide trusted it and stops once Hide took the trust out (`tests/it/codex_binary.rs`), and Claude Code in a pane of the pinned Herdr starts at its prompt in the worktree Hide trusted and asks its question in the repository's other worktree (`herdr-core/src/agent_start/real_agent_trust_tests.rs`).
+The pull request runs no registry install, so a failure that is not Hide's never holds one; a change to the trust writer is proven on all three systems with `gh workflow run nightly.yml --ref <branch> -f lane=agy`.
 
 ## Project guardrails
 
@@ -602,8 +647,7 @@ An entry the operator edited reads Outdated and stays until Reinstall, and a `ho
 `hide-agent-hooks/src/antigravity.rs` and `src/guidance.rs` test the answers and the block's install and removal in a fixture home, and the `agy contract` CI lane (`.github/workflows/agy-contract.yml`) also runs the vendor's current agy against the block in the runner's throwaway home.
 
 agy 1.4.0 loads a workspace's own `.agents/hooks.json` only for a folder in `trustedWorkspaces` of `~/.gemini/antigravity-cli/settings.json` (1.3.6 also loaded it in print mode without trust), trust is per exact path and is not inherited from a parent folder, and the first interactive start in a folder it has not been told to trust asks, which would leave a delegated child stopped at that question.
-Hide therefore adds the exact path of a worktree it made to that list before it starts agy there; the node refuses to trust a folder that is not a Git worktree, a path written with `.` or `..`, the filesystem root, the home folder or a folder above it, whoever asks, and keeps which entries it added in `~/.hide/agent-hooks/antigravity-trust.json` (D-08); removing that worktree, or switching agy off, takes out only those entries, and an entry the operator added, before Hide or after it, stays.
-Every change holds one account lock and rewrites `settings.json` through the same lossless read as the hook files, so its other keys keep their bytes; a trust Hide cannot record keeps agy from starting there, and the caller gets the reason (B20).
+Hide therefore adds the exact path of a worktree it made to that list before it starts agy there, as it records Claude Code's and Codex's trust ([Folder trust for the worktrees Hide makes](#folder-trust-for-the-worktrees-hide-makes); D-08).
 Hide AI's own folder for agy is trusted the same way ([AI_PROVIDERS.md](AI_PROVIDERS.md#antigravity)), and switching agy off removes it too.
 
 agy's tool-permission question reaches Needs You as an approval: Herdr 0.9.3 reports the pane as waiting on an approval while it is open (seen in the app on 2026-10-16; an earlier probe outside the app had read it as idle).
@@ -680,7 +724,7 @@ Cursor's Titles feature is a generated goal; its native store supplies no title,
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
 The other fourteen agents earlier builds supported are no longer rows (see Retired agents below).
 Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration or its model settings, and it runs no installer for an agent.
-The things it records in an agent's own state are Codex's trust for Hide's own hooks, below, and agy's folder trust for the worktrees Hide makes ([Antigravity: Hide's hook block](#antigravity-hides-hook-block)).
+The things it records in an agent's own state are Codex's trust for Hide's own hooks, below, and Claude Code's, Codex's and agy's folder trust for the worktrees Hide makes ([Folder trust for the worktrees Hide makes](#folder-trust-for-the-worktrees-hide-makes)).
 
 ### Herdr's integration for an agent
 
@@ -702,7 +746,7 @@ A survey on 2026-10-07 read each agent's official documentation and the executab
 Pi 1.0.4 and omp 18.7.0 loaded Hide's extension from a private user folder with no approval screen on 2026-10-09.
 Cursor's current CLI hooks are read from its documentation and were not run, so they are an inference.
 agy 1.3.6 and 1.4.0 ran the user folder's `~/.gemini/config/hooks.json` with no approval screen on 2026-10-16, and neither its folder-trust dialog nor `/hooks` has a step that approves one hook; its folder trust, which Hide records for its own worktrees, is the check a workspace's hooks get.
-Hide therefore writes no trust for any other agent, and an agent that starts asking for approval of a user-folder hook is a new row for this section and a new trust step beside Codex's, not a change to Codex's.
+Hide therefore writes no hook trust for any other agent (the folder trust it records for its own worktrees is a separate step, [Folder trust for the worktrees Hide makes](#folder-trust-for-the-worktrees-hide-makes)), and an agent that starts asking for approval of a user-folder hook is a new row for this section and a new trust step beside Codex's, not a change to Codex's.
 
 ### Retired agents
 
@@ -725,7 +769,7 @@ That happened on a machine's first install, whenever Hide's hook changed, and wh
 Installing Hide is the operator's agreement to Hide's hooks, so Hide records Codex's trust for them itself (PRD codex-hook-trust D-01).
 It does it through Codex's own interface and never by hand: `hide_agent_hooks::codex_trust` starts `codex app-server` over stdio for one short check, reads the entries with `hooks/list` (each entry's key, its hash and its status) and stores `trusted_hash` for the ones that need it with one `config/batchWrite` to `hooks.state`, then reads the list again and counts a write Codex did not keep as a failure.
 A listing that shows Codex could not use the file Hide wrote is a failure too, not "nothing to record": codex-cli 0.160.0 reports a `hooks.json` it cannot parse as a `failed to parse hooks config <path>` warning with an empty list, and a broken `config.toml` as an error naming the Codex home; a warning about another tool's hook is not Hide's to fail on.
-Hide computes no hash and writes no `config.toml`, so a change in how Codex hashes is followed, and every other setting in that file stays as Codex wrote it.
+Hide computes no hash and writes no `config.toml`, so a change in how Codex hashes is followed, and every other setting in that file stays as Codex wrote it; the folder trust for Hide's worktrees goes through the same interface ([Folder trust for the worktrees Hide makes](#folder-trust-for-the-worktrees-hide-makes)).
 
 The kit runs the check in every pass that finds the Codex hook part in place, whether the pass wrote it or found it current: at launch, when a device connects, and on Reinstall.
 It runs once, after the pass has put in every agent's pieces, because Herdr's integration is only in place then, so one `codex app-server` session trusts Hide's entries and Herdr's together and a first install is trusted before the operator's first Codex start.
@@ -846,7 +890,7 @@ Install and remove are deliberately not CLI subcommands: writing to the operator
 
 ## Testing
 
-The operator's real `~/.claude/settings.json` and `~/.codex/hooks.json` are never a test target.
+The operator's real `~/.claude/settings.json`, `~/.claude.json`, `~/.codex/hooks.json` and `~/.codex/config.toml` are never a test target.
 Every test in this crate builds its own `HOME` fixture and asserts against that.
 
 OpenCode's plugin is tested at three layers, none of which runs the operator's OpenCode.
