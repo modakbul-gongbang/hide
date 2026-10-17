@@ -340,23 +340,25 @@ class Runtime:
         original_cancelled = self.owner.cancelled.is_set()
         self.owner.cancelled.clear()
         original_deadline = self.owner.deadline
-        self.owner.deadline = time.monotonic() + 30
+        # Room for each step below at its own cap, on a loaded runner too.
+        self.owner.deadline = time.monotonic() + 60
         try:
             for workspace in list(self.workspaces):
                 try:
                     self.close_workspace(workspace)
                 except Exception as error:
-                    failures.append(str(error))
+                    failures.append(f"workspace close {workspace}: {error}")
             if (self.state / "hided.json").exists():
                 try:
-                    self.owner.run([str(self.hide), "stop"], env=self.daemon_env, seconds=10)
+                    # `hide stop` gives hided 5 s to stop, then kills it and confirms.
+                    self.owner.run([str(self.hide), "stop"], env=self.daemon_env, seconds=20)
                 except Exception as error:
-                    failures.append(str(error))
+                    failures.append(f"hide stop: {error}")
             if self.started:
                 try:
                     self.command(["server", "stop"])
                 except Exception as error:
-                    failures.append(str(error))
+                    failures.append(f"herdr server stop: {error}")
             try:
                 self.owner.close()
                 # A later empty close cannot erase a prior missing or failed
