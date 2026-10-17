@@ -250,7 +250,7 @@ impl DormantRecord {
                 !crate::delivery::valid_key(&registration.id) || !registration.actor.valid()
             })
             || self.owner.as_ref().is_some_and(|owner| {
-                owner.repository_root.is_empty()
+                !std::path::Path::new(&owner.repository_root).is_absolute()
                     || [owner.repository_root.as_str(), owner.label.as_str()]
                         .iter()
                         .any(|value| value.len() > 4096 || value.chars().any(char::is_control))
@@ -545,6 +545,21 @@ mod tests {
                 assert!(restored.dormant[&sleep_id].validate().is_err());
                 assert!(!restored.dormant_snapshots()[0].wake_available);
             }
+        }
+    }
+
+    #[test]
+    fn a_kept_owner_names_its_repository_by_an_absolute_path() {
+        let mut value = record("p1");
+        value.owner = Some(DormantOwner {
+            repository_root: "/fixture/repo".into(),
+            is_git: true,
+            label: "feature".into(),
+        });
+        assert!(value.validate().is_ok());
+        for root in ["", "fixture/repo", "../repo", "/fixture/\nrepo"] {
+            value.owner.as_mut().unwrap().repository_root = root.into();
+            assert!(value.validate().is_err(), "{root:?}");
         }
     }
 
