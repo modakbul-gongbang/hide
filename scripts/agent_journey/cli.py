@@ -357,6 +357,10 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
             continue
         launch = ci.wrapper(runtime, program, kind, os.environ.get("PATH", ""),
                             runtime.probe / f"fixture-{kind}.config" if fixture_bin else None)
+        # The kit installs an agent's hooks only where its own folder is, as
+        # a CLI that has run once leaves it; a new runner has none. Made
+        # before the CLI first runs, as Codex writes into it (CODEX_HOME).
+        private_directory(runtime.home / ci.HOME_FOLDERS[kind])
         environment = {**clean_env(), "HOME": str(runtime.home), "TMPDIR": runtime.env["TMPDIR"]}
         _, version, _ = runtime.owner.run([str(launch), "--version"], env=environment, check=False)
         agent["version"] = version.strip()[:120]
@@ -366,9 +370,6 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
                 agent["login"] = refusal
                 cells.settle_agent(table, key, refusal)
                 continue
-        # The kit installs an agent's hooks only where its own folder is, as
-        # a CLI that has run once leaves it; a new runner has none.
-        private_directory(runtime.home / ci.HOME_FOLDERS[kind])
         ready.append(key)
     return ready
 
