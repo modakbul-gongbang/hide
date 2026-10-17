@@ -2001,6 +2001,7 @@ A stale result is checked against the live result set before execution.
 ### File search
 
 ⌘P lists what hided's index ranked for the typed query, with the same focused query field and first-result selection, and never executes results from a previous query or checkout while its asynchronous index is updating.
+The index follows files made or removed after it was built, on this machine and on a device: opened five seconds or more after its last walk, ⌘P lists the old files at once and says `Indexing…` only while it has none, and the list updates in place when the new walk lands.
 ↵ opens the highlighted file; ⌘↵ opens it beside the active View area, and the footer hint says so.
 
 ## Pane header lineage and ownership

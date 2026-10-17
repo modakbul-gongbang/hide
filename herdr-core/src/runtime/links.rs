@@ -684,8 +684,8 @@ impl Runtime {
         parents.into_values().collect()
     }
 
-    /// The Projects `hide links` may read, every one the catalog carries on
-    /// any machine as the link record does, and which one holds the caller's
+    /// The Projects `hide links` may read, this machine's and each device's
+    /// (the record keys them by device), and which one holds the caller's
     /// checkout; none when the record has no home.
     pub(crate) fn links_scope(
         &self,

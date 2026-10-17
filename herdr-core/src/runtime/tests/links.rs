@@ -27,6 +27,122 @@ fn record_workspace(device: &str, id: &str, panes: &[&str]) -> WorkspaceSnapshot
     workspace
 }
 
+fn remote_session(workspaces: Vec<WorkspaceSnapshot>) -> RemoteStatusSnapshot {
+    RemoteStatusSnapshot {
+        target_id: "remote".into(),
+        state: "connected".into(),
+        message: None,
+        herdr_version: None,
+        session: Some(RemoteSessionSnapshot {
+            workspaces,
+            agents: vec![],
+            active_tab_ids: Default::default(),
+            focused_workspace_id: None,
+            focused_checkout_id: None,
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: vec![],
+            pane_hook_tokens: Default::default(),
+            issue_tokens: Default::default(),
+            issue_links: Default::default(),
+            herdr_version: None,
+        }),
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+        unreachable_since_unix_ms: None,
+    }
+}
+
+#[test]
+fn a_device_panes_links_scope_holds_its_device_project_and_every_device_for_all_projects() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![record_workspace(
+        crate::node::TEST_NODE,
+        "local-project",
+        &["local-pane"],
+    )];
+    let mut device_project = record_workspace("remote", "remote-project", &["remote-pane"]);
+    device_project.path = "/srv/app".into();
+    device_project.checkouts[0].path = "/srv/app".into();
+    runtime.snapshot.status.remote = vec![remote_session(vec![device_project])];
+
+    let context = crate::workspace_control::Context {
+        device_id: "remote".into(),
+        workspace_id: "remote-project".into(),
+        checkout_id: "remote-project".into(),
+        checkout_path: "/srv/app".into(),
+    };
+    let scope = runtime.links_scope(&context).expect("a record home");
+    let remote_key = hide_project::project_id("remote", Path::new("/srv/app"));
+    assert_eq!(
+        scope.caller, remote_key,
+        "the device pane's checkout names its Project"
+    );
+    let mut devices = scope
+        .projects
+        .iter()
+        .map(|project| project.device_id.as_str())
+        .collect::<Vec<_>>();
+    devices.sort_unstable();
+    assert_eq!(
+        devices,
+        ["remote", crate::node::TEST_NODE],
+        "--all-projects reads this machine's Projects and the device's"
+    );
+}
+
+/// `hide links pr` run in a pane on a device finds the pull request the link
+/// record holds for that device's Project, by the scope the runtime gives it.
+#[test]
+fn hide_links_from_a_device_pane_answers_with_the_device_projects_pull_request() {
+    let mut runtime = runtime();
+    let mut device_project = record_workspace("remote", "remote-project", &["remote-pane"]);
+    device_project.path = "/srv/app".into();
+    device_project.checkouts[0].path = "/srv/app".into();
+    runtime.snapshot.status.remote = vec![remote_session(vec![device_project])];
+    let mut github = crate::model::GithubProjectSnapshot {
+        viewer: None,
+        root_path: "/srv/app".into(),
+        pull_requests_read: true,
+        pull_requests: vec![pull_request(5, "5-feature", &[])],
+        ..Default::default()
+    };
+    github.issues.repository = Some("acme/project".into());
+    runtime.device_github.insert(
+        "remote".into(),
+        crate::model::GithubSnapshot {
+            projects: vec![github],
+        },
+    );
+    let context = crate::workspace_control::Context {
+        device_id: "remote".into(),
+        workspace_id: "remote-project".into(),
+        checkout_id: "remote-project".into(),
+        checkout_path: "/srv/app".into(),
+    };
+    let scope = runtime.links_scope(&context).expect("a record home");
+
+    // The link worker's record of that Project, written where the query reads.
+    let (mut store, _) = crate::links::store::LinkStore::open(&scope.store).unwrap();
+    for project in runtime.link_projects() {
+        store.apply_project(&project, CREATED).unwrap();
+    }
+    drop(store);
+
+    let answer = crate::links::query::run(
+        &scope,
+        &crate::links::query::LinksQuery {
+            target: crate::links::query::QueryTarget::Pr { number: 5 },
+            all_projects: false,
+        },
+        &hide_node::Local::of_process(),
+    )
+    .expect("the device Project's pull request is found, not refused");
+    assert_eq!(answer["scope"], "project");
+    assert_eq!(answer["results"][0]["project"]["device_id"], "remote");
+    assert_eq!(answer["results"][0]["prs"][0]["number"], 5);
+}
+
 #[test]
 fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
     let mut runtime = runtime();
@@ -653,10 +769,9 @@ fn opening_a_pull_request_reads_its_sessions_on_the_panels_own_revision() {
 
 /// A project of a node that dials this core lives in that node's session,
 /// and its link record is the core's like this machine's: the PR card of one
-/// of its pull requests opens the record's panel, and `hide links` from a
-/// pane of its checkout is scoped to it.
+/// of its pull requests opens the record's panel.
 #[test]
-fn a_nodes_project_opens_its_link_record_and_scopes_hide_links_from_its_pane() {
+fn a_nodes_project_opens_its_link_record_on_its_pr_card() {
     let mut runtime = links_runtime(vec![pull_request(7, "4-task", &[])], true);
     let mut project = runtime.snapshot.navigator.workspaces.remove(0);
     project.device_id = "mbp".into();
@@ -673,18 +788,6 @@ fn a_nodes_project_opens_its_link_record_and_scopes_hide_links_from_its_pane() {
         .expect("the panel opens");
     assert_eq!(panel.workspace_id, "w");
     assert_eq!(panel.failure.as_deref(), Some("links_worker_unavailable"));
-
-    let scope = runtime
-        .links_scope(&crate::workspace_control::Context {
-            device_id: "mbp".into(),
-            workspace_id: "w".into(),
-            checkout_id: "c".into(),
-            checkout_path: "/repo/task".into(),
-        })
-        .expect("the record has a home");
-    let key = hide_project::project_id("mbp", Path::new("/repo"));
-    assert_eq!(scope.caller, key);
-    assert!(scope.projects.iter().any(|project| project.key == key));
 }
 
 #[test]
