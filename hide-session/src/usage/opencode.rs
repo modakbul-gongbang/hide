@@ -184,6 +184,8 @@ pub(super) fn read(home: &Path, saved: Option<Checkpoint>) -> Result<Step, Refus
     .map_err(|reason| {
         if reason == crate::opencode::SCHEMA_UNKNOWN {
             Refusal::Schema
+        } else if reason == crate::environment::OPENCODE_DATA_HOME_INVALID {
+            Refusal::Environment
         } else {
             Refusal::Database
         }
@@ -209,8 +211,8 @@ fn read_connection(
         rusqlite::limits::Limit::SQLITE_LIMIT_LENGTH,
         READ_BYTES as i32,
     );
-    let id = hide_platform::fs::identity::file_id(&crate::opencode::database_path(home))
-        .map_err(|_| Refusal::Unreadable)?;
+    let database = crate::opencode::database_path(home).map_err(|_| Refusal::Environment)?;
+    let id = hide_platform::fs::identity::file_id(&database).map_err(|_| Refusal::Unreadable)?;
     // VACUUM changes schema_version even when it retains the same file id.
     let version: u64 = db
         .query_row("PRAGMA schema_version", [], |row| row.get(0))

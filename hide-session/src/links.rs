@@ -590,7 +590,7 @@ fn opencode_candidates(
     window: Window,
     found: &mut Vec<Candidate>,
 ) -> Result<(), String> {
-    let path = crate::opencode::database_path(home);
+    let path = crate::opencode::database_path(home)?;
     if !path.is_file() {
         return Ok(());
     }

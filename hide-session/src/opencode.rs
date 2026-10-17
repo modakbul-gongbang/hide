@@ -1,7 +1,8 @@
 //! OpenCode's sessions, read from its SQLite database (PRD
 //! overview-request-view D-16, B28).
 //!
-//! OpenCode keeps every session in `~/.local/share/opencode/opencode.db`: a
+//! OpenCode keeps every session in `opencode.db` under `$XDG_DATA_HOME/opencode`,
+//! or `~/.local/share/opencode` when that is unset: a
 //! `session` row, its `message` rows in order, and each message's `part`
 //! rows (text, attached files, tool calls with their output). OpenCode 2.x
 //! keeps them in `session_v2` and `session_message` instead, a message's
@@ -80,8 +81,33 @@ const TITLE_LIMIT_CHARS: i64 = 512;
 /// The longest `directory` a session row may name; a longer one is no checkout.
 const DIRECTORY_LIMIT_BYTES: i64 = 4096;
 
-pub(crate) fn database_path(home: &Path) -> PathBuf {
-    home.join(".local/share/opencode/opencode.db")
+/// Where OpenCode keeps its data: a folder under a root Hide confines every
+/// read to. OpenCode takes its data folder from `XDG_DATA_HOME` when that is
+/// set (`xdg-basedir`, in 1.x and 2.x; proven live on 2.0.29), so that is the
+/// node's own value ([`crate::environment`]); otherwise it is under `home`.
+struct Place {
+    root: PathBuf,
+    folder: &'static str,
+}
+
+fn place(home: &Path) -> Result<Place, String> {
+    match crate::environment::data_home() {
+        Err(reason) => Err(reason.to_owned()),
+        Ok(Some(data)) => Ok(Place {
+            root: data.to_owned(),
+            folder: "opencode",
+        }),
+        Ok(None) => Ok(Place {
+            root: home.to_owned(),
+            folder: ".local/share/opencode",
+        }),
+    }
+}
+
+/// OpenCode's database, or why it cannot be named.
+pub(crate) fn database_path(home: &Path) -> Result<PathBuf, String> {
+    let place = place(home)?;
+    Ok(place.root.join(place.folder).join("opencode.db"))
 }
 
 /// One bounded read of OpenCode's database ([`crate::sqlite::with_read`]),
@@ -109,10 +135,11 @@ pub(crate) fn with_unchecked_read<T>(
     home: &Path,
     read: impl FnOnce(&Connection) -> T,
 ) -> Result<T, String> {
+    let place = place(home)?;
     crate::sqlite::with_read(
-        home,
-        ".local/share/opencode",
-        &database_path(home),
+        &place.root,
+        place.folder,
+        &place.root.join(place.folder).join("opencode.db"),
         &REASONS,
         SQL_STEPS_PER_READ,
         read,
@@ -373,7 +400,11 @@ pub(crate) fn catalog(
 ) -> Result<Result<Vec<crate::ProjectSession>, String>, crate::SessionCatalogError> {
     // Only an answer that the file is not there is no OpenCode; a folder
     // Hide may not look into is a store it could not read.
-    if std::fs::symlink_metadata(database_path(home))
+    let database = match database_path(home) {
+        Ok(database) => database,
+        Err(reason) => return Ok(Err(reason)),
+    };
+    if std::fs::symlink_metadata(database)
         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
     {
         return Ok(Ok(Vec::new()));

@@ -704,7 +704,10 @@ fn usage_codex_legacy_fork_is_reported_and_synthetic_totals_never_count() {
 }
 
 fn opencode_fixture(home: &std::path::Path) -> (std::path::PathBuf, rusqlite::Connection) {
-    let path = home.join(".local/share/opencode/opencode.db");
+    opencode_fixture_at(home.join(".local/share/opencode/opencode.db"))
+}
+
+fn opencode_fixture_at(path: std::path::PathBuf) -> (std::path::PathBuf, rusqlite::Connection) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     let db = rusqlite::Connection::open(&path).unwrap();
     db.execute_batch(include_str!(
@@ -1157,6 +1160,99 @@ fn usage_opencode_2_database_with_only_part_of_the_1x_history_is_refused_as_its_
         usage::read(home.path(), Agent::OpenCode, &path, None),
         Err(usage::Refusal::Schema)
     ));
+}
+
+/// One completed step costing `cost`, in a 1.x database at `path`.
+fn opencode_priced(path: std::path::PathBuf, cost: f64) {
+    let (_, db) = opencode_fixture_at(path);
+    opencode_message(&db, "msg-a", true, 100);
+    opencode_part(&db, "part-a", "msg-a", Some(cost));
+}
+
+/// Runs the role below in a process of its own, because a node captures its
+/// `XDG_DATA_HOME` once, at startup.
+fn run_data_home_role(home: &std::path::Path, xdg: Option<&str>, expect: &str) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args([
+            "--exact",
+            "usage::usage_opencode_data_home_role",
+            "--nocapture",
+        ])
+        .env("USAGE_DATA_HOME_FIXTURE", home)
+        .env("USAGE_DATA_HOME_EXPECT", expect);
+    match xdg {
+        Some(value) => command.env("XDG_DATA_HOME", value),
+        None => command.env_remove("XDG_DATA_HOME"),
+    };
+    let result = hide_platform::process::run_to_end(
+        &mut command,
+        std::time::Duration::from_secs(30),
+        &std::sync::atomic::AtomicBool::new(false),
+    )
+    .unwrap();
+    assert_eq!(result.code, Some(0), "{} {}", result.stdout, result.stderr);
+}
+
+#[test]
+fn usage_opencode_database_is_read_where_xdg_data_home_puts_it() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let data = root.path().join("data");
+    // The home default holds another database, which a read must not take.
+    opencode_priced(home.join(".local/share/opencode/opencode.db"), 0.9);
+    opencode_priced(data.join("opencode/opencode.db"), 0.1);
+    run_data_home_role(&home, Some(data.to_str().unwrap()), "100000");
+}
+
+#[test]
+fn usage_opencode_database_is_read_from_home_when_xdg_data_home_is_absent_or_blank() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    opencode_priced(home.join(".local/share/opencode/opencode.db"), 0.9);
+    opencode_priced(root.path().join("data/opencode/opencode.db"), 0.1);
+    run_data_home_role(&home, None, "900000");
+    run_data_home_role(&home, Some(" "), "900000");
+}
+
+#[test]
+fn usage_opencode_is_refused_for_an_xdg_data_home_that_is_no_absolute_path() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    opencode_priced(home.join(".local/share/opencode/opencode.db"), 0.9);
+    run_data_home_role(&home, Some("relative/data"), "refused");
+    run_data_home_role(&home, Some("/absolute/../parent"), "refused");
+}
+
+#[test]
+fn usage_opencode_data_home_role() {
+    let (Some(home), Some(expect)) = (
+        std::env::var_os("USAGE_DATA_HOME_FIXTURE"),
+        std::env::var("USAGE_DATA_HOME_EXPECT").ok(),
+    ) else {
+        return;
+    };
+    let home = std::path::PathBuf::from(home);
+    if expect == "refused" {
+        let refused = usage::Refusal::Environment;
+        assert_eq!(usage::list(&home, Agent::OpenCode, 0).unwrap_err(), refused);
+        let database = home.join(".local/share/opencode/opencode.db");
+        assert_eq!(
+            usage::read(&home, Agent::OpenCode, &database, None).unwrap_err(),
+            refused
+        );
+        assert_eq!(refused.to_string(), "usage_read_Environment");
+        return;
+    }
+    let listed = usage::list(&home, Agent::OpenCode, 0).unwrap();
+    assert_eq!(listed.files.len(), 1);
+    let path = std::path::PathBuf::from(&listed.files[0].path);
+    let (events, _) = usage_drain(&home, Agent::OpenCode, &path, None);
+    assert_eq!(events.len(), 1);
+    assert_eq!(
+        events[0].recorded_cost_micro_usd,
+        Some(expect.parse().unwrap())
+    );
 }
 
 #[test]
