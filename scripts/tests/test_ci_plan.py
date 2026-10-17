@@ -628,11 +628,13 @@ class Workflows(unittest.TestCase):
     def test_the_most_a_pull_request_starts_is_the_count_testing_md_states(self):
         jobs = pr_jobs()
         most = 2 + sum(runner_jobs(jobs[lane]) for lane in ci.LANES)
-        # The 2026-10-05 run started 23 jobs; the macOS desktop suite's second
-        # shard took back one of the jobs saved since, because one job no longer
-        # ran the suite inside its step cap, and the agent journey added one
-        # (docs/TESTING.md).
-        self.assertLessEqual(most, 24, "the run before the macOS and merge work started 23 jobs, and the journey lane is one more")
+        # The 2026-10-05 run started 23 jobs. Since then the macOS desktop
+        # suite's second shard and the fifth and sixth web shards were added
+        # because the suites outgrew their shards' step caps, which a smaller
+        # queue does not fix (docs/TESTING.md, "Balancing the e2e shards"), and
+        # the agent journey's Linux job was added; a job beyond these is a new
+        # decision, made with this number.
+        self.assertLessEqual(most, 26, "a full run starts more jobs than the e2e shards and the agent journey need")
         testing = (ROOT / "docs/TESTING.md").read_text()
         self.assertIn(f"starts at most {most} jobs", testing)
 

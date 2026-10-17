@@ -259,7 +259,10 @@ jobs:
             list="$RUNNER_TEMP/web-e2e-list.txt"
             shard_file="$RUNNER_TEMP/web-e2e-shard.txt"
             bash scripts/verify-web.sh web e2e --list --reporter=list "${args[@]}" > "$list"
-            python3 scripts/e2e-shard.py split --table web/e2e/shard-durations.json --shard "$SHARD" "$list" > "$shard_file"
+            # `--budget`: a shard that plans more than 720 s (60 % of this
+            # step's cap) warns on the first shard, and the answer is another
+            # shard (docs/TESTING.md, "Balancing the e2e shards").
+            python3 scripts/e2e-shard.py split --table web/e2e/shard-durations.json --budget 720 --shard "$SHARD" "$list" > "$shard_file"
             if [ ! -s "$shard_file" ]; then
               echo "shard $SHARD is dealt no test: fewer tests than shards"
               exit 0

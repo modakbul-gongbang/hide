@@ -415,7 +415,7 @@ The desktop `@platform` tests run on Windows in a pull request (`windows-desktop
 
 ### How many jobs a run starts
 
-A run that plans every lane a pull request can plan starts at most 24 jobs, one more than the 2026-10-05 shape of run `37324202934` before the macOS and mailbox work: that work saved one, the macOS desktop suite's second shard took it back when one job no longer ran the suite inside its step cap, and the agent journey's Linux job added one.
+A run that plans every lane a pull request can plan starts at most 26 jobs, three more than the 2026-10-05 shape of run `37324202934` before the macOS and mailbox work: that work saved one, the e2e suites outgrew their shards' step caps, which took a second macOS desktop shard and two more web shards ([Balancing the e2e shards](#balancing-the-e2e-shards)), and the agent journey's Linux job added one.
 `scripts/tests/test_ci_plan.py` counts them from the workflows:
 
 | Jobs | Count | Why |
@@ -423,7 +423,7 @@ A run that plans every lane a pull request can plan starts at most 24 jobs, one 
 | `plan`, `policy`, `rust`, `checks`, `windows check`, `verify` | 6 | `checks` merges `web checks` and `desktop checks`: both install the same dependencies, run for a minute or two and start a runner each |
 | `windows e2e` | 1 | the reusable workflow no longer starts a `plan` job that only fanned the shard numbers out; a matrix picks its list by index |
 | `windows desktop` | 1 | the desktop `@platform` tests on Windows, the one job that starts the Electron app there in a pull request; it keeps the window it drew as the run's artifact |
-| `web e2e` (Linux) | 5 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and four shards instead of six, dealt by recorded durations; fewer jobs queue at the 20-job limit, and a shard's time at four is measured after merge |
+| `web e2e` (Linux) | 7 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and six shards dealt by recorded durations: six were cut to four on 2026-10-05 so fewer jobs queued at the 20-job limit, and went back to six on 2026-10-18 when the suite had grown to 68 minutes of tests and four shards ran 984 to 1111 s of their 1200 s step |
 | `os contract` (Linux, Windows), `os contract (macOS)` | 3 | one job per system, the macOS leg planned only for its two crates |
 | `agy contract` (Windows) | 1 | agy's hook block, trust, conversations and Hide AI backend, and the real agy reading Hide's block, where the hook commands and install folder differ; `rust` runs the same tests on Linux and the nightly runs all three systems |
 | `agent journey` (Linux) | 1 | the journey on the compiled Claude and Codex stand-ins, planned only for the journey's code, its contract and the stand-ins; the nightly and a release run every system and the signed-in lane ([VERIFICATION.md](VERIFICATION.md#agent-journey)) |
@@ -431,8 +431,8 @@ A run that plans every lane a pull request can plan starts at most 24 jobs, one 
 | `desktop e2e` | 2 | the only macOS lane of the desktop app's own changes, in two shards that build in place, because the whole suite outgrew one job's step cap ([Balancing the e2e shards](#balancing-the-e2e-shards)) |
 | `package` (Windows, Linux, macOS) | 3 | `package.yml`'s jobs, planned only for what goes into a package; before the lane its Windows and Linux jobs ran on the same paths outside `verify` |
 
-The common runs are smaller: a `herdr-core` or `hided` change starts 17 jobs with two on macOS (the `desktop e2e` shards), a web shell change 12 with two on macOS, a desktop-only change 7 with two on macOS, a `hide-platform` change 18 with three on macOS, a `hide-kit` or `hide-agent-hooks` change 21 with three on macOS (the `desktop e2e` shards and `package`), and a documentation change 3, as does a push that reuses the pull request's last green run.
-The median wall time, the share of runs whose Linux shards waited more than 10 minutes, and each shard's time at four shards come from a measurement of the pull request runs after this change merges, taken the way issue #561 took its baseline; they are not in this guide because a pull request cannot prove them.
+The common runs are smaller: a `herdr-core` or `hided` change starts 19 jobs with two on macOS (the `desktop e2e` shards), a web shell change 14 with two on macOS, a desktop-only change 7 with two on macOS (8 for `desktop/src/main`, which adds `windows check`), a `hide-platform` change 20 with three on macOS, a `hide-kit` or `hide-agent-hooks` change 23 with three on macOS (the `desktop e2e` shards and `package`), and a documentation change 3, as does a push that reuses the pull request's last green run.
+The median wall time and the share of runs whose Linux shards waited more than 10 minutes come from a measurement of the pull request runs after a change merges, taken the way issue #561 took its baseline; they are not in this guide because a pull request cannot prove them.
 The `plan` job's summary lists each lane with the paths that chose it.
 
 ### Balancing the e2e shards
@@ -450,10 +450,12 @@ A plan that finds tests the table lacks, or a heaviest shard more than 15 % over
 
 A shard's step keeps its 20-minute timeout as a cap on a stalled run, never as the size of its work.
 A lane sizes its shards to plan at most 60 % of that cap, and `split --budget <seconds>` turns a plan whose heaviest shard holds more into a `::warning::` on the first shard's step: the suite has outgrown its shards, and the answer is another shard in the caller's `shards:`, not a longer timeout.
-The desktop lane passes 720 seconds.
+Both lanes pass 720 seconds.
 A macOS shard costs one of the five macOS runners the organization runs at once and about 4.5 minutes of its own setup (checkout, the caches, the cargo build of the CLI binaries and the web build), so the macOS lanes add the fewest shards that keep that margin.
 
-The web table is the median over 20 runs of a passing test's duration on the Linux runner (2026-10-06); on it the four shards plan 472 seconds each, where Playwright's count split planned 306 to 577.
+The web table is the median over 20 main runs of a passing test's duration on the Linux runner (2026-10-18); on it the six shards plan 684 to 686 seconds each.
+The first recording (2026-10-06, four shards of 472 seconds, where Playwright's count split planned 306 to 577) had fallen behind a suite that grew from 1779 to 4109 seconds of tests in twelve days, 166 of its 332 tests new: half the tests weighed the median, and the four shards ran 984 to 1111 seconds of their 1200-second step.
+On the new table four shards would plan 1027 seconds each and five 822, both over the 720-second budget, so the lane runs six.
 Only the pull request's Linux lane deals by it: the nightly's macOS and Windows web lanes run one shard each.
 
 The desktop table, `desktop/e2e/shard-durations.json`, is the median over 20 runs of each test on the macOS runner (2026-10-17), and 0 for a test those runs only skipped (the packaged-app, device and SSH tests, which that lane skips); it deals the whole macOS suite in two shards, in a pull request (`pr.yml`) and in the nightly, while the Linux and Windows `@platform` legs run one shard each.
@@ -465,7 +467,8 @@ With `--no-deps` the order is still the config's: the one worker runs the projec
 What `--no-deps` gives up is the skip: a background test that fails its retry too no longer skips the shard's focus tests, which still run and report, while the lane fails as before.
 
 A table is its system's and suite's: per-test costs differ by system (symlinks, process and terminal tests), so a lane on another system that runs several shards records its own.
-Refresh a table when a shard's time drifts from the others in a run, when the plan warns, or after tests were added or renamed in bulk:
+Refresh a table when a shard's time drifts from the others in a run, when the plan warns, after tests were added or renamed in bulk, or when tests the table records at 0 because the lane skipped them start to run (the Factory specs while `FACTORY_OPEN` is off): no warning sees those.
+Refresh it this way:
 
 1. Download the logs of the lane's jobs (the Linux `web e2e` shards, the macOS `desktop e2e` shards) of about twenty recent successful runs (`gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`) into a directory outside the repository.
 2. `bash scripts/verify-web.sh <web|desktop> e2e --list --reporter=list > list.txt`, then `python3 scripts/e2e-shard.py durations --list list.txt <logs>... > <web|desktop>/e2e/shard-durations.json`; it keeps only the listed tests, takes a passing retry as its test, records 0 for a test the logs only skipped, and names the listed tests no log has a passing or skipped line for (they keep the median).
