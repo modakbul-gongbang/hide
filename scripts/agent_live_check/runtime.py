@@ -67,9 +67,11 @@ class ResidentOutput:
 class Runtime:
     def __init__(self, checkout: Path, run: Path, operator: Path, owner: OwnedProcesses,
                  *, herdr_bin: Path, fixture_bin: Path | None = None,
-                 socket: Path | None = None, state: Path | None = None):
+                 socket: Path | None = None, state: Path | None = None, home: Path | None = None):
         self.checkout, self.run, self.operator, self.owner = checkout, run, operator, owner
-        self.home = run / "daemon-home"
+        # The journey keeps the daemon home under the probe, where a sandboxed
+        # agent may read the candidate's hooks; the bell check keeps it apart.
+        self.home = home or run / "daemon-home"
         self.state = state or run / "state"
         self.probe = run / "probe"
         self.bin = run / "bin"

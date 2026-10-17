@@ -1,0 +1,232 @@
+"""The journey table and its verdicts: pure functions over what Hide reported.
+
+Every adapter and every cell has one row. A cell the adapter does not declare
+is N/A from the declaration; a cell that could not be measured says why. No
+verdict here reads a screen: each judges a spawn answer, snapshot rows, the
+conversation Hide's reader returned, a letter's record or Herdr's session
+report.
+"""
+
+PASS, FAIL, NOT_MEASURED, NA, EXCLUDED, PENDING = "pass", "fail", "not measured", "N/A", "excluded", "pending"
+
+# The contract's cell names in table order (contracts/agent-journey.json).
+CELLS = ("start", "start_untrusted", "reply", "integration", "guidance_memory", "letter",
+         "sleep_wake", "resume", "fork", "title", "usage")
+# What this cycle measures (PRD agent-journey-check D-20); every other declared
+# cell reads "not built in this cycle" until a later change builds it.
+BUILT_AGENTS = ("claude-code", "codex")
+BUILT_CELLS = ("start", "start_untrusted", "reply", "letter", "sleep_wake", "resume")
+# A cell that cannot be measured until another one passed.
+PREREQUISITE = {"reply": "start", "letter": "start", "sleep_wake": "start", "resume": "sleep_wake"}
+
+NOT_BUILT = "not built in this cycle"
+# Agents the operator took out of the journey (PRD D-45): every cell reads
+# excluded with the reason, never fail or not measured, and counts nowhere.
+EXCLUDED_AGENTS = {"cursor": "operator decision 2026-10-17"}
+INTERRUPTED = "interrupted"
+
+
+def cell(status, reason, evidence=None):
+    return {"status": status, "reason": reason, "evidence": evidence}
+
+
+def plan(contract, selected):
+    """The whole table before anything runs: N/A, unselected and unbuilt cells are final."""
+    table = {}
+    for row in contract:
+        cells = {}
+        for name in CELLS:
+            if row["id"] in EXCLUDED_AGENTS:
+                cells[name] = cell(EXCLUDED, EXCLUDED_AGENTS[row["id"]])
+            elif not row["cells"][name]:
+                cells[name] = cell(NA, "not declared by the adapter")
+            elif row["id"] not in selected:
+                cells[name] = cell(NOT_MEASURED, "not selected (--agents)")
+            elif row["id"] not in BUILT_AGENTS or name not in BUILT_CELLS:
+                cells[name] = cell(NOT_MEASURED, NOT_BUILT)
+            else:
+                cells[name] = cell(PENDING, "")
+        table[row["id"]] = cells
+    return table
+
+
+def settle(table, agent, name, status, reason, evidence=None):
+    """Records one cell's result; a settled cell is never overwritten."""
+    if status not in (PASS, FAIL, NOT_MEASURED):
+        raise ValueError("unknown_cell_status")
+    current = table[agent][name]
+    if current["status"] != PENDING:
+        return False
+    table[agent][name] = cell(status, reason, evidence)
+    return True
+
+
+def settle_agent(table, agent, reason, evidence=None):
+    """Every cell of the agent still open reads `reason` as not measured."""
+    for name, current in table[agent].items():
+        if current["status"] == PENDING:
+            table[agent][name] = cell(NOT_MEASURED, reason, evidence)
+
+
+def measurable(table, agent, name):
+    """Whether the cell is still open and its prerequisite passed; an open cell
+    whose prerequisite did not pass is settled as not measured, naming it."""
+    current = table[agent][name]
+    if current["status"] != PENDING:
+        return False
+    before = PREREQUISITE.get(name)
+    if before is None:
+        return True
+    status = table[agent][before]["status"]
+    if status == PASS:
+        return True
+    if status == PENDING:
+        raise ValueError("prerequisite_not_settled:" + before)
+    word = "failed" if status == FAIL else "not measured"
+    table[agent][name] = cell(NOT_MEASURED, f"prerequisite cell {word} ({before})")
+    return False
+
+
+def close(table, interrupted):
+    """Settles every cell left open: an interrupted run says so, and a cell a
+    finished run never reached says that, never pass."""
+    for agent, cells in table.items():
+        for name in CELLS:
+            if cells[name]["status"] != PENDING:
+                continue
+            before = PREREQUISITE.get(name)
+            if not interrupted and before and cells[before]["status"] not in (PASS, PENDING):
+                measurable(table, agent, name)
+            else:
+                cells[name] = cell(NOT_MEASURED, INTERRUPTED if interrupted else "not reached")
+
+
+def exit_code(table, selected, *, setup_failed):
+    """0 every measured selected cell passed, 1 a cell failed, 2 isolation,
+    setup or cleanup failed, 3 nothing failed but a selected cell was not
+    measured. An excluded cell counts toward none of them."""
+    if setup_failed:
+        return 2
+    rows = [current for agent in selected for current in table[agent].values()]
+    if any(row["status"] == PENDING for row in rows):
+        raise ValueError("table_not_closed")
+    if any(row["status"] == FAIL for row in rows):
+        return 1
+    if any(row["status"] == NOT_MEASURED for row in rows):
+        return 3
+    return 0
+
+
+# Verdicts. Each answers (status, reason) from facts Hide reported.
+
+def refusal(answer):
+    """The product's refusal code and message from a `hide` answer."""
+    if not isinstance(answer, dict):
+        return "no answer", None
+    error = answer.get("error") if isinstance(answer.get("error"), dict) else {}
+    return (error.get("code") or answer.get("reason") or "no answer",
+            error.get("message") or answer.get("message"))
+
+
+def spawn_verdict(answer):
+    """What `hide agent spawn` answered: registered, running, connected, with a native session."""
+    if not isinstance(answer, dict) or answer.get("ok") is not True:
+        code, message = refusal(answer)
+        return FAIL, f"spawn refused: {code}" + (f": {message}" if message else "")
+    view = answer.get("value") or {}
+    missing = [what for what, ok in (("registered", view.get("registered") is True),
+                                     ("running", view.get("runtime") == "running"),
+                                     ("connected", view.get("connection") == "connected"),
+                                     ("native session", bool(view.get("session"))))
+               if not ok]
+    if missing:
+        return FAIL, "spawn answered without " + ", ".join(missing)
+    return PASS, "registered, running, connected, native session " + str(view["session"])
+
+
+def turn_verdict(activities):
+    """The snapshot row went working and then stopped (the turn ended)."""
+    seen_working = False
+    for value in activities:
+        if value == "working":
+            seen_working = True
+        elif value == "stopped" and seen_working:
+            return PASS, "row went working, then stopped"
+    if not seen_working:
+        return FAIL, "row never read working"
+    return FAIL, "row read working and never stopped"
+
+
+def emitter_verdict(session, kind):
+    """Herdr's own integration reported the pane's session as herdr:<kind>."""
+    source = (session or {}).get("source")
+    if source == "herdr:" + kind:
+        return PASS, "Herdr integration reported the session as " + source
+    return FAIL, "Herdr integration did not report the session (source " + str(source) + ")"
+
+
+def start_verdict(spawn, turn, emitter):
+    for status, reason in (spawn, turn, emitter):
+        if status != PASS:
+            return status, reason
+    return PASS, "; ".join(reason for _, reason in (spawn, turn, emitter))
+
+
+def reply_verdict(read, session, token, after=0):
+    """The exact token in an assistant message Hide's reader returned for `session`.
+
+    `read` is the reader's answer: {"session", "events"} or {"error"}. A reply
+    found only by another parser, in another session or only in a human
+    message is not a pass.
+    """
+    if "error" in read:
+        return FAIL, "Hide's reader could not read the session: " + read["error"]
+    if read.get("session") != session:
+        return FAIL, f"Hide's reader read session {read.get('session')}, not {session}"
+    events = read.get("events", [])[after:]
+    if not any(event.get("role") == "assistant" for event in events):
+        return FAIL, "Hide's reader found no assistant message"
+    if any(event.get("role") == "assistant" and token in (event.get("text") or "") for event in events):
+        return PASS, "assistant message carries " + token
+    return FAIL, "no assistant message carries " + token
+
+
+def bell_turn(events, bell_line):
+    """The index just past the human event the doorbell typed, or None."""
+    for index, event in enumerate(events):
+        if event.get("role") == "user" and bell_line and bell_line in (event.get("text") or ""):
+            return index + 1
+    return None
+
+
+def letter_verdict(shown, read, session, token):
+    """The doorbell rang, the letter was delivered, and the reply to that turn carries the token."""
+    if not isinstance(shown, dict):
+        return FAIL, "hide request show gave no letter"
+    if not shown.get("bell_line"):
+        return FAIL, "the doorbell never rang (state " + str(shown.get("state")) + ")"
+    if shown.get("state") != "delivered":
+        return FAIL, "letter state is " + str(shown.get("state")) + ", not delivered"
+    if "error" in read:
+        return FAIL, "Hide's reader could not read the session: " + read["error"]
+    after = bell_turn(read.get("events", []), shown["bell_line"])
+    if after is None:
+        return FAIL, "Hide's reader found no turn the doorbell opened"
+    status, reason = reply_verdict(read, session, token, after)
+    return status, ("delivered; " + reason) if status == PASS else reason
+
+
+def sleep_verdict(asleep, awake):
+    """`asleep`: the row's sleep states after Sleep; `awake`: rows after Wake."""
+    if "sleeping" not in asleep:
+        return FAIL, "row never read asleep after Sleep (" + ", ".join(map(str, asleep[-3:])) + ")"
+    if not awake:
+        return FAIL, "row never woke after Wake"
+    return PASS, "row read asleep after Sleep and running after Wake"
+
+
+def resume_verdict(before, after, reply):
+    if not before or before != after:
+        return FAIL, f"native session changed across Wake ({before} -> {after})"
+    status, reason = reply
+    return status, ("same session " + before + "; " + reason) if status == PASS else reason

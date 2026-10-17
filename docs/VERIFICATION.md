@@ -20,6 +20,7 @@ A claim is verified by the check that observes what a caller of the behavior obs
 | Responsiveness, rendering, CPU, or memory | The layered procedure | [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) |
 | The installed app carries the fix | A rebuilt package, then the identity checks | [dev-runtime.md](dev-runtime.md), [INSTALL.md](INSTALL.md#verify-the-installed-app) |
 | A remote device's behavior | A private Herdr on the device | [A device check](#a-device-check) |
+| Each supported agent works end to end in Hide | `python3 scripts/agent-journey-check.py` | [Agent journey](#agent-journey) |
 | Anything the rows above cannot reach yet | Manual QA on an isolated candidate | [Manual native QA](#manual-native-qa) |
 
 Run the Rust lanes through `scripts/verify-cargo.sh`, never a bare `cargo test` from an agent's pane: the pane carries `HERDR_SOCKET_PATH` for the operator's Herdr, and on 2026-10-02 two daemon tests followed the operator's live Herdr with the real HOME, where the label worker reads the operator's conversations, because the core then took that variable over the socket a test handed it; the core no longer does, it takes its home from hided rather than from the process `HOME`, and the script clears every `HERDR_*` variable first.
@@ -315,6 +316,61 @@ The fixture report is marked synthetic and proves tool plumbing, not authenticat
 That lane includes operator-routing refusal, byte-exact configuration restoration, runtime failure, owned-server loss and Ctrl-C cleanup.
 `scripts/tests/test_agent_live_protection.py` exercises real filesystem recovery/conflicts, OS denial, timeout/output caps and owner-death cleanup; `test_agent_live_results.py` challenges unsafe verdicts and false delivery evidence.
 The scene preparation and overlay tests cover supported MCP formats, positive native identity, role separation and bounded private authentication copies.
+
+## Agent journey
+
+`python3 scripts/agent-journey-check.py` follows each supported agent through what an operator does with it in Hide, on an isolated candidate, and says per agent and step whether it worked.
+It is the check a release runs on the Mac before its tag ([skills/release/SKILL.md](../skills/release/SKILL.md), [CONTRIBUTING.md: Releases](../CONTRIBUTING.md#releases)), and the one to run after a change to how Hide starts, wakes or writes to an agent, after moving the pinned Herdr and after a substantial agent CLI update.
+
+### What it proves
+
+Each agent is started only through `hide agent spawn --parent here` from a controller pane, in its own branch, worktree and tab of the measured repository (this checkout's main root), and each step is judged from what Hide itself reports: the daemon's snapshot rows, `hide request show`, Herdr's `agent list` and Hide's own conversation reader (`hide_session::read_conversation`, built as the `journey_conversation` example).
+Every prompt asks only for a fresh token (`Reply with exactly <token>`), so a model never chooses an action.
+
+| Step | Passes when |
+| --- | --- |
+| `start` | The spawn answers registered, running and connected with a native session id, the row reads working and then idle, and Herdr's integration reports that session as `herdr:<kind>` |
+| `reply` | Hide's reader finds the first turn's token in an assistant message; a reply only another parser finds fails |
+| `letter` | A token sent with `hide request send` comes back in the turn Hide's doorbell opened, and `hide request show` says delivered |
+| `sleep_wake` | After the daemon's Sleep event the row reads asleep, and after Wake it runs again |
+| `resume` | The operator opens the woken agent (`focus_pane`), its terminal takes this screen's keys, a typed token prompt is answered in the session it slept in, and Herdr reports the same session id |
+| `start_untrusted` | A start in a repository the account never trusted, with no preparation |
+
+The cells an adapter declares come from `contracts/agent-journey.json`, which `hide-agent-adapter` generates and its contract test keeps current ([contracts/README.md](../contracts/README.md#agent-journey)).
+It does not prove the desktop window, a physical keyboard, an agent other than the declared rows, or a model, provider or CLI version other than the ones its report names.
+
+### Cells, reasons and exit codes
+
+Every cell reads `pass`, `fail`, `not measured`, `N/A` or `excluded`, with a reason and the evidence file under the run folder; a failed cell carries the product's own refusal or the state that never came with the time waited, and the agent's pane capture.
+- `N/A` is a cell the adapter does not declare.
+- `not measured` is a cell the run could not reach without touching the operator's state or spending what it must not: a CLI that is missing or signed out (the journey never signs in), a Codex login copy older than 7 days, a repository Claude was never trusted in, a cell whose earlier step failed (`earlier cell failed (<cell>)`), a stopped run, and `not built in this cycle`.
+  Claude's never-trusted start is `not measured` locally, since it would leave an entry in the operator's shared `~/.claude.json`; CI mode measures it in its disposable HOME.
+- `excluded` is an agent the operator took out of the journey, with the date: Cursor, `excluded: operator decision 2026-10-17`.
+  `--agents cursor` is refused, and an excluded cell counts toward no exit code and no release's list of blanks.
+
+Exit 0 means every measurable selected cell passed, 1 a failed cell or a request budget overrun, 2 an isolation, setup or cleanup failure (no agent starts when isolation cannot be proven), and 3 no failure but a `not measured` cell.
+Ctrl-C, SIGTERM and SIGHUP stop at the next step, settle the open cells as stopped, write the report and clean up.
+The table is printed and written as `report.md` and `report.json` in a new `agents/runs/agent-journey-<time>-<id>/`, with each agent's spawn arguments, the arguments and environment names its mode added, its model requests and its budget.
+
+### Local mode (macOS)
+
+Build `hided`, `hide` and the hooks with `bash scripts/verify-cargo.sh cli` and the reader with `bash scripts/verify-cargo.sh build -p hide-session --example journey_conversation`, fetch the pinned Herdr with `scripts/fetch-herdr-runtime.sh`, then run it from the worktree; `--agents claude-code,codex` narrows the rows and `--model ID=MODEL` passes a model through the product's own flag.
+It reuses `scripts/agent_live_check`'s isolation: the pinned Herdr on a private socket, this worktree's `hided` on private state with the kit installed into a private daemon home, the write sandbox and the process guardian.
+Claude keeps the operator's HOME for its keychain sign-in and reads only the candidate's settings; Codex reads a private `CODEX_HOME` holding a 0600 copy of its login, removed at the end, and the measured repository's trust, written only there.
+The journey writes no operator file; the entries Claude itself leaves in `~/.claude.json` and `~/.claude/projects` for the run's paths are listed by file and key and left alone.
+Every exit ends the agents, panes, Herdr and `hided` and confirms it, and removes the run's `journey/<run-id>-*` branches and worktrees only when the name and start commit match its record.
+Never run a cargo build or test while it runs: either relinks `target/debug` under the running `hided`.
+
+### The CI lanes
+
+`.github/workflows/agent-journey.yml` runs the journey with `--mode ci`, where each agent runs in the runner's disposable HOME with no sandbox, on Linux and macOS.
+- The stand-in lane (`fixture`) puts the compiled `web/e2e/shims/claude-shim.c` in place of Claude Code and Codex with `--fixture-bin` and passes only when both pass `start`, `reply`, `letter`, `sleep_wake` and `resume`.
+  The stand-in runs the hook commands the kit installed and writes each CLI's session file format, so a change that breaks the journey's verdicts, the hooks' path into Hide or the cleanup fails it; its report is marked `fixture` with what a stand-in cannot show, and is never a release's agent evidence.
+  `pr.yml` runs it on Linux when the journey's code or the shims change (`scripts/ci-plan.py`), `nightly.yml` and `release.yml` every time.
+- The signed-in lane (`login`, nightly and release) signs each agent in with the CI account's key: `HIDE_CLAUDE_API_KEY` as Claude's `ANTHROPIC_API_KEY`, `HIDE_CODEX_API_KEY` through `codex login --with-api-key`.
+  An agent without its secret reads `not measured: not configured (<secret>)` and leaves a notice; the key is kept under the run's probe, which the cleanup removes, and no report or artifact carries it.
+  A failed cell, an isolation, setup or cleanup failure, or a request budget overrun fails the lane; a turn the provider answered nothing because the key's day was spent is `not measured: provider quota exhausted (<quota ids>)` with a `Not measured` warning, by the rule `contracts/provider-quota.json` keeps ([TESTING.md: A real agent on CI](TESTING.md#a-real-agent-on-ci)), and Claude Code and Codex have no row there yet, so every refusal of theirs, a per-minute rate limit included, fails.
+`scripts/agent-journey-lane.py` turns a report into the lane's verdict and its annotations, and the lane keeps the report as an artifact.
 
 ## A device check
 
