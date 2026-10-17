@@ -301,8 +301,9 @@ fn questions_without_native_identity_or_from_another_runtime_never_query() {
         ),
         (
             "claude-code",
-            serde_json::json!({"tool_name":"ExitPlanMode","session_id":"x".repeat(257)})
-                .to_string(),
+            serde_json::json!({"tool_name":"ExitPlanMode",
+                "session_id":"x".repeat(hide_agent_hooks::delivery::SESSION_LIMIT + 1)})
+            .to_string(),
         ),
     ] {
         let run = machine.run(runtime, &payload, Some(PANE), &[]);

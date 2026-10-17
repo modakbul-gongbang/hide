@@ -233,6 +233,7 @@ pub const COMMANDS: &[Spec] = &[
             "shell_starting",
             "agent_not_started",
             "worktree_unconfirmed",
+            "session_too_long",
         ],
     },
     spec(

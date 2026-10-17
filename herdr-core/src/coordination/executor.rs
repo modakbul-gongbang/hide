@@ -163,6 +163,15 @@ fn record(
     parent: Option<String>,
     project: Option<String>,
 ) -> Result<AgentRecord, String> {
+    let session = agent
+        .agent_session
+        .as_ref()
+        .ok_or("native_identity_unavailable")?
+        .value
+        .clone();
+    if session.len() > crate::delivery::SESSION_LIMIT {
+        return Err(super::SESSION_TOO_LONG.into());
+    }
     Ok(AgentRecord {
         id: String::new(),
         // A pane id is never a name: Herdr's fallback identifier for an
@@ -171,12 +180,7 @@ fn record(
         machine: host.machine.into(),
         host_scope: host.scope.into(),
         native_machine: host.native_machine.into(),
-        session: agent
-            .agent_session
-            .as_ref()
-            .ok_or("native_identity_unavailable")?
-            .value
-            .clone(),
+        session,
         instance,
         pane: agent.pane_id.clone(),
         parent,
@@ -1357,6 +1361,52 @@ mod tests {
         assert_eq!(unnamed.name, None);
         assert_eq!(make(Some("w9J:p9R".into())).name, None);
         assert_eq!(make(Some("lead".into())).name.as_deref(), Some("lead"));
+    }
+
+    /// Pi names its session by its file path, which Herdr keeps up to 4096
+    /// bytes: a registration keeps the same, and a longer one is refused by
+    /// its own reason when the record is made, never as an unavailable ledger.
+    #[test]
+    fn a_session_path_registers_up_to_herdrs_bound_and_past_it_is_refused_by_name() {
+        for (bytes, expected) in [
+            (crate::delivery::SESSION_LIMIT, None),
+            (
+                crate::delivery::SESSION_LIMIT + 1,
+                Some(super::super::SESSION_TOO_LONG),
+            ),
+        ] {
+            let file = "/session.jsonl";
+            let path = format!("/{}{file}", "d".repeat(bytes - file.len() - 1));
+            let reported = path.clone();
+            let herdr = FakeHerdr::start("coordination-session-path", move |method, _| {
+                assert_eq!(method, "agent.list");
+                json!({"type":"agent_list","agents":[{
+                    "pane_id":"w9J:p9R","workspace_id":"w9J","tab_id":"w9J:t1",
+                    "terminal_id":"terminal","revision":1,"focused":false,
+                    "agent_status":"idle","agent":"pi","name":"child",
+                    "agent_session":{"source":"herdr:pi","agent":"pi",
+                        "kind":"path","value":reported}}]})
+            });
+            let native =
+                wait_native_identity(&herdr.connector(), "w9J:p9R", Some("child"), "pi").unwrap();
+            let made = record(
+                &native,
+                HostIdentity {
+                    machine: crate::node::TEST_NODE,
+                    scope: "scope",
+                    native_machine: "machine",
+                    on_node: true,
+                },
+                "terminal".into(),
+                native.name.clone(),
+                None,
+                None,
+            );
+            match expected {
+                None => assert_eq!(made.unwrap().session, path),
+                Some(code) => assert_eq!(made.unwrap_err(), code),
+            }
+        }
     }
 
     #[test]
