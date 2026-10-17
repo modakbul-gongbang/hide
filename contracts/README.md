@@ -53,7 +53,7 @@ target/debug/examples/export_web_contract > contracts/agent-adapters.json
 
 # Agent journey
 
-`agent-journey.json` is the agent journey's projection of the same declarations ([docs/VERIFICATION.md](../docs/VERIFICATION.md#agent-journey)): for each adapter its Herdr kind, the flag that separates a spawn's first prompt, the model flag, which journey cells it declares, and the most model requests a signed-in CI run may make for it (`request_budget`, three per turn the declared cells start).
+`agent-journey.json` is the agent journey's projection of the same declarations ([docs/VERIFICATION.md](../docs/VERIFICATION.md#agent-journey)): for each adapter its Herdr kind, the flag that separates a spawn's first prompt, the model flag, the name a row shows for it while it has no task title (`untitled`), which journey cells it declares, and the most model requests a signed-in CI run may make for it (`request_budget`, three per turn the declared cells start).
 `scripts/agent_journey` reads only this file for what an agent supports, so a cell an adapter does not declare reads N/A rather than a failure.
 The Rust contract test fails when the file differs from the current projection; regenerate it, never edit it:
 
