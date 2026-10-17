@@ -2810,7 +2810,10 @@ impl Runtime {
                 // Hide's kit comes off the device on its own helper
                 // connection, which the disconnect below leaves open for it.
                 let kit_removal = self.queue_device_kit_removal(&registration);
-                self.disconnect_remote_device(&payload.device_id);
+                self.disconnect_remote_device(
+                    &payload.device_id,
+                    super::devices::Retiring::Removed,
+                );
                 self.forget_device_directories(&payload.device_id);
                 // Removing a device removes Hide's own record of it: its
                 // project registrations, expanded folders and file tabs. Its
