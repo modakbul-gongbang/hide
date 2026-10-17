@@ -4770,14 +4770,22 @@ impl Runtime {
             None
         };
         // The pane keeps the choice its agent started with, for the restarts
-        // Hide makes of it.
+        // Hide makes of it, under the name the start gave the agent: the task
+        // worker names it from Herdr's own id for the pane.
         if let (live::TaskAgentOutcome::Started, Some(launch)) = (&outcome, &launch)
-            && let Some((pane_id, kind)) =
+            && let Some((pane_id, kind, name)) =
                 self.snapshot.task_operation.as_ref().and_then(|operation| {
-                    Some((operation.pane_id.clone()?, operation.agent_kind.clone()?))
+                    let pane_id = operation.pane_id.clone()?;
+                    let kind = operation.agent_kind.clone()?;
+                    let herdr_pane_id = match operation.device_id.as_deref() {
+                        Some(device) => super::remote_pane_source_id(device, &pane_id)?,
+                        None => pane_id.as_str(),
+                    };
+                    let name = crate::fork::task_agent_name(&kind, herdr_pane_id);
+                    Some((pane_id, kind, name))
                 })
         {
-            self.record_pane_launch(&pane_id, &kind, launch, None);
+            self.record_pane_launch(&pane_id, &kind, &name, launch, None);
         }
         let Some(operation) = self.snapshot.task_operation.as_mut() else {
             return false;

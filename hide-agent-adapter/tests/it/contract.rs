@@ -335,30 +335,40 @@ fn every_start_dialect_takes_only_the_model_and_effort_it_declares_and_refuses_u
     );
 }
 
+/// A launch choice reaches an agent only as its declared options take it,
+/// wherever it was asked for: `--model` for each agent whose CLI lists it
+/// (each help read 2026-10-18; OpenCode 2.0.29 lists none), the effort in the
+/// form the dialect declares, and a refusal for anything else.
 #[test]
-fn a_launch_choice_reaches_every_start_as_one_model_flag_and_the_declared_effort() {
+fn a_launch_choice_reaches_each_agent_only_as_its_declared_options_take_it() {
     use hide_agent_adapter::{LaunchChoice, LaunchDialect};
     let choice = |model: Option<&str>, effort: Option<&str>| LaunchChoice {
         model: model.map(str::to_owned),
         effort: effort.map(str::to_owned),
     };
+    let takes_model = [
+        "claude-code",
+        "codex",
+        "grok",
+        "pi",
+        "omp",
+        "cursor",
+        "antigravity",
+    ];
     for row in ADAPTERS.iter().filter(|row| row.start.is_some()) {
         let dialect = row.start.unwrap();
         assert_eq!(
             dialect.choice_arguments(&LaunchChoice::default()).unwrap(),
             Vec::<String>::new()
         );
-        // The start surfaces' model menu starts every agent with `--model`,
-        // so a restart of any of them carries it the same way.
-        assert_eq!(
-            dialect
-                .choice_arguments(&choice(Some("some-model"), None))
-                .unwrap(),
-            ["--model", "some-model"],
-            "{}",
-            row.id
-        );
-        for unsafe_model in ["model; rm -rf /", "--yolo", ""] {
+        // A glob in a model id stays one literal argument (Herdr quotes it).
+        let model = dialect.choice_arguments(&choice(Some("opus[1m]"), None));
+        if takes_model.contains(&row.id) {
+            assert_eq!(model.unwrap(), ["--model", "opus[1m]"], "{}", row.id);
+        } else {
+            assert!(model.is_err(), "{} takes no model", row.id);
+        }
+        for unsafe_model in ["model; rm -rf /", "--yolo", "", "two words"] {
             assert!(
                 dialect
                     .choice_arguments(&choice(Some(unsafe_model), None))

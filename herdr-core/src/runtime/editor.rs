@@ -2943,6 +2943,7 @@ impl Runtime {
                     self.record_pane_launch(
                         &agent.pane_id,
                         &agent.kind,
+                        &agent.name,
                         &agent.launch,
                         agent.session_id.as_deref(),
                     );

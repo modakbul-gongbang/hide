@@ -1826,6 +1826,8 @@ pub struct ReopenOutcome {
 pub struct ReopenedAgent {
     pub pane_id: String,
     pub kind: String,
+    /// The name the reopen started it under.
+    pub name: String,
     pub launch: hide_agent_adapter::LaunchChoice,
     pub session_id: Option<String>,
 }
@@ -2534,6 +2536,7 @@ fn start_or_degrade_agent(
     let started = |session_id: Option<&String>| ReopenedAgent {
         pane_id: pane_id.to_owned(),
         kind: agent.kind.clone(),
+        name: name.clone(),
         launch: agent.launch.clone(),
         session_id: session_id.cloned(),
     };
@@ -3449,6 +3452,13 @@ fn run_agent_fork_with_registration(
         current()
     };
     check()?;
+    // The arguments are settled before any pane exists, so a choice the agent
+    // does not take never leaves a pane to close.
+    let mut args = request.agent.resume_arguments(&request.session_id);
+    args.extend(crate::runtime::agent_choice::launch_arguments(
+        request.agent.kind(),
+        &request.launch,
+    )?);
     // A split takes no command, so only a fork in its own tab runs the
     // integration's launch.
     let launch = matches!(request.placement, ForkPlacement::Tab)
@@ -3520,25 +3530,19 @@ fn run_agent_fork_with_registration(
             pane_id
         }
     };
-    let mut args = request.agent.resume_arguments(&request.session_id);
-    let started =
-        crate::runtime::agent_choice::launch_arguments(request.agent.kind(), &request.launch)
-            .and_then(|launch| {
-                args.extend(launch);
-                start_agent_checked(
-                    mutation_connector,
-                    Some(node),
-                    &format!("herdr-core:fork:{}:start", request.name),
-                    &child_pane_id,
-                    shell,
-                    &request.name,
-                    request.agent.kind(),
-                    args,
-                    request.codex_daemon,
-                    &check,
-                )
-                .map_err(start_error_message)
-            });
+    let started = start_agent_checked(
+        mutation_connector,
+        Some(node),
+        &format!("herdr-core:fork:{}:start", request.name),
+        &child_pane_id,
+        shell,
+        &request.name,
+        request.agent.kind(),
+        args,
+        request.codex_daemon,
+        &check,
+    )
+    .map_err(start_error_message);
     let started = started.and_then(|pane_id| {
         if request.agent == crate::fork::ForkableAgent::Antigravity {
             fork_antigravity(mutation_connector, node, request, &pane_id)?;
@@ -4287,6 +4291,7 @@ mod tests {
             Some(ReopenedAgent {
                 pane_id: "pane".into(),
                 kind: "codex".into(),
+                name: "reopen-key-0".into(),
                 launch,
                 session_id: None,
             })

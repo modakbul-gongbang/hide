@@ -1622,6 +1622,7 @@ fn pending_fork(runtime: &mut Runtime, source: &str, request_id: Option<&str>) {
             tab_id: None,
             focused: None,
             kind: "claude".into(),
+            name: "fork-fixture".into(),
             launch: Default::default(),
         },
     );

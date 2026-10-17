@@ -17,6 +17,8 @@ use serde_json::json;
 const TABS: [&str; 2] = ["w-order:t1", "w-order:t2"];
 const AGENT: &str = "w-order:t2:p";
 const SESSION: &str = "11111111-2222-3333-4444-555555555555";
+/// The Herdr name Hide started the t2 agent under.
+const NAME: &str = "reviewer";
 
 fn choice(model: &str, effort: &str) -> LaunchChoice {
     LaunchChoice {
@@ -43,19 +45,36 @@ fn event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
     .unwrap()
 }
 
-/// The two-tab session with t1 in front and, when `listed`, an idle `kind`
-/// agent in t2 on [`SESSION`].
+/// The two-tab session with t1 in front and, when `listed`, the idle `kind`
+/// agent Hide started in t2 as [`NAME`], on [`SESSION`].
 fn session(checkout: &str, kind: &str, listed: bool) -> SessionSnapshotPayload {
+    hosting(
+        checkout,
+        listed.then_some((kind, Some(NAME), Some(SESSION))),
+    )
+}
+
+/// The same session with t2 hosting `agent`: its kind, the name Herdr
+/// reports it by (none for one started by hand) and its conversation.
+fn hosting(
+    checkout: &str,
+    agent: Option<(&str, Option<&str>, Option<&str>)>,
+) -> SessionSnapshotPayload {
     let mut payload = tab_order_payload(checkout, &TABS, &TABS, "w-order:t1");
-    if listed {
+    if let Some((kind, name, session)) = agent {
+        let mut row = json!({
+            "id": name.unwrap_or(AGENT), "pane_id": AGENT, "agent": kind,
+            "agent_status": "idle", "state_change_seq": 4, "cwd": checkout,
+            "tokens": {"task": "Review the parser"}
+        });
+        if let Some(name) = name {
+            row["name"] = json!(name);
+        }
+        if let Some(session) = session {
+            row["agent_session"] = json!({"kind": "id", "value": session});
+        }
         let owned: SessionSnapshotPayload =
-            crate::sidebar::owned_label_fixture(json!({"agents": [{
-                "id": "reviewer", "pane_id": AGENT, "agent": kind,
-                "agent_status": "idle", "state_change_seq": 4, "cwd": checkout,
-                "agent_session": {"kind": "id", "value": SESSION},
-                "tokens": {"task": "Review the parser"}
-            }]}))
-            .unwrap();
+            crate::sidebar::owned_label_fixture(json!({"agents": [row]})).unwrap();
         payload.agents.extend(owned.agents);
     }
     payload
@@ -74,7 +93,7 @@ fn started(kind: &str, launch: Option<&LaunchChoice>) -> (Runtime, tempfile::Tem
     if let Some(launch) = launch {
         // What the task start, the spawn executor and every restart do once
         // the agent is running in the pane.
-        runtime.record_pane_launch(AGENT, kind, launch, None);
+        runtime.record_pane_launch(AGENT, kind, NAME, launch, None);
     }
     runtime.ingest_session(Ok(session(&checkout, kind, true)));
     (runtime, folder)
@@ -174,6 +193,7 @@ fn a_wake_resumes_the_agent_with_the_model_and_effort_it_was_started_with() {
             runtime.snapshot().ui_state.pane_launches.get(AGENT),
             Some(&PaneLaunch {
                 kind: kind.to_owned(),
+                name: NAME.to_owned(),
                 choice: launch,
                 session: Some(SESSION.to_owned()),
             }),
@@ -248,24 +268,47 @@ fn a_fork_starts_with_the_model_and_effort_its_source_was_started_with() {
         wait(&shared, "the fork to settle", |runtime| {
             runtime.forks_in_flight.is_empty()
         });
-        // The fork is a new conversation on its source's choice; the
-        // record binds to the session the fork reports.
+        // The fork is a new agent on its source's choice, under the name
+        // the fork started it with.
+        let record = shared
+            .lock()
+            .unwrap()
+            .snapshot()
+            .ui_state
+            .pane_launches
+            .get("w-order:t2:fork")
+            .cloned()
+            .expect("the fork's pane keeps the choice");
         assert_eq!(
-            shared
-                .lock()
-                .unwrap()
-                .snapshot()
-                .ui_state
-                .pane_launches
-                .get("w-order:t2:fork"),
-            Some(&PaneLaunch {
-                kind: kind.to_owned(),
-                choice: launch,
-                session: None,
-            }),
+            (record.kind.as_str(), &record.choice, record.session),
+            (kind, &launch, None),
             "{kind}"
         );
+        assert!(record.name.starts_with("fork-"), "{}", record.name);
     }
+}
+
+/// A saved choice the agent does not take (a store edited by hand) refuses
+/// the fork with the reason before any pane is made for it.
+#[test]
+fn a_fork_on_a_choice_its_agent_does_not_take_is_refused_before_a_pane_is_made() {
+    let launch = LaunchChoice {
+        model: None,
+        effort: Some("ultra".into()),
+    };
+    let (mut runtime, _folder) = started("codex", Some(&launch));
+    let (herdr, starts) = starting_herdr("launch-choice-fork-refused");
+    runtime.live.as_mut().unwrap().api_connector = Arc::new(herdr.connector());
+    runtime.dispatch_json(&event(
+        "fork_pane",
+        json!({"pane_id": AGENT, "placement": "side"}),
+    ));
+    let error = runtime.snapshot().status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "pane.fork_invalid_launch_choice");
+    assert!(error.message.contains("ultra"), "{}", error.message);
+    assert!(runtime.forks_in_flight.is_empty());
+    assert!(starts.recv_timeout(Duration::from_millis(200)).is_err());
+    assert!(herdr.methods().is_empty(), "{:?}", herdr.methods());
 }
 
 /// Closing a pane keeps its agent's choice with the closed pane, and the
@@ -315,6 +358,7 @@ fn a_closed_agent_takes_its_choice_to_the_pane_its_reopen_makes() {
             agents: vec![live::ReopenedAgent {
                 pane_id: "w-order:t3:p".into(),
                 kind: "claude".into(),
+                name: "reopen-closed-0".into(),
                 launch: launch.clone(),
                 session_id: Some(SESSION.into()),
             }],
@@ -328,51 +372,144 @@ fn a_closed_agent_takes_its_choice_to_the_pane_its_reopen_makes() {
             .get("w-order:t3:p"),
         Some(&PaneLaunch {
             kind: "claude".into(),
+            name: "reopen-closed-0".into(),
             choice: launch,
             session: Some(SESSION.into()),
         })
     );
 }
 
-/// A record describes the conversation Hide started: it binds to the first
-/// session the pane reports, and a pane that then hosts another session,
-/// another kind, or no longer exists drops it, so an agent started there by
-/// hand never inherits the choice.
+/// A record describes only the agent Hide started, by the name it started it
+/// under: an agent started in the same pane by hand (no name, or another),
+/// one of another kind, or a pane that is gone drops it, and an unnamed agent
+/// matches only by the conversation the named one last reported, as one back
+/// from a Herdr restart without its name does.
 #[test]
-fn a_launch_record_binds_to_its_first_conversation_and_leaves_with_it() {
+fn a_launch_record_describes_only_the_agent_hide_started_under_its_name() {
     let launch = choice("sonnet", "high");
     let (mut runtime, folder) = started("claude", Some(&launch));
     let checkout = checkout_of(&folder);
-    let bound = PaneLaunch {
-        kind: "claude".into(),
-        choice: launch.clone(),
-        session: Some(SESSION.into()),
+    let launches = |runtime: &Runtime| runtime.snapshot().ui_state.pane_launches.clone();
+    let described = |runtime: &Runtime| {
+        let agent = runtime
+            .snapshot()
+            .navigator
+            .agents
+            .iter()
+            .find(|agent| agent.pane_id == AGENT)
+            .cloned()
+            .expect("the t2 agent");
+        runtime.launch_choice_of(&agent)
     };
     assert_eq!(
-        runtime.snapshot().ui_state.pane_launches.get(AGENT),
-        Some(&bound)
+        launches(&runtime).get(AGENT),
+        Some(&PaneLaunch {
+            kind: "claude".into(),
+            name: NAME.into(),
+            choice: launch.clone(),
+            session: Some(SESSION.into()),
+        })
     );
+    assert_eq!(described(&runtime), launch);
 
-    let mut other = session(&checkout, "claude", true);
-    other.agents[0].agent_session = Some(crate::sidebar::SessionAgentSessionPayload {
-        kind: "id".into(),
-        value: "99999999-2222-3333-4444-555555555555".into(),
-    });
-    runtime.ingest_session(Ok(other));
-    assert!(runtime.snapshot().ui_state.pane_launches.is_empty());
+    // The named agent's own new conversation (Claude Code `/clear`) is
+    // still the agent Hide started with the choice.
+    let cleared = "22222222-2222-3333-4444-555555555555";
+    runtime.ingest_session(Ok(hosting(
+        &checkout,
+        Some(("claude", Some(NAME), Some(cleared))),
+    )));
+    assert_eq!(described(&runtime), launch);
+    assert_eq!(launches(&runtime)[AGENT].session.as_deref(), Some(cleared));
 
-    runtime.record_pane_launch(AGENT, "claude", &launch, None);
+    // Back from a Herdr restart without its name, on the same conversation.
+    runtime.ingest_session(Ok(hosting(
+        &checkout,
+        Some(("claude", None, Some(cleared))),
+    )));
+    assert_eq!(described(&runtime), launch);
+
+    // Started by hand in the pane before it reported a conversation: never
+    // described, and dropped once its own conversation shows.
+    runtime.ingest_session(Ok(hosting(&checkout, Some(("claude", None, None)))));
+    assert_eq!(described(&runtime), LaunchChoice::default());
+    assert!(launches(&runtime).contains_key(AGENT));
+    let by_hand = "99999999-2222-3333-4444-555555555555";
+    runtime.ingest_session(Ok(hosting(
+        &checkout,
+        Some(("claude", None, Some(by_hand))),
+    )));
+    assert_eq!(described(&runtime), LaunchChoice::default());
+    assert!(launches(&runtime).is_empty());
+
+    // Started under another name (another Hide start, or a reused pane id).
+    runtime.record_pane_launch(AGENT, "claude", NAME, &launch, None);
+    runtime.ingest_session(Ok(hosting(
+        &checkout,
+        Some(("claude", Some("other"), None)),
+    )));
+    assert!(launches(&runtime).is_empty());
+
+    runtime.record_pane_launch(AGENT, "claude", NAME, &launch, None);
     runtime.ingest_session(Ok(session(&checkout, "codex", true)));
-    assert!(runtime.snapshot().ui_state.pane_launches.is_empty());
+    assert!(launches(&runtime).is_empty());
 
-    runtime.record_pane_launch(AGENT, "claude", &launch, Some(SESSION));
+    runtime.record_pane_launch(AGENT, "claude", NAME, &launch, Some(SESSION));
     runtime.ingest_session(Ok(tab_order_payload(
         &checkout,
         &TABS[..1],
         &TABS[..1],
         "w-order:t1",
     )));
-    assert!(runtime.snapshot().ui_state.pane_launches.is_empty());
+    assert!(launches(&runtime).is_empty());
+}
+
+/// The records are bounded: one per pane a registered machine's Herdr holds,
+/// a removed device takes its own with it, and past the cap a start is
+/// recorded nowhere and logged.
+#[test]
+fn launch_records_leave_with_their_device_and_stop_at_the_cap() {
+    let launch = choice("sonnet", "high");
+    let (mut runtime, _folder) = started("claude", Some(&launch));
+    let device = "device-a";
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: device.to_owned(),
+            label: device.to_owned(),
+            origin: crate::model::LinkOrigin::Dialed {
+                ssh_alias: device.to_owned(),
+            },
+            herdr_socket_path: None,
+            host_consent: None,
+        });
+    let remote = format!("remote:{device}:pane:w1:p1");
+    runtime.record_pane_launch(&remote, "claude", "hide-claude-w1-p1", &launch, None);
+    assert!(runtime.dispatch_json(&event("remove_device", json!({"device_id": device}))));
+    let launches = &runtime.snapshot().ui_state.pane_launches;
+    assert!(!launches.contains_key(&remote));
+    assert!(launches.contains_key(AGENT), "this machine's record stays");
+
+    for index in launches.len()..crate::runtime::agent_choice::PANE_LAUNCH_LIMIT {
+        runtime.record_pane_launch(&format!("w9:p{index}"), "claude", "name", &launch, None);
+    }
+    let ((), records) = crate::diagnostics::capture(|| {
+        runtime.record_pane_launch("w9:over", "claude", "name", &launch, None);
+    });
+    let launches = &runtime.snapshot().ui_state.pane_launches;
+    assert_eq!(
+        launches.len(),
+        crate::runtime::agent_choice::PANE_LAUNCH_LIMIT
+    );
+    assert!(!launches.contains_key("w9:over"));
+    assert!(
+        records
+            .iter()
+            .any(|record| record["kind"] == "pane_launch.limit"),
+        "{records:?}"
+    );
 }
 
 /// The record outlives the daemon, so a wake after a restart still has it.

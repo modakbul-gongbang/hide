@@ -1173,6 +1173,11 @@ pub struct SidebarAgentSnapshot {
     /// cannot stand in for this.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub herdr_name: Option<String>,
+    /// The name Herdr reports the agent by, a name Hide made up included,
+    /// which a pane's launch record is matched by (`runtime::agent_choice`).
+    /// Never on the wire.
+    #[serde(skip_serializing)]
+    pub started_name: Option<String>,
     /// What this pane declares about the agent it was forked from: the
     /// source's pane and the digest of the session it hosted
     /// (`wire::fork_declaration`). A fork is the operator's root, so this is
@@ -3824,17 +3829,22 @@ pub struct PaneCompletion {
     pub state_change_seq: Option<u64>,
 }
 
-/// The launch choice of the agent Hide started in a pane, for the
-/// conversation it started there.
+/// The launch choice of the agent Hide started in a pane, under the name it
+/// started it with.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct PaneLaunch {
     /// The agent kind, in Herdr's spelling.
     pub kind: String,
+    /// The Herdr name Hide started the agent under (a task's, a wake's, a
+    /// fork's, a reopen's, or `hide agent spawn --name`). Herdr keeps a name
+    /// unique among its live agents, and an agent started in the pane by hand,
+    /// or one Herdr gives the pane's id to again, has another name or none,
+    /// so the record never describes it.
+    pub name: String,
     pub choice: hide_agent_adapter::LaunchChoice,
-    /// The native session the choice describes: none until the pane's agent
-    /// reports one, which then binds it. A pane that reports another session
-    /// or another kind hosts something the choice does not describe, such as
-    /// an agent started there by hand, and the record is dropped.
+    /// The conversation the named agent last reported, so the same agent
+    /// still matches when it comes back from a Herdr restart without its
+    /// name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<String>,
 }

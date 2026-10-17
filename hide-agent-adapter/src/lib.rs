@@ -240,10 +240,16 @@ impl LaunchDialect {
     }
 
     /// How the CLI takes a model and a reasoning effort at launch; `{}` is
-    /// replaced by the value. Verified against Claude Code 2.1 and Codex 0.160,
-    /// and agy 1.4.0's model (`--model`, listed by `agy models`, which Hide
-    /// AI's agy backend reads and passes too); the other agents declare
-    /// neither, so a start of theirs takes none.
+    /// replaced by the value. This is the one rule every start and restart
+    /// follows (the start surfaces, `hide agent spawn`, a Factory worker, and
+    /// a wake, fork or reopen of any of them), so a model or effort an agent
+    /// does not declare is refused wherever it is asked for. Verified against
+    /// Claude Code 2.1 and Codex 0.160, agy 1.4.0's model (`--model`, listed
+    /// by `agy models`, which Hide AI's agy backend reads and passes too), and
+    /// the `--model` that the help of Grok 1.0.52, Pi 1.0.4, omp 18.7.0 and
+    /// Cursor CLI 2026.10.14 lists (read 2026-10-18; their efforts are not
+    /// declared yet). OpenCode 2.0.29's lists no model option, so it takes
+    /// neither.
     pub const fn options(self) -> LaunchOptions {
         match self {
             Self::Antigravity => LaunchOptions {
@@ -256,14 +262,18 @@ impl LaunchDialect {
                 effort: &["--effort", "{}"],
                 efforts: &["low", "medium", "high", "xhigh", "max"],
             },
-            // `-m` is the short form; every model goes as `--model`
-            // (`LaunchDialect::choice_arguments`).
+            // `-m` is the short form; every agent spells a model `--model`.
             Self::Codex => LaunchOptions {
                 model: &["--model", "{}"],
                 effort: &["-c", "model_reasoning_effort={}"],
                 efforts: &["minimal", "low", "medium", "high", "xhigh"],
             },
-            Self::Grok | Self::OpenCode | Self::Pi | Self::Omp | Self::Cursor => LaunchOptions {
+            Self::Grok | Self::Pi | Self::Omp | Self::Cursor => LaunchOptions {
+                model: &["--model", "{}"],
+                effort: &[],
+                efforts: &[],
+            },
+            Self::OpenCode => LaunchOptions {
                 model: &[],
                 effort: &[],
                 efforts: &[],
@@ -343,8 +353,13 @@ pub struct LaunchOptions {
     pub efforts: &'static [&'static str],
 }
 
-/// A model name reaches a command line, so it is held to the characters
-/// model ids use; anything else is refused rather than quoted.
+/// The one check of a model name, wherever a start or a restart takes one.
+/// It reaches the agent's command line as one argument: the pinned Herdr
+/// types each argument into the pane's shell in single quotes, so a glob or
+/// a parameter in it stays literal (`opus[1m]` and `$HOME` reached the agent
+/// unchanged through zsh, measured on Herdr 0.9.5, 2026-10-18), and the name
+/// is held to the characters model ids use so it can never read as an option
+/// or carry a space or a control character.
 pub fn valid_model(model: &str) -> bool {
     // A leading dash would read as an option to the agent's CLI.
     !model.is_empty()
@@ -377,44 +392,16 @@ impl LaunchChoice {
 }
 
 impl LaunchDialect {
-    /// The arguments a start or a restart adds for `choice`: `--model <id>`,
-    /// which every agent Hide starts takes (the start surfaces' model menu
-    /// reaches each one by it), and the effort in the form this dialect
-    /// declares. Refused with the reason for a model that is not a model name
-    /// or an effort this dialect does not declare.
+    /// The arguments a start or a restart adds for `choice`, in the form this
+    /// dialect declares (`options`); refused with the reason for a model or
+    /// an effort it does not take.
     pub fn choice_arguments(self, choice: &LaunchChoice) -> Result<Vec<String>, String> {
-        let mut arguments = Vec::new();
-        if let Some(model) = &choice.model {
-            if !valid_model(model) {
-                return Err(format!("model `{model}` is not a model name"));
-            }
-            arguments.extend(["--model".to_owned(), model.clone()]);
-        }
-        if let Some(effort) = &choice.effort {
-            arguments.extend(self.options().effort_arguments(effort)?);
-        }
-        Ok(arguments)
+        self.options()
+            .arguments(choice.model.as_deref(), choice.effort.as_deref())
     }
 }
 
 impl LaunchOptions {
-    fn effort_arguments(self, effort: &str) -> Result<Vec<String>, String> {
-        if self.efforts.is_empty() {
-            return Err("this agent takes no effort at launch".to_owned());
-        }
-        if !self.efforts.contains(&effort) {
-            return Err(format!(
-                "effort `{effort}` is not one of {}",
-                self.efforts.join(", ")
-            ));
-        }
-        Ok(self
-            .effort
-            .iter()
-            .map(|part| part.replace("{}", effort))
-            .collect())
-    }
-
     /// The launch arguments for a model and an effort, refused with the
     /// reason when either is not something this CLI declares.
     pub fn arguments(
@@ -433,7 +420,16 @@ impl LaunchOptions {
             arguments.extend(self.model.iter().map(|part| part.replace("{}", model)));
         }
         if let Some(effort) = effort {
-            arguments.extend(self.effort_arguments(effort)?);
+            if self.efforts.is_empty() {
+                return Err("this agent takes no effort at launch".to_owned());
+            }
+            if !self.efforts.contains(&effort) {
+                return Err(format!(
+                    "effort `{effort}` is not one of {}",
+                    self.efforts.join(", ")
+                ));
+            }
+            arguments.extend(self.effort.iter().map(|part| part.replace("{}", effort)));
         }
         Ok(arguments)
     }

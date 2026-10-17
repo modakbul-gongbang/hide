@@ -2846,6 +2846,7 @@ impl Runtime {
                 self.retire_device_editor_tabs(&payload.device_id);
                 self.forget_device_views(&payload.device_id);
                 self.forget_device_sleep(&payload.device_id);
+                self.forget_device_launches(&payload.device_id);
                 self.forget_recent_checkouts(|held| held.device_id == payload.device_id);
                 self.rebuild_device_rows();
                 self.rebuild_tab_strips();
@@ -3076,8 +3077,26 @@ impl Runtime {
                     );
                     return true;
                 }
+                // A choice the agent does not take is refused before any pane
+                // is made for the fork.
                 let launch = self.launch_choice_of(agent);
+                if let Err(detail) =
+                    super::agent_choice::launch_arguments(agent_kind.kind(), &launch)
+                {
+                    self.set_error(
+                        "pane.fork_invalid_launch_choice",
+                        format!(
+                            "Pane {pane_id}'s agent was started with a model or effort it does not take: {detail}"
+                        ),
+                        false,
+                    );
+                    return true;
+                }
                 self.fork_sequence += 1;
+                let name = fork_name(
+                    &pane_id,
+                    &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
+                );
                 self.forks_in_flight.insert(
                     pane_id.clone(),
                     super::agents::PendingFork {
@@ -3089,6 +3108,7 @@ impl Runtime {
                         tab_id: None,
                         focused: None,
                         kind: agent.agent_kind.clone(),
+                        name: name.clone(),
                         launch: launch.clone(),
                     },
                 );
@@ -3118,10 +3138,6 @@ impl Runtime {
                         Some((pane.cwd.clone(), checkout.next_tab_label.clone()))
                     })
                     .unzip();
-                let name = fork_name(
-                    &pane_id,
-                    &format!("{}-{}", self.fork_sequence, unix_milliseconds()),
-                );
                 let request = ForkRequest {
                     parent_state_change_seq: agent.state_change_seq,
                     connection_generation: self.live_generation,

@@ -354,6 +354,18 @@ impl Spawner {
         machine: Option<&str>,
         intent: &str,
     ) -> Result<Value, String> {
+        self.spawn_with(parent, machine, intent, Default::default(), Vec::new())
+    }
+
+    /// A spawn with a launch choice and the agent's native arguments.
+    fn spawn_with(
+        &self,
+        parent: Option<&str>,
+        machine: Option<&str>,
+        intent: &str,
+        launch: hide_agent_adapter::LaunchChoice,
+        args: Vec<String>,
+    ) -> Result<Value, String> {
         crate::coordination::run(
             self.client.clone(),
             authority(&self.actor),
@@ -367,8 +379,8 @@ impl Spawner {
                 repo: "/srv/repo".into(),
                 branch: "topic".into(),
                 path: None,
-                args: Vec::new(),
-                launch: Default::default(),
+                args,
+                launch,
                 task: None,
             },
         )
@@ -433,6 +445,72 @@ fn a_delegated_spawn_makes_the_child_on_the_device_under_the_caller() {
         .clone();
     assert_eq!(tokens["parent_pane"], "sender");
     assert_eq!(tokens["parent_machine"], "machine-local");
+}
+
+/// A spawn's launch choice reaches the agent as its own options, ahead of the
+/// native arguments that end with the first prompt after `--`, and the pane
+/// keeps it for the restarts Hide makes of that agent.
+#[test]
+fn a_spawn_starts_the_agent_with_its_choice_ahead_of_the_prompt() {
+    let spawner = spawner();
+    let launch = hide_agent_adapter::LaunchChoice {
+        model: Some("gpt-6-luna".into()),
+        effort: Some("low".into()),
+    };
+    let native = vec!["--".to_owned(), "review the diff".to_owned()];
+    spawner
+        .spawn_with(Some("here"), Some(DEVICE), "chosen", launch.clone(), native)
+        .unwrap();
+    let start = spawner
+        .herdr
+        .calls()
+        .into_iter()
+        .find(|(method, _)| method == "agent.start")
+        .expect("the agent was started")
+        .1;
+    assert_eq!(
+        start["args"],
+        json!([
+            "--no-daemon",
+            "--model",
+            "gpt-6-luna",
+            "-c",
+            "model_reasoning_effort=low",
+            "--",
+            "review the diff"
+        ])
+    );
+    let runtime = spawner.runtime.lock().unwrap();
+    let kept = &runtime.snapshot.ui_state.pane_launches["remote:mini:pane:w2:p1"];
+    assert_eq!(
+        (kept.kind.as_str(), kept.name.as_str()),
+        ("codex", "worker")
+    );
+    assert_eq!(kept.choice, launch);
+}
+
+/// A model or effort the agent does not take is refused with its reason
+/// before anything is made, so no pane starts on a choice it would drop.
+#[test]
+fn a_spawn_refuses_a_choice_the_agent_does_not_take_before_anything_is_made() {
+    let spawner = spawner();
+    let launch = hide_agent_adapter::LaunchChoice {
+        model: None,
+        effort: Some("ultra".into()),
+    };
+    assert_eq!(
+        spawner.spawn_with(
+            Some("here"),
+            Some(DEVICE),
+            "unknown-effort",
+            launch,
+            Vec::new()
+        ),
+        Err("invalid_launch_choice".into())
+    );
+    assert!(spawner.ledger().spawns.is_empty());
+    assert!(spawner.herdr.methods().is_empty());
+    assert_eq!(spawner.node.calls.load(Ordering::SeqCst), 0);
 }
 
 /// A device that cannot record Codex's trust of the worktree refuses the

@@ -1814,7 +1814,11 @@ fn worker_and_observer_settings_are_checked_and_old_values_keep_reading() {
     assert_eq!(effort["reason"], "config_invalid", "{effort}");
     // Every agent whose adapter declares a start can work (B28); one that
     // declares no launch model refuses a candidate naming one.
-    let model = config(&mut h, "workers", r#"[{"agent":"grok","model":"grok-4"}]"#);
+    let model = config(
+        &mut h,
+        "workers",
+        r#"[{"agent":"opencode","model":"fixture-model"}]"#,
+    );
     assert_eq!(model["reason"], "config_invalid", "{model}");
     h.world().missing_agents.clear();
     assert_eq!(config(&mut h, "default_runtime", "codex")["ok"], true);

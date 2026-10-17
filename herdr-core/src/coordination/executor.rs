@@ -976,7 +976,7 @@ fn spawn(
             runtime
                 .lock()
                 .map_err(|_| "delivery_unavailable")?
-                .record_pane_launch(&pane_id, kind, &reserved.launch, None);
+                .record_pane_launch(&pane_id, kind, name, &reserved.launch, None);
         }
         let mut child = record(
             &native,

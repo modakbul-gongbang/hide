@@ -643,7 +643,11 @@ impl Runtime {
         }));
         // The pane's record follows the agent the wake starts: the resumed
         // conversation, or the new one it reports.
-        let (kind, session) = (request.kind.clone(), request.session_id.clone());
+        let (kind, name, session) = (
+            request.kind.clone(),
+            request.name.clone(),
+            request.session_id.clone(),
+        );
         if let Err(message) = agent_sleep_herdr::spawn_wake(context, request) {
             return self.ingest_agent_wake(
                 pane_id,
@@ -655,7 +659,7 @@ impl Runtime {
             );
         }
         let session = (mode == WakeMode::Resume).then_some(session).flatten();
-        self.record_pane_launch(pane_id, &kind, &choice, session.as_deref());
+        self.record_pane_launch(pane_id, &kind, &name, &choice, session.as_deref());
         self.persist_ui_state();
         self.refresh_sleep_rows_of(pane_id);
         true

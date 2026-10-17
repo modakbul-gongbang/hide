@@ -1026,17 +1026,7 @@ impl Runtime {
             return false;
         }
         match outcome {
-            // The woken pane keeps the choice for the agent's next restart.
-            agent_sleep_herdr::DormantStartOutcome::Started => {
-                if let Some(pane_id) = work.record.wake_pane_id.as_deref() {
-                    self.record_pane_launch(
-                        pane_id,
-                        &work.record.kind,
-                        &work.record.launch,
-                        Some(&work.record.native_session_id),
-                    );
-                }
-            }
+            agent_sleep_herdr::DormantStartOutcome::Started => {}
             agent_sleep_herdr::DormantStartOutcome::NotStarted => self.fail_dormant(
                 &work.id,
                 "The saved conversation could not be resumed. Retry uses the same wake tab.",
@@ -1136,6 +1126,22 @@ impl Runtime {
                 }
             } else {
                 self.snapshot.ui_state.agent_sleep.dormant.remove(&id);
+            }
+            // The woken pane keeps the choice for the agent's next restart.
+            // It is kept here, where the wake is confirmed once, because
+            // Herdr can show the woken agent before the start's own answer.
+            if let Some(pane) = record.wake_pane_id.as_deref() {
+                let name = agent_sleep_herdr::dormant_wake_name(&agent_sleep_herdr::DormantWork {
+                    id: id.clone(),
+                    record: record.clone(),
+                });
+                self.put_pane_launch(
+                    pane,
+                    &record.kind,
+                    &name,
+                    &record.launch,
+                    Some(&record.native_session_id),
+                );
             }
             self.finish_agent_effect(
                 &record.context.checkout_path,
