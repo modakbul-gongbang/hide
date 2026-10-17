@@ -481,7 +481,7 @@ Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/App
 If the app connects but no workspace, terminal, or agent can start, no `herdr server` is running on the socket hided uses.
 The packaged app starts one on launch, Retry, a second launch or a Dock click; the host log records `herdr.server_started`, or `herdr.status_failed` or `herdr.server_start_failed` with the reason it could not.
 A development host, or a launch with `HERDR_BIN_PATH` set as an explicit override, starts none; run that Herdr once to start its server.
-The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then PATH.
+The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then that `herdr` runs from a new terminal of the same account, whose login shell's `PATH` the daemon searches too.
 When `HERDR_BIN_PATH` names a file that no longer exists, `hide connect` and the daemon refuse to start and print that path: the Herdr server was started from an app bundle that has since been replaced, and every pane it opens still carries the old path.
 The packaged app replaces that pane value with its own bundled `herdr`, but the `hide` CLI run directly in such a pane, and an unpackaged development host, still inherit it; unset `HERDR_BIN_PATH` there, or hand the server off to the new bundle's `herdr`.
 

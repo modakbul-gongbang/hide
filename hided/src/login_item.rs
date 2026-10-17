@@ -93,9 +93,9 @@ pub fn exited_at_start(
 }
 
 /// What the core's login item runs it with: the account's home, the state
-/// folder, and the Herdr binary and socket this machine's hided resolved.
-/// A move's checks of the account's logins run with it too
-/// (`core_move::preflight`).
+/// folder, and the Herdr binary and socket this machine's hided resolved
+/// (`Env::herdr_program`, the herdr the move's checks asked). A move's
+/// checks of the account's logins run with it too (`core_move::preflight`).
 pub fn core_environment(home: &Path, state_dir: &Path) -> Result<Vec<(String, String)>, String> {
     let env =
         crate::env::load().map_err(|errors| format!("{} environment errors", errors.len()))?;
@@ -108,9 +108,10 @@ pub fn core_environment(home: &Path, state_dir: &Path) -> Result<Vec<(String, St
     ];
     let socket = env
         .herdr_socket_path
+        .clone()
         .ok_or("this machine has no Herdr socket for its core (HERDR_SOCKET_PATH)")?;
     environment.push(("HERDR_SOCKET_PATH".to_owned(), socket));
-    if let Some(bin) = env.herdr_bin_path {
+    if let Some(bin) = env.herdr_program() {
         environment.push((
             "HERDR_BIN_PATH".to_owned(),
             bin.to_string_lossy().into_owned(),
