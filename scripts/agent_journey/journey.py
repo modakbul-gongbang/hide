@@ -395,6 +395,9 @@ class Journey:
             return found if phase == "sleeping" else None
         try:
             found = self.daemon.wait(asleep, SLEEP_SECONDS, "the sleeping session")
+            record["checkouts_asleep"] = [checkout.get("path") for project in
+                                          (self.daemon.rest.get("navigator") or {}).get("workspaces", [])
+                                          for checkout in project.get("checkouts") or []][:64]
         except ProcessError as error:
             if self.runtime.owner.cancelled.is_set():
                 raise
@@ -403,7 +406,7 @@ class Journey:
             self.settle("sleep_wake", cells.sleep_verdict(record["asleep"], False), self.evidence("sleep-wake", record))
             return
         record["sleep_id"], record["wake_available"] = found["sleep_id"], found.get("wake_available")
-        old = self.pane
+        old, before = self.pane, found.get("reason")
         self.daemon.dispatch("wake_sleeping_session", {"sleep_id": found["sleep_id"]})
         record["waking"] = []
 
@@ -414,7 +417,17 @@ class Journey:
             if entry:
                 if not record["waking"] or record["waking"][-1] != entry.get("phase"):
                     record["waking"].append(entry.get("phase"))
-                return {"failed": entry.get("reason") or "failed"} if entry.get("phase") == "failed" else None
+                if entry.get("phase") == "failed":
+                    return {"failed": entry.get("reason") or "failed"}
+                # A refused Wake keeps the session asleep and says why on it.
+                if entry.get("phase") == "sleeping" and entry.get("reason") and entry.get("reason") != before:
+                    paths = [checkout.get("path") for project in (rest.get("navigator") or {}).get("workspaces", [])
+                             for checkout in project.get("checkouts") or []]
+                    record["refused"] = {"reason": entry["reason"], "entry": entry,
+                                         "checkout_listed": entry.get("checkout_path") in paths,
+                                         "checkouts": paths[:64]}
+                    return {"failed": "refused: " + entry["reason"]}
+                return None
             agents = (rest.get("navigator") or {}).get("agents", [])
             row = next((agent for agent in agents if agent.get("session_id") == self.session
                         and agent.get("pane_id") != old), None)
