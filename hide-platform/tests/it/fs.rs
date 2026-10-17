@@ -133,6 +133,126 @@ fn an_ancestor_is_passed_over_only_when_the_account_neither_owns_nor_may_add_to_
     assert!(names(&anchor).is_empty());
 }
 
+/// A standard account is how most people run Hide, and the Windows runner's
+/// account is an administrator, so the chain is made again on a thread that
+/// acts with the account's token filtered the way UAC filters a standard
+/// session. From the volume's root down to new folders in the profile, every
+/// ancestor that account may add to is flushed and every other passed over.
+#[cfg(windows)]
+#[test]
+fn a_standard_account_makes_and_establishes_a_durable_chain() {
+    let outer = folder();
+    let deepest = outer.path().join("state").join("ledger");
+
+    let standard = Standard::act();
+    assert!(!standard.is_administrator());
+    let made = private::create_dir_all_durable(&deepest, outer.path());
+    let established = private::establish_dir_durability(&deepest);
+    drop(standard);
+
+    made.unwrap();
+    assert_eq!(
+        identity::file_id(&established.unwrap()).unwrap(),
+        identity::file_id(&deepest).unwrap()
+    );
+}
+
+/// The calling thread acting with the account's `LUA_TOKEN`, the filtered
+/// token of a standard session: the Administrators group only denies and
+/// the administrator's privileges are gone. Dropping it ends the act on
+/// every exit, a failed assertion included; it never leaves its thread.
+#[cfg(windows)]
+struct Standard(std::marker::PhantomData<*const ()>);
+
+#[cfg(windows)]
+impl Standard {
+    fn act() -> Self {
+        use windows_sys::Win32::Foundation::CloseHandle;
+        use windows_sys::Win32::Security::{
+            CreateRestrictedToken, ImpersonateLoggedOnUser, LUA_TOKEN, TOKEN_ASSIGN_PRIMARY,
+            TOKEN_DUPLICATE, TOKEN_QUERY,
+        };
+        use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        let mut process = std::ptr::null_mut();
+        // SAFETY: the current-process pseudo handle is always valid.
+        let opened = unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_ASSIGN_PRIMARY | TOKEN_DUPLICATE | TOKEN_QUERY,
+                &mut process,
+            )
+        };
+        assert_ne!(opened, 0, "{}", std::io::Error::last_os_error());
+        let mut filtered = std::ptr::null_mut();
+        // SAFETY: `process` is an open token; nothing else is disabled,
+        // deleted or restricted, so every list is empty.
+        let made = unsafe {
+            CreateRestrictedToken(
+                process,
+                LUA_TOKEN,
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                0,
+                std::ptr::null(),
+                &mut filtered,
+            )
+        };
+        let made_error = std::io::Error::last_os_error();
+        // SAFETY: the handle is open and owned here.
+        unsafe { CloseHandle(process) };
+        assert_ne!(made, 0, "{made_error}");
+        // SAFETY: `filtered` is an open primary token; the thread keeps its
+        // own reference, so this one is closed either way.
+        let acting = unsafe { ImpersonateLoggedOnUser(filtered) };
+        let acting_error = std::io::Error::last_os_error();
+        unsafe { CloseHandle(filtered) };
+        assert_ne!(acting, 0, "{acting_error}");
+        Self(std::marker::PhantomData)
+    }
+
+    /// Whether the token this thread acts with is in the Administrators
+    /// group, which is what the act has to have taken away.
+    fn is_administrator(&self) -> bool {
+        use windows_sys::Win32::Security::{
+            CheckTokenMembership, CreateWellKnownSid, SECURITY_MAX_SID_SIZE,
+            WinBuiltinAdministratorsSid,
+        };
+        let mut sid = [0u8; SECURITY_MAX_SID_SIZE as usize];
+        let mut size = sid.len() as u32;
+        // SAFETY: `sid` holds `size` writable bytes.
+        let made = unsafe {
+            CreateWellKnownSid(
+                WinBuiltinAdministratorsSid,
+                std::ptr::null_mut(),
+                sid.as_mut_ptr().cast(),
+                &mut size,
+            )
+        };
+        assert_ne!(made, 0, "{}", std::io::Error::last_os_error());
+        let mut member = 0;
+        // SAFETY: a null token checks the thread's impersonation token, and
+        // `sid` is the SID just made.
+        let checked = unsafe {
+            CheckTokenMembership(std::ptr::null_mut(), sid.as_mut_ptr().cast(), &mut member)
+        };
+        assert_ne!(checked, 0, "{}", std::io::Error::last_os_error());
+        member != 0
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Standard {
+    fn drop(&mut self) {
+        use windows_sys::Win32::Security::RevertToSelf;
+        // SAFETY: ends this thread's impersonation, which `act` began.
+        if unsafe { RevertToSelf() } == 0 && !thread::panicking() {
+            panic!("{}", std::io::Error::last_os_error());
+        }
+    }
+}
+
 /// A folder of the account's that it can read and enter but add nothing
 /// to, made private again when the test is done with it so it can go.
 struct Closed(PathBuf);

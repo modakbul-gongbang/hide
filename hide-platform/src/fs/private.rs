@@ -729,8 +729,8 @@ mod sys {
 
     use widestring::U16CString;
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
-        LUID, LocalFree,
+        CloseHandle, ERROR_NO_TOKEN, ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, HANDLE,
+        INVALID_HANDLE_VALUE, LUID, LocalFree,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -754,7 +754,9 @@ mod sys {
         FILE_SHARE_WRITE, OPEN_ALWAYS, OPEN_EXISTING,
     };
     use windows_sys::Win32::System::SystemServices::MAXIMUM_ALLOWED;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+    use windows_sys::Win32::System::Threading::{
+        GetCurrentProcess, GetCurrentThread, OpenProcessToken, OpenThreadToken,
+    };
 
     use super::{Handle, InspectionDirectory};
     use crate::fs::wide;
@@ -840,7 +842,7 @@ mod sys {
         }
     }
 
-    /// The account this process runs as, and the owner a file it creates gets
+    /// The account this thread acts as, and the owner a file it creates gets
     /// (the Administrators group for an elevated process).
     struct Account {
         user: Sid,
@@ -877,13 +879,28 @@ mod sys {
         .to_vec()))
     }
 
-    fn account() -> io::Result<Account> {
+    /// The token this thread acts with: the one it impersonates, which is what
+    /// the system checks its opens against, or else the process's.
+    fn acting_token(access: u32) -> io::Result<Closing> {
         let mut token = null_mut();
+        // SAFETY: the current-thread pseudo handle is always valid; the token
+        // is opened with the process's own rights.
+        if unsafe { OpenThreadToken(GetCurrentThread(), access, 1, &mut token) } != 0 {
+            return Ok(Closing(token));
+        }
+        let error = io::Error::last_os_error();
+        if error.raw_os_error() != Some(ERROR_NO_TOKEN as i32) {
+            return Err(error);
+        }
         // SAFETY: the current-process pseudo handle is always valid.
-        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+        if unsafe { OpenProcessToken(GetCurrentProcess(), access, &mut token) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        let token = Closing(token);
+        Ok(Closing(token))
+    }
+
+    fn account() -> io::Result<Account> {
+        let token = acting_token(TOKEN_QUERY)?;
         Ok(Account {
             user: token_sid(token.0, TokenUser)?,
             owner: token_sid(token.0, TokenOwner)?,
@@ -1141,23 +1158,11 @@ mod sys {
             return Err(io::Error::from_raw_os_error(status as i32));
         }
         let descriptor = Local(descriptor);
-        let mut process = null_mut();
-        // SAFETY: the current-process pseudo handle is always valid.
-        if unsafe {
-            OpenProcessToken(
-                GetCurrentProcess(),
-                TOKEN_QUERY | TOKEN_DUPLICATE,
-                &mut process,
-            )
-        } == 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        let process = Closing(process);
+        let acting = acting_token(TOKEN_QUERY | TOKEN_DUPLICATE)?;
         // The access check takes an impersonation token.
         let mut token = null_mut();
-        // SAFETY: `process` is an open token; `token` receives a new one.
-        if unsafe { DuplicateToken(process.0, SecurityImpersonation, &mut token) } == 0 {
+        // SAFETY: `acting` is an open token; `token` receives a new one.
+        if unsafe { DuplicateToken(acting.0, SecurityImpersonation, &mut token) } == 0 {
             return Err(io::Error::last_os_error());
         }
         let token = Closing(token);
