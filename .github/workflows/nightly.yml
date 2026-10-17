@@ -6,7 +6,8 @@
 # reaches) is found within a day. The Rust toolchain is not one of those: its version is
 # the one `rust-toolchain.toml` names, so a new image cannot change it.
 # A test fails this run only when it fails its retry too (CI retries a failed
-# test once); a test that passes the retry is flaky, and
+# test once, all but the signed-in agy turn, which spends a provider's daily
+# requests; .config/nextest.toml); a test that passes the retry is flaky, and
 # scripts/ci-flaky-report.py files it as an issue, as in pr.yml. A test that
 # fails its retry too is written as a `Failed test` annotation on its job.
 # Runner windows and Linux Xvfb exercise automation, not physical IME/device QA.

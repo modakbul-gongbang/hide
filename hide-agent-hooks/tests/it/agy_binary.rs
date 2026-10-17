@@ -128,8 +128,8 @@ esac
 /// before agy's own permission check. The turn runs on `HIDE_AGY_MODEL`,
 /// the model the key's free tier serves (`gemini-3.1-pro`, agy's default in
 /// API-key mode, has a quota of 0), and the refusal needs that model to make
-/// the call it is asked for. A turn the provider refused before that call
-/// because the key's requests for the day were spent leaves the refusal
+/// the call it is asked for. A turn the provider answered nothing because
+/// the key's requests for the day were spent leaves the refusal
 /// unmeasured: it says so in a `Not measured` warning and passes. Unix only:
 /// the stand-in is a shell script.
 #[cfg(unix)]
@@ -255,16 +255,22 @@ fn a_signed_in_agy_turn_fires_hide_s_hooks() {
         transcript.contains("LETTER-CI-7731"),
         "the letter is not in the conversation:\n{report}"
     );
+    // One request of the key's day per model response agy records.
+    let responses = transcript
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|step| step["type"] == "PLANNER_RESPONSE")
+        .count();
     // The start reaches Hide only through the model's tool call. When the
-    // provider refused the turn before that call because the key's requests
-    // for the day were spent, the refusal is not measured: said where the
-    // run's reader and the nightly report see it, and passed (docs/TESTING.md,
-    // A real agent on CI). The line starts on its own, since libtest may
-    // have left its own text on the current one.
-    let started = events
-        .iter()
-        .any(|event| event["step_update"]["tool_name"] == "run_command");
-    if !started && let Some(quotas) = spent_quota(&stderr) {
+    // provider answered nothing because the key's requests for the day were
+    // spent, the refusal is not measured: said where the run's reader and the
+    // nightly report see it, and passed (docs/TESTING.md, A real agent on
+    // CI). A model that answered and then ran out reads as any other failure.
+    // The line starts on its own, since libtest may have left its own text on
+    // the current one.
+    if responses == 0
+        && let Some(quotas) = spent_quota(&stderr)
+    {
         println!(
             "\n::warning title=Not measured::agy_binary::a_signed_in_agy_turn_fires_hide_s_hooks%0Aprovider quota exhausted ({}): the hooks fired and the letter went in, the refused start was not reached",
             quotas.join(", ")
@@ -287,13 +293,7 @@ fn a_signed_in_agy_turn_fires_hide_s_hooks() {
         refused,
         "agy's start was not refused with Hide's reason:\n{stdout}\n{report}"
     );
-    // What a passing turn spends of the key's daily requests, one per model
-    // response, for the budget in `agy-contract.yml`.
-    let responses = transcript
-        .lines()
-        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
-        .filter(|step| step["type"] == "PLANNER_RESPONSE")
-        .count();
+    // What a passing turn spent, for the budget in `agy-contract.yml`.
     println!("agy turn: {responses} model responses");
 }
 

@@ -1,8 +1,9 @@
 # cargo-nextest, which CI runs the Rust suite with (scripts/verify-cargo.sh
 # nextest). The `ci` profile retries a failed test once: a test that passes the
 # retry is flaky, the run passes, and scripts/ci-flaky-report.py files it from
-# the JUnit report. A test that fails twice fails the lane. The default profile
-# retries nothing, so a flaky test fails where it is written.
+# the JUnit report. A test that fails twice fails the lane. The signed-in agy
+# turn below is the one test it does not retry. The default profile retries
+# nothing, so a flaky test fails where it is written.
 # docs/TESTING.md, "Flaky tests", owns the policy.
 #
 # A nextest older than 0.9.145 on macOS lets a test inherit the output pipe of
