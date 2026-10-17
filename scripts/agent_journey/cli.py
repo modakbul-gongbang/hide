@@ -379,7 +379,7 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
         # The kit installs an agent's hooks only where its own folder is, as
         # a CLI that has run once leaves it; a new runner has none. Made
         # before the CLI first runs, as Codex writes into it (CODEX_HOME).
-        private_directory(runtime.home / ci.HOME_FOLDERS[kind])
+        private_directory(runtime.home.joinpath(*rows[key]["home_folder"]))
         environment = {**clean_env(), "HOME": str(runtime.home), "TMPDIR": runtime.env["TMPDIR"]}
         _, version, _ = runtime.owner.run([str(launch), "--version"], env=environment, check=False)
         agent["version"] = version.strip()[:120]

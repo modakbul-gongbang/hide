@@ -8,6 +8,9 @@ pub struct JourneyAdapter {
     pub id: &'static str,
     /// The agent kind `hide agent spawn --kind` takes and Herdr reports.
     pub herdr_kind: &'static str,
+    /// The agent's own folder in its HOME, whose presence tells the kit the
+    /// agent is set up there, as a CLI that has run once leaves it.
+    pub home_folder: &'static [&'static str],
     /// What separates the spawn's native arguments from its first prompt;
     /// absent for an agent Hide cannot start.
     pub prompt_flag: Option<&'static str>,
@@ -122,6 +125,7 @@ pub fn journey_contract() -> impl Iterator<Item = JourneyAdapter> {
         JourneyAdapter {
             id: row.id,
             herdr_kind: row.herdr.name,
+            home_folder: row.herdr.folder,
             prompt_flag: row.start.map(|start| start.prompt_flag()),
             model_flag: row.start.map_or(&[], |start| start.options().model),
             cells,

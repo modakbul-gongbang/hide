@@ -40,9 +40,6 @@ LOGINS = {
     "omp": {"secret": "HIDE_OMP_API_KEY", "key_env": "OPENAI_API_KEY", "env": {}},
 }
 
-# Each CLI's own folder in its HOME, which says to the kit that it is set up.
-HOME_FOLDERS = {"claude": ".claude", "codex": ".codex"}
-
 # A stand-in asks no folder question, so its start anywhere says nothing of one.
 FIXTURE_UNTRUSTED = "not measured: a stand-in has no folder question; the login lane measures it"
 # The agents the stand-ins imitate (web/e2e/shims/live-check.h) and the cells
@@ -138,7 +135,7 @@ def login(runtime, kind, launch, root):
     # Registered before anything is written, so even an unconfirmed cleanup removes them.
     runtime.credential_roots.add(keys)
     if kind == "codex":
-        runtime.credential_roots.add(runtime.home / HOME_FOLDERS[kind])
+        runtime.credential_roots.add(runtime.home / LOGINS[kind]["env"]["CODEX_HOME"])
     private_directory(keys)
     write_private(key_file(runtime, kind), secret.encode())
     if kind == "claude":
