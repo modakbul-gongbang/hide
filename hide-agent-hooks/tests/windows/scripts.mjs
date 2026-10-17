@@ -32,7 +32,7 @@ async function opencode() {
       status: async () => ({ data: {} }),
     },
   };
-  const hooks = await module.HidePlugin({ client, directory: process.cwd() });
+  const hooks = await module.default.server({ client, directory: process.cwd() });
   await hooks.event({ event: sample("session.created") });
   const added = [];
   for (let attempt = 0; attempt < PROMPTS; attempt += 1) {

@@ -69,7 +69,7 @@ fn the_scripts_start_the_helper_by_its_path_and_carry_its_guidance() {
     std::fs::copy(env!("CARGO_BIN_EXE_hide-agent-hooks"), &helper).unwrap();
 
     for (agent, file) in [
-        ("opencode", &opencode::PLUGIN),
+        ("opencode", &opencode::V1),
         ("pi", &pi_extension::PI),
         ("omp", &pi_extension::OMP),
     ] {
