@@ -62,6 +62,12 @@ bash scripts/verify-cargo.sh build -p hide-agent-adapter --example export_journe
 target/debug/examples/export_journey_contract > contracts/agent-journey.json
 ```
 
+# Agent CLI pins
+
+`agent-clis.json` is the one place a CI agent CLI version is written: for each agent, by its Herdr kind, the version every CI lane installs, the installer (`npm` with its package, or the vendor's own installer for Grok, omp and agy), and, for an npm package whose program is not its `.bin` shim, the program's path in the package.
+`scripts/install-agent-clis.py` reads it to install each CLI on a runner, and the agent journey reads it to say in its report whether the CLI it measured answered that version; a row whose installer takes no version (agy's) says so in `pinned`, and its version is checked, not installed.
+Move a pin in a pull request that runs the lanes that install it; no workflow restates a version.
+
 # hide CLI contract
 
 `hide-cli.json` is what `hide contract --json` exports: the commands other tools call (`hide agent`, `request`, `inbox`, `watch`), their options, and the JSON Schema of each answer ([docs/delivery.md](../docs/delivery.md#the-contract-a-calling-tool-checks)).

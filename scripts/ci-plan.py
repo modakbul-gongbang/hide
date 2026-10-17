@@ -212,6 +212,10 @@ POLICY_ONLY = (
     "scripts/check-hide-full.sh", "scripts/check-hide-screens.mjs", "scripts/check-typed-live-remote.sh",
     "scripts/check-release-assets.mjs", "scripts/release-draft.mjs", "scripts/premerge-check.py",
     "scripts/merge-order.py", "scripts/pull_requests.py",
+    # The pinned agent CLIs and their installer: only the nightly's and a
+    # release's journey and trust contract lanes install them; the script
+    # suite checks the table.
+    "contracts/agent-clis.json", "scripts/install-agent-clis.py",
     "scripts/pen-*.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/*",
     # The design contract's generators, their token map and its checks:
     # `design-contract.yml` runs the checks on every pull request, and what

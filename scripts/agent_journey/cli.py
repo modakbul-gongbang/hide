@@ -30,7 +30,7 @@ from agent_live_check.protection import (ConfigGuard, ProtectionError, beneath, 
 from agent_live_check.runtime import Runtime, clean_env
 from agent_live_check.sandbox import WriteSandbox
 
-from . import ci, cells, fake_lane, fake_model, omp_state, quota
+from . import ci, clis, cells, fake_lane, fake_model, omp_state, quota
 from .controller import Controller
 from .daemon import Daemon
 from .journey import Journey
@@ -335,6 +335,7 @@ def prepare_local(runtime, report, table, rows, measured, operator, root, fake):
         environment = {**clean_env(), "HOME": str(operator), "TMPDIR": str(run / "agent-tmp")}
         _, version, _ = owner.run([str(launch), "--version"], env=environment, check=False)
         agent["version"] = version.strip()[:120]
+        agent["pin"] = clis.pin(kind, agent["version"])
         if fake:
             ready.append(key)
             continue
@@ -404,6 +405,7 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root, fake):
         environment = {**clean_env(), "HOME": str(runtime.home), "TMPDIR": runtime.env["TMPDIR"]}
         _, version, _ = runtime.owner.run([str(launch), "--version"], env=environment, check=False)
         agent["version"] = version.strip()[:120]
+        agent["pin"] = None if fixture_bin else clis.pin(kind, agent["version"])
         if not fixture_bin and not fake:
             refusal = ci.login(runtime, kind, launch, root)
             if refusal:

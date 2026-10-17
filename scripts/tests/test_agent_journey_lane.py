@@ -105,6 +105,14 @@ class FakeModel(unittest.TestCase):
         passed, _ = lane.judge(report(self.table(), [{"id": "grok", "cli_missing": "grok"}], fake_model=True), "fake")
         self.assertFalse(passed)
 
+    def test_a_cli_answering_another_version_than_the_pin_is_named(self):
+        agent = {"id": "antigravity", "version": "1.4.1",
+                 "pin": {"version": "1.4.0", "matches": False, "pinned": "installer takes no version"}}
+        passed, notes = lane.judge(report(self.table(), [agent], fake_model=True), "fake")
+        self.assertTrue(passed)
+        self.assertEqual(notes, ["::warning title=agent journey antigravity::answered '1.4.1', contracts/agent-clis.json "
+                                 "pins 1.4.0 (installer takes no version)"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -85,6 +85,13 @@ def judge(report, lane):
             passed = False
             notes.append(annotation("error", f"agent journey {agent['id']}",
                                     f"{agent['cli_missing']} is not installed, though the job installs it"))
+        pin = agent.get("pin") or {}
+        if lane in ("login", "fake") and pin and not pin["matches"]:
+            # A night measures what the table pins; a CLI that answers another
+            # version is the one that changed (contracts/agent-clis.json).
+            notes.append(annotation("warning", f"agent journey {agent['id']}",
+                                    f"answered {agent.get('version')!r}, contracts/agent-clis.json pins {pin['version']}"
+                                    + (f" ({pin['pinned']})" if pin.get("pinned") else "")))
         if agent.get("not_configured"):
             notes.append(annotation("notice", f"agent journey {agent['id']}",
                                     f"not configured (no {agent['not_configured']} secret); its signed-in journey stays unproven"))
