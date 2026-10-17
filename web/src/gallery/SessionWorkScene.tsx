@@ -82,7 +82,7 @@ export function SessionWorkScene({ params }: { params: URLSearchParams }) {
   }), [fixture]);
   useLayoutEffect(() => {
     useShellStore.setState({ rest: fixture.base.rest, agents: fixture.base.agents, connection: "live", linkSummaries: { filling:false, projects:{[fixture.project.id]:{work:[{session:SESSION,title:fixture.record.title,fallback_title:fixture.record.fallback_title,native_title:fixture.record.native_title,manual_title:null,cwd:fixture.record.cwd,ended_at_unix_ms:AT,open_missed:fixture.record.missed.filter((item)=>item.status==="open").length,subtree_open_missed:0,missed:fixture.record.missed}]}} }, sessionRecord: { session: SESSION, loading: state === "loading", failure: state === "failed" ? "fixture_read_failed" : null, record: state === "loading" || state === "failed" ? null : fixture.record } });
-    useUiStore.setState({ screen: { kind: "workspace" }, overlay: state === "search" ? "search" : "none", sessionRecordWords: params.get("words") === "1" });
+    useUiStore.setState({ screen: { kind: "workspace" }, overlay: state === "search" ? "search" : "none" });
     document.documentElement.classList.toggle("dark", theme === "dark");
     document.documentElement.classList.toggle("light", theme === "light");
     document.documentElement.style.setProperty("--interface-scale", String(scale));
