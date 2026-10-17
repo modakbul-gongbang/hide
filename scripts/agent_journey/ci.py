@@ -35,8 +35,14 @@ HOME_FOLDERS = {"claude": ".claude", "codex": ".codex"}
 
 # A stand-in asks no folder question, so its start anywhere says nothing of one.
 FIXTURE_UNTRUSTED = "not measured: a stand-in has no folder question; the login lane measures it"
+# Cells the C stand-in does not imitate: it answers no question from its
+# start's context, forks nothing, writes no title and no token usage. The
+# keyless lane measures them once it runs the pinned CLIs on a fake model.
+FIXTURE_UNIMITATED = {cell: "the C stand-in does not imitate it; the signed-in lane measures it"
+                      for cell in ("guidance_memory", "fork", "title", "usage")}
 # What the stand-ins imitate, so the fixture lane passes only when each passed.
-FIXTURE_CELLS = tuple(name for name in cells.BUILT_CELLS if name != "start_untrusted")
+FIXTURE_CELLS = tuple(name for name in cells.BUILT_CELLS
+                      if name != "start_untrusted" and name not in FIXTURE_UNIMITATED)
 
 # What a fixture stand-in cannot show, said in its report (PRD B27).
 FIXTURE_LIMITS = [

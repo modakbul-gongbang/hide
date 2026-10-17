@@ -1329,7 +1329,7 @@
                     "required": true,
                     "requires": [],
                     "value": {
-                        "type": "text"
+                        "type": "session"
                     }
                 },
                 {
@@ -1591,7 +1591,8 @@
                 "invalid_launch_choice",
                 "shell_starting",
                 "agent_not_started",
-                "worktree_unconfirmed"
+                "worktree_unconfirmed",
+                "session_too_long"
             ],
             "repeats_at_most": null,
             "rest": "the agent's own arguments"
@@ -1911,7 +1912,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:bb9595ee014035f538aee853e892c286621530f8e2c67712caed17bfa75cd4f8",
+    "digest": "sha256:1e9f9c2f5f49dc698d2cdc6abd598045f48e780b886364937fdfe39652ac9345",
     "envelopes": {
         "agent": {
             "answer": "value",

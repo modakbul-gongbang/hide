@@ -7,6 +7,7 @@
       "--model",
       "{}"
     ],
+    "untitled": "Claude",
     "cells": {
       "start": true,
       "start_untrusted": true,
@@ -20,7 +21,7 @@
       "title": true,
       "usage": true
     },
-    "request_budget": 12
+    "request_budget": 18
   },
   {
     "id": "codex",
@@ -30,6 +31,7 @@
       "--model",
       "{}"
     ],
+    "untitled": "Codex",
     "cells": {
       "start": true,
       "start_untrusted": true,
@@ -43,7 +45,7 @@
       "title": true,
       "usage": true
     },
-    "request_budget": 12
+    "request_budget": 18
   },
   {
     "id": "grok",
@@ -53,6 +55,7 @@
       "--model",
       "{}"
     ],
+    "untitled": "grok",
     "cells": {
       "start": true,
       "start_untrusted": true,
@@ -66,13 +69,14 @@
       "title": true,
       "usage": true
     },
-    "request_budget": 12
+    "request_budget": 15
   },
   {
     "id": "opencode",
     "herdr_kind": "opencode",
     "prompt_flag": "--prompt",
     "model_flag": [],
+    "untitled": "OpenCode",
     "cells": {
       "start": true,
       "start_untrusted": true,
@@ -86,7 +90,7 @@
       "title": true,
       "usage": true
     },
-    "request_budget": 12
+    "request_budget": 18
   },
   {
     "id": "pi",
@@ -96,6 +100,7 @@
       "--model",
       "{}"
     ],
+    "untitled": "pi",
     "cells": {
       "start": true,
       "start_untrusted": true,
@@ -109,7 +114,7 @@
       "title": true,
       "usage": true
     },
-    "request_budget": 12
+    "request_budget": 18
   },
   {
     "id": "omp",
@@ -119,6 +124,7 @@
       "--model",
       "{}"
     ],
+    "untitled": "omp",
     "cells": {
       "start": true,
       "start_untrusted": true,
@@ -132,7 +138,7 @@
       "title": true,
       "usage": true
     },
-    "request_budget": 12
+    "request_budget": 18
   },
   {
     "id": "cursor",
@@ -142,6 +148,7 @@
       "--model",
       "{}"
     ],
+    "untitled": "cursor",
     "cells": {
       "start": true,
       "start_untrusted": true,
@@ -165,6 +172,7 @@
       "--model",
       "{}"
     ],
+    "untitled": "Antigravity",
     "cells": {
       "start": true,
       "start_untrusted": true,
@@ -178,6 +186,6 @@
       "title": true,
       "usage": true
     },
-    "request_budget": 12
+    "request_budget": 18
   }
 ]

@@ -69,18 +69,22 @@ def records(path):
     return found
 
 
-def model_requests(kind, path):
-    """Model requests one session made: Claude Code writes one assistant
-    record per response, several for one response sharing its message id;
-    Codex writes one token count event per response."""
+def model_requests(kind, paths):
+    """Model requests an agent's sessions made: Claude Code writes one
+    assistant record per response, several for one response sharing its
+    message id, and a forked session repeats the responses it copied under
+    their ids, so each id counts once across `paths`; Codex writes one token
+    count event per response, and a forked rollout repeats none of its
+    source's."""
     if kind == "claude":
         ids = set()
-        for record in records(path):
-            message = record.get("message") if isinstance(record.get("message"), dict) else {}
-            if record.get("type") == "assistant" and record.get("isApiErrorMessage") is not True and message.get("id"):
-                ids.add(message["id"])
+        for path in paths:
+            for record in records(path):
+                message = record.get("message") if isinstance(record.get("message"), dict) else {}
+                if record.get("type") == "assistant" and record.get("isApiErrorMessage") is not True and message.get("id"):
+                    ids.add(message["id"])
         return len(ids)
     if kind == "codex":
-        return sum(1 for record in records(path) if record.get("type") == "event_msg"
+        return sum(1 for path in paths for record in records(path) if record.get("type") == "event_msg"
                    and isinstance(record.get("payload"), dict) and record["payload"].get("type") == "token_count")
     raise ValueError("no_request_count_for:" + kind)

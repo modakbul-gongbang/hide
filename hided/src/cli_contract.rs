@@ -158,7 +158,7 @@ pub const COMMANDS: &[Spec] = &[
             switch("--check"),
             optional("--machine", Text),
             required("--host-scope", Text),
-            required("--session", Text),
+            required("--session", Session),
             required("--instance", Text),
             required("--name", Text),
             required("--pane", Text),
@@ -236,6 +236,7 @@ pub const COMMANDS: &[Spec] = &[
             "shell_starting",
             "agent_not_started",
             "worktree_unconfirmed",
+            "session_too_long",
         ],
     },
     spec(
