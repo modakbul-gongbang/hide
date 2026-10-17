@@ -608,14 +608,13 @@ class Gh(unittest.TestCase):
             fake = Path(tmp) / "gh"
             fake.write_text(
                 '#!/bin/sh\ncase " $* " in\n'
+                '  " --version ") echo "gh version 2.97.0 (2026-07-31)" ;;\n'
                 '  *" --allow-escape-sequences "*) cat "$(dirname "$0")/log" ;;\n'
                 '  *) echo "the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway" >&2; exit 1 ;;\n'
                 'esac\n'
             )
             fake.chmod(0o755)
-            saved = os.environ["PATH"]
-            os.environ["PATH"] = f"{tmp}{os.pathsep}{saved}"
-            self.addCleanup(os.environ.__setitem__, "PATH", saved)
+            self.use_gh(tmp)
             text = r.gh(["repos/o/r/actions/jobs/117168142601/logs"], raw=True)
         self.assertIsNone(CONTROL_CHARACTER.search(text), repr(text))
         self.assertIn("Z bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS\n", text)
@@ -624,6 +623,33 @@ class Gh(unittest.TestCase):
         self.assertTrue(r.log_excerpt(text).endswith(
             "TRY 2 FAIL [ 105.471s] (1/2) hide-agent-hooks::it agy_binary::a_signed_in_agy_turn_fires_hide_s_hooks\n"
             "error: test run failed \ufffd\n##[error]Process completed with exit code 100."))
+
+    def test_a_gh_too_old_to_read_a_job_log_is_refused_before_it_is_asked_for_one(self):
+        # gh 2.76.2 does not know --allow-escape-sequences: asked for a log, it answers
+        # `unknown flag` and its usage, which says nothing of the version the report needs.
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "gh"
+            fake.write_text(
+                '#!/bin/sh\necho "$*" >> "$(dirname "$0")/asked"\ncase "$1" in\n'
+                '  --version) printf "gh version 2.76.2 (2025-07-30)\\nhttps://github.com/cli/cli/releases/tag/v2.76.2\\n" ;;\n'
+                '  *) echo "unknown flag: --allow-escape-sequences" >&2; exit 1 ;;\n'
+                'esac\n'
+            )
+            fake.chmod(0o755)
+            self.use_gh(tmp)
+            with self.assertRaises(RuntimeError) as refused:
+                r.gh(["repos/o/r/actions/jobs/117168142601/logs"], raw=True)
+            asked = (Path(tmp) / "asked").read_text()
+        self.assertEqual(str(refused.exception), "needs gh 2.97 or newer to read job logs (found 2.76.2); upgrade gh")
+        self.assertEqual(asked, "--version\n")
+
+    def use_gh(self, folder):
+        """Put the stand-in `gh` in `folder` first on PATH and forget the version read from another."""
+        saved = os.environ["PATH"]
+        os.environ["PATH"] = f"{folder}{os.pathsep}{saved}"
+        self.addCleanup(os.environ.__setitem__, "PATH", saved)
+        r.gh_reads_logs.cache_clear()
+        self.addCleanup(r.gh_reads_logs.cache_clear)
 
     def test_a_test_name_outside_the_runner_code_page_is_filed_and_printed(self):
         # A Windows runner writes stdout as cp1252; the ⌘ in a test name raised
