@@ -158,7 +158,7 @@ pub const COMMANDS: &[Spec] = &[
             switch("--check"),
             optional("--machine", Text),
             required("--host-scope", Text),
-            required("--session", Text),
+            required("--session", Session),
             required("--instance", Text),
             required("--name", Text),
             required("--pane", Text),

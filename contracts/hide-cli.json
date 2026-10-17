@@ -1329,7 +1329,7 @@
                     "required": true,
                     "requires": [],
                     "value": {
-                        "type": "text"
+                        "type": "session"
                     }
                 },
                 {
@@ -1895,7 +1895,7 @@
             "rest": null
         }
     ],
-    "digest": "sha256:9fdb9b2f620859eb8181c7aa20dd53f1e03f343d868f3439dae774d849694e57",
+    "digest": "sha256:fff22a40798ecf7d7642efc0d5fa8f01af05c8afaa9842534c1164bd88cffe0e",
     "envelopes": {
         "agent": {
             "answer": "value",

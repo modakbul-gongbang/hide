@@ -125,8 +125,12 @@ impl Machine {
     }
 
     fn question(&self, tool: &str) -> String {
+        self.question_in("s1", tool)
+    }
+
+    fn question_in(&self, session: &str, tool: &str) -> String {
         serde_json::json!({
-            "session_id":"s1", "tool_name":tool,
+            "session_id":session, "tool_name":tool,
             "tool_input":{"questions":[{"question":"private-question-text"}]},
         })
         .to_string()
@@ -233,6 +237,27 @@ fn current_factory_worker_questions_are_redirected_through_one_authenticated_que
         let log = machine.guard_log();
         assert!(log.contains("factory_question.refused") && log.contains(tool));
         assert!(!log.contains("private-question-text") && !log.contains("s1"));
+    }
+}
+
+/// A session named by its file path passes 256 bytes in a deep checkout; the
+/// guard asks about any session a letter pull takes, up to its bound.
+#[test]
+fn a_worker_question_from_a_session_path_past_256_bytes_is_redirected() {
+    for bytes in [300, hide_agent_hooks::delivery::SESSION_LIMIT] {
+        let session = format!("/{}.jsonl", "s".repeat(bytes - 7));
+        let machine = Machine::new("worker");
+        let payload = machine.question_in(&session, "AskUserQuestion");
+        let run = machine.run("claude-code", &payload, Some(PANE), &[]);
+        assert!(run.status_ok, "{bytes}");
+        assert!(machine.reason(&run).contains("hide factory ask"), "{bytes}");
+        assert_eq!(
+            machine.calls(),
+            [format!(
+                "workspace factory-question-guard --session {session} --runtime claude-code"
+            )],
+            "{bytes}"
+        );
     }
 }
 

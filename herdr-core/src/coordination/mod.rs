@@ -530,14 +530,20 @@ fn key(value: &str) -> bool {
     crate::delivery::valid_key(value)
 }
 
-/// A pane's native session as Herdr reports it, the one a registration keeps:
-/// an id, or for Pi and omp the session file's path, which a deep checkout
-/// makes longer than a key. Herdr keeps a path of up to `SESSION_LIMIT` bytes,
-/// and so does the ledger.
-fn kept_session(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= crate::delivery::SESSION_LIMIT
-        && !value.chars().any(char::is_control)
+/// Whether a registration can keep `value` as its pane's native session, as
+/// Herdr reports it: an id, or for Pi and omp the session file's path, which a
+/// deep checkout makes longer than a key. Herdr keeps a path of up to
+/// `SESSION_LIMIT` bytes, and so does the ledger. The one rule for a
+/// registration's session, asked when the record is made and again when the
+/// ledger is saved or read.
+pub(crate) fn kept_session(value: &str) -> Result<(), &'static str> {
+    if value.len() > crate::delivery::SESSION_LIMIT {
+        return Err(SESSION_TOO_LONG);
+    }
+    if value.is_empty() || value.chars().any(char::is_control) {
+        return Err("invalid_registration");
+    }
+    Ok(())
 }
 
 /// The refusal of a registration whose pane reports a session past what the
@@ -564,7 +570,7 @@ pub(crate) fn validate_records(ledger: &Ledger) -> Result<(), String> {
             ]
             .into_iter()
             .all(|s| key(s))
-            || !kept_session(&record.session)
+            || kept_session(&record.session).is_err()
             || !record.actor.valid()
             || record.actor.device_id != record.machine
             || record.actor.session != crate::wire::session_digest(&record.session)
