@@ -165,6 +165,22 @@ fn generated_web_contract_and_logo_document_sources_are_current() {
 }
 
 #[test]
+fn generated_journey_contract_is_current() {
+    let expected =
+        serde_json::to_value(hide_agent_adapter::journey_contract().collect::<Vec<_>>()).unwrap();
+    let path = root().join("contracts/agent-journey.json");
+    let actual: Value = serde_json::from_slice(
+        &std::fs::read(&path)
+            .expect("missing journey contract: run the export_journey_contract example"),
+    )
+    .unwrap();
+    assert_eq!(
+        actual, expected,
+        "journey contract drift: regenerate contracts/agent-journey.json with export_journey_contract"
+    );
+}
+
+#[test]
 fn every_usage_cell_has_an_independent_declaration_and_unshipped_absences() {
     use hide_agent_adapter::usage::{
         AbsenceKind, LimitSource, SHIPPED_USAGE_LAYER, Support, UsageSource,
