@@ -532,6 +532,7 @@ The source's consent is the wait, so a fork whose source closed while the fork r
 
 A wait ends without a registration when its pane closes (`pane_closed`), when its agent ends and Herdr no longer lists the agent's name in the pane (`agent_ended`), or when another session shows in that pane (`pane_taken`).
 A bind the ledger refuses ends the wait with that refusal, such as `parent_unavailable` for a spawn whose parent registration ended, and so does a registration that cannot be made of the agent as Herdr shows it, so nothing is asked again for an agent that cannot be registered.
+A late session past what a registration keeps ends the wait as `session_too_long`, and the pane a spawn made for it is closed, as the spawn's own answer closes it; a fork's pane is the operator's and stays.
 Each end is logged as `identity_wait.ended` with the wait and the reason, and nothing reaches the screen.
 An agent's absence is judged only by an agent list read after the wait was recorded, because a list asked before may predate the agent's start.
 A settle that failed, such as one the store did not take while a core move held its effects, is logged as `identity_wait.settle_failed` and asked again at the next agent list, as a failed token write is; a settle converges, so a repeat binds or ends the wait once, and a queued settle is never asked twice.

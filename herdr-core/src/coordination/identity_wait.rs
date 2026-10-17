@@ -149,18 +149,29 @@ pub(crate) fn settle(
             guard.coordination_context(device)?,
         )
     };
+    // The spawn whose pane runs an agent that can never be registered.
+    let mut refused = None;
     let settle = match step {
         Step::End(reason) => Settle::End(reason.into()),
         Step::Bind(agent) => {
             let Some(wait) = ledger.identity_waits.iter().find(|wait| wait.id == id) else {
                 return Ok(json!({"settled": "absent"}));
             };
-            // A registration that cannot be made of the agent as it shows
-            // ends the wait, as a bind the ledger refuses does: asking again
-            // meets the same agent.
+            // A registration that cannot be made of the agent as it shows,
+            // such as a session past what one keeps, ends the wait, as a
+            // bind the ledger refuses does: asking again meets the same agent.
             match owed_record(&ledger, wait, &agent, &context) {
                 Ok(record) => Settle::Bind(Box::new(record)),
-                Err(reason) => Settle::End(reason),
+                Err(reason) => {
+                    if let Owed::Spawn { spawn } = &wait.owed {
+                        refused = ledger
+                            .spawns
+                            .iter()
+                            .find(|record| &record.id == spawn)
+                            .map(|record| (record.clone(), wait.pane.clone(), reason.clone()));
+                    }
+                    Settle::End(reason)
+                }
             }
         }
     };
@@ -171,6 +182,12 @@ pub(crate) fn settle(
         },
         Duration::from_secs(5),
     )?;
+    // The pane the spawn made is closed rather than left running with
+    // nothing tracking its agent, as the spawn's own answer does; only once
+    // the wait ended here, so a child a retry bound keeps its pane.
+    if let Some((spawn, pane, reason)) = refused.as_ref().filter(|_| answer["ended"].is_string()) {
+        super::executor::close_refused_pane(context.connector.as_ref(), spawn, pane, reason);
+    }
     if let Some(agent) = answer["bound"].as_str() {
         // The lineage writer's own plan writes the same tokens when this
         // first write fails; the registration it describes is made.

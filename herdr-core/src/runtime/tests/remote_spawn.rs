@@ -938,6 +938,31 @@ fn a_retry_that_binds_first_and_the_cores_settle_converge_on_one_child() {
     assert_eq!(ask().unwrap()["id"], answer["id"]);
 }
 
+/// A child whose session shows late but past what a registration keeps ends
+/// its wait by that reason when the core settles it, registers nothing, and
+/// its pane is closed, as the spawn's own answer does for the same session.
+#[test]
+fn a_late_child_whose_session_cannot_be_kept_ends_its_wait_and_its_pane_closes() {
+    let spawner = spawner();
+    *spawner.session.lock().unwrap() = None;
+    assert_eq!(
+        spawner
+            .spawn(Some("here"), Some(DEVICE), "late-too-long")
+            .expect_err("no session yet"),
+        "native_identity_unavailable"
+    );
+    let mut writer = spawner.writer();
+    *spawner.session.lock().unwrap() =
+        Some(format!("/{}", "s".repeat(crate::delivery::SESSION_LIMIT)));
+    spawner.refresh(&mut writer);
+    wait_for("the core ends the wait and closes the pane", || {
+        spawner.published().identity_waits.is_empty() && spawner.count("pane.close") == 1
+    });
+    let ledger = spawner.published();
+    assert_eq!(ledger.agents.len(), 1, "only the caller is registered");
+    assert!(ledger.spawns[0].child.is_none());
+}
+
 /// Pi and omp name a session by its file path, which a deep checkout makes
 /// longer than 256 bytes: the child is spawned and kept in a ledger that reads
 /// back, up to Herdr's own 4096-byte bound for a session path.

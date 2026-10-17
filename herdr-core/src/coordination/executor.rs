@@ -1150,7 +1150,7 @@ fn close_unstarted_attempts(
 /// Closes the pane `reserved` made, whose agent started but whose session a
 /// registration cannot keep (`reason`), when it is still the terminal the
 /// spawn recorded.
-fn close_refused_pane(
+pub(super) fn close_refused_pane(
     connector: &dyn ApiConnector,
     reserved: &SpawnRecord,
     pane: &str,
