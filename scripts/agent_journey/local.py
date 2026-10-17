@@ -78,6 +78,12 @@ def wrapper(directory, executable, operator, state, kind, home, sandbox, path):
     # The route's arguments go on every start, the product's own restarts
     # (Wake's `--resume`, Fork's `--fork-session`) included, not only the spawn.
     command = [str(executable), *route(kind, home)["args"]]
+    settings = home / ".claude/settings.json"
+    if kind == "claude" and not settings.exists():
+        # Claude refuses a `--settings` file that is not there, and the kit
+        # writes its entries into this one only once hided runs.
+        private_directory(settings.parent)
+        write_private(settings, b"{}\n")
     if sandbox:
         command = sandbox.command(command)
     environment = {"HOME": str(operator), "HIDE_STATE_DIR": str(state), "PATH": os.pathsep.join((str(directory), path)),

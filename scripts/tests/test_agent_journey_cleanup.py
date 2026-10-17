@@ -130,6 +130,8 @@ class LocalStarts(unittest.TestCase):
         self.assertEqual(argv.read_text().splitlines(), [
             "--settings", str(home / ".claude/settings.json"), "--setting-sources", "project,local",
             "--resume", "session-1"])
+        # The file those arguments name is there before the kit fills it, as Claude refuses a missing one.
+        self.assertEqual(json.loads((home / ".claude/settings.json").read_text()), {})
 
     def test_hide_ai_is_off_in_the_candidates_private_home(self):
         disable_hide_ai(self.base / "home")
