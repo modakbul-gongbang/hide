@@ -748,8 +748,7 @@ async fn relay_once(
         .await
         .map_err(|_| ("credential_expired".to_owned(), None))?
         .map_err(|reason| (reason, None))?;
-    let selected = answer["result"]["selected"] == true;
-    let source = answer["result"]["source_url"].as_str().map(str::to_owned);
+    let (selected, source) = relay_facts(&answer["result"]);
     // The display is shown on this machine, whose daemon relays it: the
     // CDP runs here and never crosses to the core.
     if let Some(url) = answer["result"]["relay_url"].as_str() {
@@ -757,6 +756,15 @@ async fn relay_once(
         return Ok((dial_relay(url).await?, selected, source));
     }
     Ok((socket, selected, source))
+}
+
+/// Whether the display is its area's selected View and the address the core
+/// keeps for it, from the daemon's relay answer.
+pub(crate) fn relay_facts(result: &serde_json::Value) -> (bool, Option<String>) {
+    (
+        result["selected"] == true,
+        result["source_url"].as_str().map(str::to_owned),
+    )
 }
 
 /// Dials this machine's daemon at the one-shot relay URL the core handed

@@ -1298,7 +1298,10 @@ fn loopback_origin(origin: &str) -> bool {
         Some(v6) => v6.split_once(']').map_or("", |(host, _)| host),
         None => authority.split(':').next().unwrap_or(""),
     };
-    host == "localhost" || host == "::1" || host.starts_with("127.")
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<std::net::IpAddr>()
+            .is_ok_and(|address| address.to_canonical().is_loopback())
 }
 
 /// A frame's snapshot without its title and address lines, with each ref
@@ -1362,6 +1365,10 @@ mod tests {
                 Some("http://localhost:8765/"),
             ),
             ("# T\n# http://127.0.0.1:1/a\n\n", Some("about:blank")),
+            (
+                "# T\n# http://127.evil.example:1/a\n\n",
+                Some("http://localhost:8765/"),
+            ),
             ("# T\n# http://127.0.0.1:1/a\n\n", None),
         ] {
             assert_eq!(with_source_address(top, source), top);

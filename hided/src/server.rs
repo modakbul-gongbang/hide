@@ -1282,6 +1282,25 @@ pub(crate) fn delivery_next_action(code: &str) -> &'static str {
     }
 }
 
+/// What the core knows of a display a `hide browser` command relays to:
+/// whether it is its area's selected View (the only one shown, so the CLI
+/// refuses input to any other before sending it) and `source_url`, the
+/// address the core keeps for it. A device's page loads from a loopback route
+/// on this machine, so the page reports that address and the CLI names this
+/// one instead. `None` when the checkout has no such display.
+pub(crate) fn relay_facts(
+    views: &[herdr_core::workspace_control::View],
+    display_id: &str,
+) -> Option<Value> {
+    let view = views.iter().find(|view| view.view_id == display_id)?;
+    Some(json!({"selected": view.selected, "source_url": view.target}))
+}
+
+/// The relay's answer to the CLI: `relay_facts` under the display's id.
+pub(crate) fn relay_ready(display_id: &str, facts: &Value) -> Value {
+    json!({"display_id": display_id, "selected": facts["selected"], "source_url": facts["source_url"]})
+}
+
 /// The reason and next action of a refused command. A refusal that names the
 /// devices the caller could have used says so in its next action, and its
 /// reason stays the code.
@@ -1576,15 +1595,8 @@ async fn scoped_client_loop(
                                     let relay = browser_control.relay(&result, &display_id, caller_node.as_deref())
                                         .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?;
                                     *command_relay.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(relay);
-                                    // Only an area's selected View is ever on screen; the
-                                    // CLI refuses input to any other before sending it.
-                                    // `source_url` is the address the core keeps for
-                                    // the display: a device's page loads from a loopback
-                                    // route here, and the CLI names this address.
-                                    let view = result.views.iter().flatten()
-                                        .find(|view| view.view_id == display_id);
-                                    json!({"selected": view.is_some_and(|view| view.selected),
-                                        "source_url": view.map(|view| view.target.as_str())})
+                                    relay_facts(result.views.as_deref().unwrap_or(&[]), &display_id)
+                                        .ok_or(("display_missing".to_owned(), "Run hide view list and retry"))?
                                 }
                                 ScopedRequest::Delivery(command, hint) => {
                                     crate::hook_request::delivery(&core, &cap, command, hint)?
@@ -1709,7 +1721,7 @@ async fn scoped_client_loop(
                         let outcome = match (outcome, &relay_display) {
                             (Ok(Ok(result)), Some(display_id)) => {
                                 use crate::browser_control::Relay;
-                                let mut ready = json!({"display_id": display_id, "selected": result["selected"], "source_url": result["source_url"]});
+                                let mut ready = relay_ready(display_id, &result);
                                 let chosen = chosen
                                     .lock()
                                     .unwrap_or_else(|poisoned| poisoned.into_inner())

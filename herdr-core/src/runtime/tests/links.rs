@@ -91,6 +91,58 @@ fn a_device_panes_links_scope_holds_its_device_project_and_every_device_for_all_
     );
 }
 
+/// `hide links pr` run in a pane on a device finds the pull request the link
+/// record holds for that device's Project, by the scope the runtime gives it.
+#[test]
+fn hide_links_from_a_device_pane_answers_with_the_device_projects_pull_request() {
+    let mut runtime = runtime();
+    let mut device_project = record_workspace("remote", "remote-project", &["remote-pane"]);
+    device_project.path = "/srv/app".into();
+    device_project.checkouts[0].path = "/srv/app".into();
+    runtime.snapshot.status.remote = vec![remote_session(vec![device_project])];
+    let mut github = crate::model::GithubProjectSnapshot {
+        viewer: None,
+        root_path: "/srv/app".into(),
+        pull_requests_read: true,
+        pull_requests: vec![pull_request(5, "5-feature", &[])],
+        ..Default::default()
+    };
+    github.issues.repository = Some("acme/project".into());
+    runtime.device_github.insert(
+        "remote".into(),
+        crate::model::GithubSnapshot {
+            projects: vec![github],
+        },
+    );
+    let context = crate::workspace_control::Context {
+        device_id: "remote".into(),
+        workspace_id: "remote-project".into(),
+        checkout_id: "remote-project".into(),
+        checkout_path: "/srv/app".into(),
+    };
+    let scope = runtime.links_scope(&context).expect("a record home");
+
+    // The link worker's record of that Project, written where the query reads.
+    let (mut store, _) = crate::links::store::LinkStore::open(&scope.store).unwrap();
+    for project in runtime.link_projects() {
+        store.apply_project(&project, CREATED).unwrap();
+    }
+    drop(store);
+
+    let answer = crate::links::query::run(
+        &scope,
+        &crate::links::query::LinksQuery {
+            target: crate::links::query::QueryTarget::Pr { number: 5 },
+            all_projects: false,
+        },
+        &hide_node::Local::of_process(),
+    )
+    .expect("the device Project's pull request is found, not refused");
+    assert_eq!(answer["scope"], "project");
+    assert_eq!(answer["results"][0]["project"]["device_id"], "remote");
+    assert_eq!(answer["results"][0]["prs"][0]["number"], 5);
+}
+
 #[test]
 fn native_lineage_reaches_the_ledger_on_remote_and_cross_device_sessions() {
     let mut runtime = runtime();

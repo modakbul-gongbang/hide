@@ -1792,6 +1792,64 @@ mod tests {
         assert!(failure.detail.unwrap().contains("http://ok.test:9"));
     }
 
+    /// A snapshot of a device's page, from the core's view list to the line
+    /// the CLI prints: each link of the chain hands on the next one's key, so
+    /// a renamed field or a dropped step shows the routed address.
+    #[tokio::test]
+    async fn a_snapshot_of_a_device_page_prints_the_address_the_core_keeps() {
+        let views = vec![herdr_core::workspace_control::View {
+            area_id: "area-a".into(),
+            view_id: "browser-1".into(),
+            kind: "browser",
+            target: "http://localhost:8765/docs/index.html".into(),
+            selected: true,
+            active_area: true,
+            page: None,
+        }];
+        // The daemon's relay answer, as the CLI reads it.
+        let facts = crate::server::relay_facts(&views, "browser-1").unwrap();
+        let ready = crate::server::relay_ready("browser-1", &facts);
+        let (selected, source) = crate::workspace_cli::relay_facts(&ready);
+        assert!(selected);
+
+        // The page itself reports the loopback route it loaded from.
+        let mut script = page_with_frames(Frames::default(), None);
+        let mut page = page(move |request| {
+            script(request)
+                .into_iter()
+                .map(|mut reply| {
+                    if let Some(value) = reply["result"]["result"]["value"].as_str() {
+                        reply["result"]["result"]["value"] = json!(
+                            value
+                                .replace("# http://a/", "# http://127.0.0.1:64423/docs/index.html")
+                        );
+                    }
+                    reply
+                })
+                .collect()
+        })
+        .await;
+        page.source = source;
+        let Ok(Output::Text(text)) = run(
+            &mut page,
+            Command::Snapshot {
+                display: "browser-1".into(),
+                interactive: false,
+                diff: false,
+                grep: None,
+            },
+        )
+        .await
+        else {
+            panic!("the snapshot did not print");
+        };
+        assert!(
+            text.contains("# http://localhost:8765/docs/index.html\n"),
+            "{text}"
+        );
+        assert!(!text.contains("64423"), "{text}");
+    }
+
     async fn page_with(frames: Frames) -> Page {
         page(page_with_frames(frames, None)).await
     }
