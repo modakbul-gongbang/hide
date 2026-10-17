@@ -337,23 +337,73 @@ fn read_only(folder: &Path) {
 }
 
 /// Whether the system lets the account open `folder` to add a file or a
-/// folder to it.
+/// folder to it. It asks without backup intent, as the barrier does: the
+/// runner's account holds the backup and restore privileges, and those open
+/// anything for a caller that asks with it.
 #[cfg(windows)]
 fn may_add_to(folder: &Path) -> bool {
-    use std::os::windows::fs::OpenOptionsExt;
-    // FILE_ADD_FILE and FILE_ADD_SUBDIRECTORY, each with SYNCHRONIZE, and
-    // FILE_FLAG_BACKUP_SEMANTICS, which a folder takes to open.
-    [0x2, 0x4].into_iter().any(|access| {
-        match fs::OpenOptions::new()
-            .access_mode(access | 0x0010_0000)
-            .custom_flags(0x0200_0000)
-            .open(folder)
-        {
-            Ok(_) => true,
-            Err(error) if error.kind() == ErrorKind::PermissionDenied => false,
-            Err(error) => panic!("opening {} to add to it: {error}", folder.display()),
-        }
-    })
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
+    use windows_sys::Wdk::Storage::FileSystem::{
+        FILE_DIRECTORY_FILE, FILE_OPEN, FILE_SYNCHRONOUS_IO_NONALERT, NtCreateFile,
+    };
+    use windows_sys::Win32::Foundation::{RtlNtStatusToDosError, UNICODE_STRING};
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
+        SYNCHRONIZE,
+    };
+    use windows_sys::Win32::System::IO::IO_STATUS_BLOCK;
+    let read = open_dir(folder);
+    // The folder itself: an empty name relative to its open handle.
+    let name = UNICODE_STRING {
+        Length: 0,
+        MaximumLength: 0,
+        Buffer: std::ptr::null_mut(),
+    };
+    let attributes = OBJECT_ATTRIBUTES {
+        Length: std::mem::size_of::<OBJECT_ATTRIBUTES>() as u32,
+        RootDirectory: read.as_raw_handle(),
+        ObjectName: &name,
+        ..Default::default()
+    };
+    [FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY]
+        .into_iter()
+        .any(|access| {
+            let mut handle = std::ptr::null_mut();
+            let mut status_block = IO_STATUS_BLOCK::default();
+            // SAFETY: the root handle is open for the call and every pointer
+            // is to a local that outlives it.
+            let status = unsafe {
+                NtCreateFile(
+                    &mut handle,
+                    access | SYNCHRONIZE,
+                    &attributes,
+                    &mut status_block,
+                    std::ptr::null(),
+                    0,
+                    FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                    FILE_OPEN,
+                    FILE_DIRECTORY_FILE | FILE_SYNCHRONOUS_IO_NONALERT,
+                    std::ptr::null(),
+                    0,
+                )
+            };
+            if status >= 0 {
+                // SAFETY: the call returned a new handle that nothing else owns.
+                drop(unsafe { OwnedHandle::from_raw_handle(handle) });
+                return true;
+            }
+            // SAFETY: the conversion reads only its argument.
+            let error =
+                std::io::Error::from_raw_os_error(unsafe { RtlNtStatusToDosError(status) } as i32);
+            assert_eq!(
+                error.kind(),
+                ErrorKind::PermissionDenied,
+                "opening {} to add to it: {error}",
+                folder.display()
+            );
+            false
+        })
 }
 
 /// The access list of `path` as `icacls` prints it, for a failure message.
