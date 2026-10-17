@@ -44,7 +44,7 @@ class Integration(unittest.TestCase):
                          (cells.FAIL, "the kit has no row for the agent on this Mac"))
 
     def test_a_piece_outside_the_home_the_agent_reads_is_not_the_one_it_loaded(self):
-        status, reason = kit.verdict(kit_row(herdr_at="/Users/operator/.codex"), self.session, "codex", HOME)
+        status, reason = kit.verdict(kit_row(herdr_at="/elsewhere/operator/.codex"), self.session, "codex", HOME)
         self.assertEqual(status, cells.FAIL)
         self.assertIn("outside the HOME the agent reads", reason)
 
@@ -155,7 +155,7 @@ class Usage(unittest.TestCase):
     def test_an_agent_whose_sessions_are_outside_the_daemons_home_is_not_measured(self):
         home = Path("/runs/journey/probe/daemon-home")
         self.assertIsNone(usage.unreadable(SimpleNamespace(sessions=home, runtime=SimpleNamespace(home=home))))
-        reason = usage.unreadable(SimpleNamespace(sessions=Path("/Users/operator"), runtime=SimpleNamespace(home=home)))
+        reason = usage.unreadable(SimpleNamespace(sessions=Path("/elsewhere/operator"), runtime=SimpleNamespace(home=home)))
         self.assertIn("reads only its own HOME", reason)
 
 
