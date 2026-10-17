@@ -200,18 +200,16 @@ it("lists one machine at a time under a switch that appears only with a device, 
 });
 
 it("on a window of a node, lists the window's machine first and once, beside the core's machine, and resolves each to its agents", async () => {
-  window.location.hash = "#token=t&node=macbook";
-  const mini = device("local", { id: "mini-node", machine_name: "example-Mac-mini.local" });
-  const node = (id: string, over: Partial<Device>) => device(id, { label: "example-MacBook-Pro.local", ssh_alias: null, dials_in: true, host: { platform: "macos aarch64" } as Device["host"], ...over });
-  // The core's own row, the node the window runs on, and the same Mac kept under its earlier node id, which never links.
-  const devices = [mini, node("macbook", {}), node("macbook-earlier", { state: "unavailable", kit: kit([]) })];
-  const { q, all, click, unmount } = await mount(state(devices));
-  expect(all("[data-agents-machine]").map((item) => item.getAttribute("data-agents-machine"))).toEqual(["macbook", "mini-node"]);
-  expect(all("[data-agents-machine]").map((item) => item.textContent)).toEqual(["This Mac", "example-Mac-mini.local"]);
-  expect(all("[data-agent-row]")[0]?.getAttribute("data-agent-row")).toBe("macbook:claude-code:on");
+  window.location.hash = "#token=t&node=14ad0319-60d7-5a7c-ae5a-f71550dc8a60";
+  // A moved core: its own row on the mini, and the MacBook that dials in to it, whose window this is.
+  const core = device("local", { id: "b06a260a-6c14-5287-9caf-672044350d94", machine_name: "example-Mac-mini.local" });
+  const node = device("14ad0319-60d7-5a7c-ae5a-f71550dc8a60", { label: "example-MacBook-Pro.local", machine_name: "example-MacBook-Pro.local", ssh_alias: null, dials_in: true, host: { platform: "macos aarch64" } as Device["host"] });
+  const { q, all, click, unmount } = await mount(state([core, node]));
+  expect(all("[data-agents-machine]").map((item) => item.getAttribute("data-agents-machine"))).toEqual([node.id, core.id]);
+  expect(all("[data-agent-row]")[0]?.getAttribute("data-agent-row")).toBe(`${node.id}:claude-code:on`);
   expect(q("[data-agents-unread]")).toBeNull();
-  await click(q('[data-agents-machine="mini-node"]'));
-  expect(all("[data-agent-row]")[0]?.getAttribute("data-agent-row")).toBe("mini-node:claude-code:on");
+  await click(q(`[data-agents-machine="${core.id}"]`));
+  expect(all("[data-agent-row]")[0]?.getAttribute("data-agent-row")).toBe(`${core.id}:claude-code:on`);
   await unmount();
   window.location.hash = "";
 });

@@ -94,34 +94,23 @@ export type AgentMachine = {
   unlisted: boolean;
 };
 
-/**
- * The machines of the switch, `devices` in the order the tab shows them. A
- * machine that dials in to the core is listed only while it is linked or
- * linking: the core reaches its kit through that link alone and never dials
- * it, so nothing on this tab could reach it otherwise, and a machine the core
- * still keeps under an earlier node id is not listed twice (its row stays in
- * Devices, where it is removed).
- */
 export function agentMachines(devices: readonly Device[], remote?: readonly RemoteStatus[]): AgentMachine[] {
-  return devices.flatMap((device) => {
+  return devices.map((device) => {
     const kit = device.kit;
     const agents = supportedAgents(kit?.agents);
     // A device that is not ready answers nothing, so its last list is not a fact to act on (B11).
     const { state } = deviceState(device, remote?.find((row) => row.target_id === device.id));
-    if (device.dials_in === true && state === "unavailable") return [];
     const gone = state === "connecting" || state === "disabled" ? state : state === "unavailable" ? "unreachable" : null;
     const silent = agents.length === 0 && !kit?.unavailable;
     const reading = kit?.busy === true || kit?.checking === true || (kit?.components.length ?? 0) === 0;
-    return [
-      {
-        device,
-        installed: agents.filter(agentInstalled),
-        notInstalled: agents.filter((agent) => !agentInstalled(agent)),
-        blocked: gone ?? (kit?.unavailable ? "unavailable" : null),
-        unread: silent && reading,
-        unlisted: silent && !reading,
-      },
-    ];
+    return {
+      device,
+      installed: agents.filter(agentInstalled),
+      notInstalled: agents.filter((agent) => !agentInstalled(agent)),
+      blocked: gone ?? (kit?.unavailable ? "unavailable" : null),
+      unread: silent && reading,
+      unlisted: silent && !reading,
+    };
   });
 }
 

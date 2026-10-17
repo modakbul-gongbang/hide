@@ -98,17 +98,6 @@ describe("the agents of a machine (B8, B9, D-06)", () => {
     expect(agentMachines([answered({ unavailable: "A daemon outside the package installs nothing" })])[0]).toMatchObject({ blocked: "unavailable", unread: false, unlisted: false });
   });
 
-  it("lists a machine that dials in only while it is linked or linking, so a machine kept under an earlier node id is not listed twice", () => {
-    const node = (id: string, state: Device["state"]) => device({ id, label: "example-MacBook-Pro.local", ssh_alias: null, dials_in: true, state, agents: [agent("claude-code")] });
-    const linked = node("macbook", "ready");
-    const earlier = node("macbook-earlier", "unavailable");
-    const linking = node("studio-node", "unavailable");
-    const remote = [{ target_id: "studio-node", state: "connecting" }] as never;
-    expect(agentMachines([linked, earlier, linking], remote).map((row) => row.device.id)).toEqual(["macbook", "studio-node"]);
-    // A device the core dials stays, with Try again, when it cannot be reached.
-    expect(agentMachines([device({ id: "box", state: "unavailable" })]).map((row) => row.blocked)).toEqual(["unreachable"]);
-  });
-
   it("says why a machine shows no list in the Devices tab's own words: connecting is not unreachable, and Switched off points at Devices (B11)", () => {
     const set = [agent("claude-code")];
     const down = device({ id: "box", state: "unavailable", agents: set });

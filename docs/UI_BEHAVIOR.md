@@ -2222,7 +2222,7 @@ In Korean the particle after the machine's name follows its last sound, as Korea
 
 Settings > Agents shows the eight agents Hide supports, Claude Code, Codex, Grok, OpenCode, Pi, omp, Cursor and Antigravity, in that order, for one machine at a time (PRD settings-cleanup B8 to B20, B67).
 With a device registered, a switch at the top chooses This Mac or a device and the list below is that machine's; with none there is no switch.
-This Mac comes first, as in Devices, and a machine that dials in to the core is listed while it is linked or linking, since the core reaches its kit only through that link: a machine the core keeps under an earlier node id is listed once, and its old row stays in Devices to remove.
+This Mac comes first, as in Devices, and each machine is listed once.
 `Checking this machine's agents…` shows only while a read runs or before the machine's first answer; a machine whose kit answered without listing an agent (another Hide held its account, a retirement it refused) says `Hide couldn't read this machine's agents.` with Check again.
 A device that cannot be reached shows one line and Try again in place of its list; a machine whose kit cannot run says why above a list it may still have.
 `Installed N` lists the agents whose program is found on the machine ([agent-hooks.md: Installed means the program is found](agent-hooks.md#installed-means-the-program-is-found)), or that are on and whose program went away, so they can still be switched off; a folder an agent creates does not count.
