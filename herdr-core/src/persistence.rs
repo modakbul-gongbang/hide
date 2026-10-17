@@ -625,27 +625,29 @@ pub fn save(
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;
-    hide_platform::fs::atomic::write_file_durable(path, &bytes, hide_platform::fs::Access::Private)
-        .map(|_| ())
-        .map_err(|error| {
-            let phase = match error {
-                hide_platform::fs::atomic::DurableWriteError::BeforeReplace { .. } => {
-                    "before_replace"
-                }
-                hide_platform::fs::atomic::DurableWriteError::ReplacementUncertain { .. } => {
-                    "replacement_uncertain"
-                }
-                hide_platform::fs::atomic::DurableWriteError::ReplacedNotDurable { .. } => {
-                    "replaced_not_durable"
-                }
-            };
-            crate::diagnostic!(serde_json::json!({
-                "component": "ui_state",
-                "kind": "ui_state.durable_save_failed",
-                "phase": phase,
-            }));
-            "UI state persistence could not be confirmed".to_owned()
-        })
+    hide_platform::fs::atomic::write_file_durable(
+        path,
+        &bytes,
+        hide_platform::fs::atomic::DurableAccess::Private,
+    )
+    .map(|_| ())
+    .map_err(|error| {
+        let phase = match error {
+            hide_platform::fs::atomic::DurableWriteError::BeforeReplace { .. } => "before_replace",
+            hide_platform::fs::atomic::DurableWriteError::ReplacementUncertain { .. } => {
+                "replacement_uncertain"
+            }
+            hide_platform::fs::atomic::DurableWriteError::ReplacedNotDurable { .. } => {
+                "replaced_not_durable"
+            }
+        };
+        crate::diagnostic!(serde_json::json!({
+            "component": "ui_state",
+            "kind": "ui_state.durable_save_failed",
+            "phase": phase,
+        }));
+        "UI state persistence could not be confirmed".to_owned()
+    })
 }
 
 #[cfg(test)]

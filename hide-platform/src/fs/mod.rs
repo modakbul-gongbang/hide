@@ -133,6 +133,44 @@ pub(crate) fn reopen_dir_for_io(dir: &impl Handle) -> std::io::Result<std::fs::F
     Ok(std::fs::File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
 }
 
+/// The open folder `dir` holds, opened again with the right to add an entry
+/// to it, which is what flushing its entries asks of a handle
+/// (`NtFlushBuffersFileEx` answers access denied to a handle with neither
+/// write nor append access). `ReOpenFile` opens the same folder, never what
+/// its path names now. A folder this account may add neither a file nor a
+/// folder to is `PermissionDenied`.
+#[cfg(windows)]
+pub(crate) fn reopen_dir_for_flush(dir: &impl Handle) -> std::io::Result<std::fs::File> {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE, ReOpenFile,
+    };
+    let mut refused = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    // Either right lets the flush through; a folder can grant one alone.
+    for access in [FILE_ADD_SUBDIRECTORY, FILE_ADD_FILE] {
+        // SAFETY: the handle is open and borrowed for the call.
+        let handle = unsafe {
+            ReOpenFile(
+                dir.as_handle().as_raw_handle(),
+                access,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                FILE_FLAG_BACKUP_SEMANTICS,
+            )
+        };
+        if handle != INVALID_HANDLE_VALUE {
+            // SAFETY: the call returned a new handle that nothing else owns.
+            return Ok(unsafe { std::fs::File::from_raw_handle(handle) });
+        }
+        refused = std::io::Error::last_os_error();
+        if refused.kind() != std::io::ErrorKind::PermissionDenied {
+            break;
+        }
+    }
+    Err(refused)
+}
+
 /// The path the open file or folder is at now, as the system spells it
 /// (with the `\\?\` prefix).
 #[cfg(windows)]

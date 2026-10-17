@@ -164,83 +164,99 @@ impl std::error::Error for DirectoryDurabilityError {
 /// namespace stable; system aliases in that namespace are canonicalized.
 /// Shared system ancestors are not made private or treated as account-owned.
 ///
-/// Unix syncs the existing chain from the filesystem root, with at most 64
-/// components. No directory is created or removed, including on failure.
-/// Windows currently reports `Unsupported`, never the legacy sync no-op.
+/// The existing chain is synced from the filesystem root ([`sync_dir`] on
+/// each folder), with at most 64 components below the root. No directory is
+/// created or removed, including on failure. On Windows an ancestor this
+/// account neither owns nor may add an entry to, such as `C:\Users` for a
+/// standard account, is passed over: a flush needs that right, and without
+/// it no entry there can be one this account made. Every other folder, the
+/// leaf always among them, is flushed, and a failed flush is an error.
+///
+/// [`sync_dir`]: super::atomic::sync_dir
 pub fn establish_dir_durability(path: &Path) -> Result<PathBuf, DirectoryDurabilityError> {
     let before = |source| DirectoryDurabilityError::BeforeCreate { source };
-    #[cfg(windows)]
-    {
-        let _ = path;
-        Err(before(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "directory-chain persistence is not established on Windows",
-        )))
+    let leaf = trusted_dir(path).map_err(before)?;
+    let canonical = fs::canonicalize(path).map_err(before)?;
+    // `/` on Unix; the volume and its root, `\\?\C:\`, on Windows.
+    let root: PathBuf = canonical
+        .components()
+        .take_while(|part| matches!(part, Component::Prefix(_) | Component::RootDir))
+        .collect();
+    let parts: Vec<_> = canonical
+        .components()
+        .skip_while(|part| matches!(part, Component::Prefix(_) | Component::RootDir))
+        .collect();
+    if parts.len() > 64 {
+        return Err(before(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "durable directory chain exceeds 64 components",
+        )));
     }
-    #[cfg(unix)]
+    let canonical_leaf = trusted_dir(&canonical).map_err(before)?;
+    if super::identity::file_id_of(&leaf).map_err(before)?
+        != super::identity::file_id_of(&canonical_leaf).map_err(before)?
     {
-        let leaf = trusted_dir(path).map_err(before)?;
-        let canonical = fs::canonicalize(path).map_err(before)?;
-        if canonical.components().count() > 65 {
-            return Err(before(io::Error::new(
-                io::ErrorKind::InvalidInput,
-                "durable directory chain exceeds 64 components",
-            )));
-        }
-        let canonical_leaf = trusted_dir(&canonical).map_err(before)?;
-        if super::identity::file_id_of(&leaf).map_err(before)?
-            != super::identity::file_id_of(&canonical_leaf).map_err(before)?
-        {
-            return Err(before(io::Error::new(
-                io::ErrorKind::PermissionDenied,
-                "directory identity changed during validation",
-            )));
-        }
-        let mut completed = PathBuf::from("/");
-        let mut parent = super::open_dir(&completed).map_err(before)?;
-        super::atomic::sync_dir(&parent).map_err(|source| DirectoryDurabilityError::Uncertain {
+        return Err(before(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "directory identity changed during validation",
+        )));
+    }
+    let mut completed = root;
+    let mut parent = super::open_dir(&completed).map_err(before)?;
+    chain_barrier(&parent, !parts.is_empty()).map_err(|source| {
+        DirectoryDurabilityError::Uncertain {
             completed: completed.clone(),
             path: completed.clone(),
             source,
-        })?;
-        for part in canonical.components().skip(1) {
-            let child_path = completed.join(part.as_os_str());
-            let step: io::Result<fs::File> = (|| {
-                let child = super::open_dir(&child_path)?;
-                #[cfg(test)]
-                bootstrap_faults::fail(bootstrap_faults::Point::ChildSync)?;
-                super::atomic::sync_dir(&child)?;
-                #[cfg(test)]
-                bootstrap_faults::fail(bootstrap_faults::Point::ParentSync)?;
-                super::atomic::sync_dir(&parent)?;
-                Ok(child)
-            })();
-            parent = step.map_err(|source| DirectoryDurabilityError::Uncertain {
-                completed: completed.clone(),
-                path: child_path.clone(),
-                source,
-            })?;
-            completed = child_path;
         }
-        let changed = |source| DirectoryDurabilityError::Uncertain {
+    })?;
+    for (index, part) in parts.iter().enumerate() {
+        let child_path = completed.join(part.as_os_str());
+        let step: io::Result<fs::File> = (|| {
+            let child = super::open_dir(&child_path)?;
+            #[cfg(test)]
+            bootstrap_faults::fail(bootstrap_faults::Point::ChildSync)?;
+            chain_barrier(&child, index + 1 < parts.len())?;
+            #[cfg(test)]
+            bootstrap_faults::fail(bootstrap_faults::Point::ParentSync)?;
+            chain_barrier(&parent, true)?;
+            Ok(child)
+        })();
+        parent = step.map_err(|source| DirectoryDurabilityError::Uncertain {
             completed: completed.clone(),
-            path: canonical.clone(),
+            path: child_path.clone(),
             source,
-        };
-        if super::identity::file_id_of(&parent).map_err(changed)?
-            != super::identity::file_id_of(&leaf).map_err(changed)?
-        {
-            return Err(DirectoryDurabilityError::Uncertain {
-                completed,
-                path: canonical,
-                source: io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "directory identity changed during barriers",
-                ),
-            });
-        }
-        Ok(canonical)
+        })?;
+        completed = child_path;
     }
+    let changed = |source| DirectoryDurabilityError::Uncertain {
+        completed: completed.clone(),
+        path: canonical.clone(),
+        source,
+    };
+    if super::identity::file_id_of(&parent).map_err(changed)?
+        != super::identity::file_id_of(&leaf).map_err(changed)?
+    {
+        return Err(DirectoryDurabilityError::Uncertain {
+            completed,
+            path: canonical,
+            source: io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "directory identity changed during barriers",
+            ),
+        });
+    }
+    Ok(canonical)
+}
+
+/// One barrier of an existing chain: an ancestor is passed over only when
+/// [`sys::flushes_ancestor`] says no entry in it can be this account's, which
+/// is read from the folder before any flush, never from a refused one.
+fn chain_barrier(dir: &fs::File, ancestor: bool) -> io::Result<()> {
+    if ancestor && !sys::flushes_ancestor(dir)? {
+        return Ok(());
+    }
+    super::atomic::sync_dir(dir)
 }
 
 /// Creates at most 64 private descendant directories and checks their
@@ -249,16 +265,15 @@ pub fn establish_dir_durability(path: &Path) -> Result<PathBuf, DirectoryDurabil
 /// Neither a successful read nor `AlreadyExists` establishes that fact.
 /// The caller must keep the entire namespace stable, with no competing writer.
 ///
-/// On Unix, each new or existing child and its containing directory are
-/// synced before proceeding. Links and directories another account can
-/// modify are refused. Existing permissions are left unchanged, so a caller
-/// requiring privacy also checks any existing directory's access.
+/// Each new or existing child and its containing directory are synced
+/// ([`super::atomic::sync_dir`]) before proceeding; every one of them is this
+/// account's own, so on Windows too a folder it cannot flush is a failure,
+/// never passed over. Links and directories another account can modify are
+/// refused. Existing permissions are left unchanged, so a caller requiring
+/// privacy also checks any existing directory's access.
 /// Failures retain the partial chain and identify its uncertain component;
 /// a later explicit recovery checks all existing levels again.
-///
-/// Windows currently returns `Unsupported` before creating anything: the
-/// legacy directory-sync no-op is not a persistence barrier. This is not a
-/// cross-platform bootstrap guarantee or a physical power-loss promise.
+/// This is not a physical power-loss promise.
 pub fn create_dir_all_durable(
     path: &Path,
     durable_ancestor: &Path,
@@ -285,51 +300,40 @@ pub fn create_dir_all_durable(
             return Err(before(invalid()));
         }
     }
-    #[cfg(windows)]
-    {
-        Err(before(io::Error::new(
-            io::ErrorKind::Unsupported,
-            "directory-chain persistence is not established on Windows",
-        )))
-    }
-    #[cfg(unix)]
-    {
-        let mut parent = trusted_dir(durable_ancestor).map_err(before)?;
-        let mut completed = durable_ancestor.to_path_buf();
-        for part in relative.components() {
-            let child_path = completed.join(part.as_os_str());
-            let step: io::Result<fs::File> = (|| {
-                #[cfg(test)]
-                bootstrap_faults::fail(bootstrap_faults::Point::Create)?;
-                match create_dir(&child_path) {
-                    Ok(()) => {
-                        #[cfg(test)]
-                        bootstrap_faults::fail(bootstrap_faults::Point::Created)?;
-                    }
-                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                    Err(error) => return Err(error),
+    let mut parent = trusted_dir(durable_ancestor).map_err(before)?;
+    let mut completed = durable_ancestor.to_path_buf();
+    for part in relative.components() {
+        let child_path = completed.join(part.as_os_str());
+        let step: io::Result<fs::File> = (|| {
+            #[cfg(test)]
+            bootstrap_faults::fail(bootstrap_faults::Point::Create)?;
+            match create_dir(&child_path) {
+                Ok(()) => {
+                    #[cfg(test)]
+                    bootstrap_faults::fail(bootstrap_faults::Point::Created)?;
                 }
-                let child = trusted_dir(&child_path)?;
-                #[cfg(test)]
-                bootstrap_faults::fail(bootstrap_faults::Point::ChildSync)?;
-                super::atomic::sync_dir(&child)?;
-                #[cfg(test)]
-                bootstrap_faults::fail(bootstrap_faults::Point::ParentSync)?;
-                super::atomic::sync_dir(&parent)?;
-                Ok(child)
-            })();
-            parent = step.map_err(|source| DirectoryDurabilityError::Uncertain {
-                completed: completed.clone(),
-                path: child_path.clone(),
-                source,
-            })?;
-            completed = child_path;
-        }
-        Ok(())
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                Err(error) => return Err(error),
+            }
+            let child = trusted_dir(&child_path)?;
+            #[cfg(test)]
+            bootstrap_faults::fail(bootstrap_faults::Point::ChildSync)?;
+            super::atomic::sync_dir(&child)?;
+            #[cfg(test)]
+            bootstrap_faults::fail(bootstrap_faults::Point::ParentSync)?;
+            super::atomic::sync_dir(&parent)?;
+            Ok(child)
+        })();
+        parent = step.map_err(|source| DirectoryDurabilityError::Uncertain {
+            completed: completed.clone(),
+            path: child_path.clone(),
+            source,
+        })?;
+        completed = child_path;
     }
+    Ok(())
 }
 
-#[cfg(unix)]
 fn trusted_dir(path: &Path) -> io::Result<fs::File> {
     let metadata = fs::symlink_metadata(path)?;
     if !metadata.is_dir() || metadata.file_type().is_symlink() {
@@ -350,7 +354,7 @@ fn trusted_dir(path: &Path) -> io::Result<fs::File> {
 
 // Only the external syscall boundary is faulted; the public bootstrap,
 // directory validation and sync helpers remain real.
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod bootstrap_faults {
     use std::cell::Cell;
     use std::io;
@@ -366,6 +370,11 @@ mod bootstrap_faults {
     thread_local! {
         static FAULT: Cell<Option<(Point, usize)>> = const { Cell::new(None) };
     }
+
+    #[cfg(unix)]
+    pub(super) const IO_ERROR: i32 = libc::EIO;
+    #[cfg(windows)]
+    pub(super) const IO_ERROR: i32 = windows_sys::Win32::Foundation::ERROR_WRITE_FAULT as i32;
 
     pub(super) struct Scope(Option<(Point, usize)>);
 
@@ -384,7 +393,7 @@ mod bootstrap_faults {
             && wanted == point
         {
             if skip == 0 {
-                return Err(io::Error::from_raw_os_error(libc::EIO));
+                return Err(io::Error::from_raw_os_error(IO_ERROR));
             }
             FAULT.set(Some((wanted, skip - 1)));
         }
@@ -392,9 +401,9 @@ mod bootstrap_faults {
     }
 }
 
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod bootstrap_tests {
-    use super::bootstrap_faults::{self, Point};
+    use super::bootstrap_faults::{self, IO_ERROR, Point};
     use super::*;
 
     #[test]
@@ -408,7 +417,7 @@ mod bootstrap_tests {
             assert!(matches!(
                 establish_dir_durability(&anchor),
                 Err(DirectoryDurabilityError::Uncertain { source, .. })
-                    if source.raw_os_error() == Some(libc::EIO)
+                    if source.raw_os_error() == Some(IO_ERROR)
             ));
             assert_eq!(super::super::identity::file_id(&anchor).unwrap(), identity);
             drop(fault);
@@ -418,7 +427,7 @@ mod bootstrap_tests {
             assert!(matches!(
                 establish_dir_durability(&anchor),
                 Err(DirectoryDurabilityError::Uncertain { source, .. })
-                    if source.raw_os_error() == Some(libc::EIO)
+                    if source.raw_os_error() == Some(IO_ERROR)
             ));
             drop(fault);
             establish_dir_durability(&anchor).unwrap();
@@ -442,7 +451,7 @@ mod bootstrap_tests {
                 } => {
                     assert_eq!(completed, first);
                     assert_eq!(path, second);
-                    assert_eq!(source.raw_os_error(), Some(libc::EIO));
+                    assert_eq!(source.raw_os_error(), Some(IO_ERROR));
                 }
                 other => panic!("unexpected outcome: {other:?}"),
             }
@@ -472,7 +481,7 @@ mod bootstrap_tests {
                 } => {
                     assert_eq!(completed, first);
                     assert_eq!(path, second);
-                    assert_eq!(source.raw_os_error(), Some(libc::EIO));
+                    assert_eq!(source.raw_os_error(), Some(IO_ERROR));
                 }
                 other => panic!("unexpected outcome: {other:?}"),
             }
@@ -486,7 +495,7 @@ mod bootstrap_tests {
             assert!(matches!(
                 create_dir_all_durable(&end, root.path()),
                 Err(DirectoryDurabilityError::Uncertain { path, source, .. })
-                    if path == first && source.raw_os_error() == Some(libc::EIO)
+                    if path == first && source.raw_os_error() == Some(IO_ERROR)
             ));
             assert!(!end.exists());
             drop(fault);
@@ -651,6 +660,11 @@ mod sys {
         folder.set_permissions(fs::Permissions::from_mode(0o700))
     }
 
+    /// Unix syncs every folder it can open, whoever may write to it.
+    pub(super) fn flushes_ancestor(_: &fs::File) -> io::Result<bool> {
+        Ok(true)
+    }
+
     pub(super) fn restrict_to_owner(path: &Path) -> io::Result<()> {
         let metadata = fs::metadata(path)?;
         // A file that ran for its owner still does.
@@ -716,7 +730,7 @@ mod sys {
     use widestring::U16CString;
     use windows_sys::Win32::Foundation::{
         CloseHandle, ERROR_SUCCESS, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
-        LocalFree,
+        LUID, LocalFree,
     };
     use windows_sys::Win32::Security::Authorization::{
         ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
@@ -724,18 +738,22 @@ mod sys {
         SetNamedSecurityInfoW, SetSecurityInfo,
     };
     use windows_sys::Win32::Security::{
-        ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
-        CreateWellKnownSid, DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
-        GetSecurityDescriptorDacl, GetTokenInformation, INHERIT_ONLY_ACE,
-        OWNER_SECURITY_INFORMATION, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR,
-        PSID, SECURITY_ATTRIBUTES, SECURITY_MAX_SID_SIZE, TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER,
-        TokenOwner, TokenUser, WinBuiltinAdministratorsSid, WinLocalSystemSid,
+        ACCESS_ALLOWED_ACE, ACE_HEADER, ACL, ACL_SIZE_INFORMATION, AccessCheck, AclSizeInformation,
+        CreateWellKnownSid, DACL_SECURITY_INFORMATION, DuplicateToken, EqualSid, GENERIC_MAPPING,
+        GROUP_SECURITY_INFORMATION, GetAce, GetAclInformation, GetSecurityDescriptorDacl,
+        GetTokenInformation, INHERIT_ONLY_ACE, LUID_AND_ATTRIBUTES, OWNER_SECURITY_INFORMATION,
+        PRIVILEGE_SET, PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID,
+        SECURITY_ATTRIBUTES, SECURITY_MAX_SID_SIZE, SecurityImpersonation, TOKEN_DUPLICATE,
+        TOKEN_OWNER, TOKEN_QUERY, TOKEN_USER, TokenOwner, TokenUser, WinBuiltinAdministratorsSid,
+        WinLocalSystemSid,
     };
     use windows_sys::Win32::Storage::FileSystem::{
-        CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ATTRIBUTE_NORMAL,
-        FILE_FLAG_OPEN_REPARSE_POINT, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE,
-        OPEN_ALWAYS, OPEN_EXISTING,
+        CREATE_NEW, CreateDirectoryW, CreateFileW, FILE_ADD_FILE, FILE_ADD_SUBDIRECTORY,
+        FILE_ALL_ACCESS, FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OPEN_REPARSE_POINT, FILE_GENERIC_EXECUTE,
+        FILE_GENERIC_READ, FILE_GENERIC_WRITE, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE, OPEN_ALWAYS, OPEN_EXISTING,
     };
+    use windows_sys::Win32::System::SystemServices::MAXIMUM_ALLOWED;
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
     use super::{Handle, InspectionDirectory};
@@ -1092,6 +1110,96 @@ mod sys {
             return Err(io::Error::from_raw_os_error(status as i32));
         }
         Ok(())
+    }
+
+    /// Whether this account owns the open folder or may add a file or a
+    /// folder to it, which a flush of its entries needs: an ancestor that
+    /// holds neither holds no entry the account made. The right is what the
+    /// system's own access check answers for the process's token against
+    /// the folder's owner, group and access list (`AccessCheck`, asked for
+    /// the most the folder allows).
+    pub(super) fn flushes_ancestor(folder: &fs::File) -> io::Result<bool> {
+        if handle_owned_by_current_user(folder)? {
+            return Ok(true);
+        }
+        let mut descriptor = null_mut();
+        // SAFETY: the handle is open for the borrow of `folder`, and
+        // `descriptor` receives a LocalAlloc buffer `Local` frees.
+        let status = unsafe {
+            GetSecurityInfo(
+                folder.as_raw_handle(),
+                SE_FILE_OBJECT,
+                OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                null_mut(),
+                &mut descriptor,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(io::Error::from_raw_os_error(status as i32));
+        }
+        let descriptor = Local(descriptor);
+        let mut process = null_mut();
+        // SAFETY: the current-process pseudo handle is always valid.
+        if unsafe {
+            OpenProcessToken(
+                GetCurrentProcess(),
+                TOKEN_QUERY | TOKEN_DUPLICATE,
+                &mut process,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        let process = Closing(process);
+        // The access check takes an impersonation token.
+        let mut token = null_mut();
+        // SAFETY: `process` is an open token; `token` receives a new one.
+        if unsafe { DuplicateToken(process.0, SecurityImpersonation, &mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let token = Closing(token);
+        let mapping = GENERIC_MAPPING {
+            GenericRead: FILE_GENERIC_READ,
+            GenericWrite: FILE_GENERIC_WRITE,
+            GenericExecute: FILE_GENERIC_EXECUTE,
+            GenericAll: FILE_ALL_ACCESS,
+        };
+        let mut privileges = PRIVILEGE_SET {
+            PrivilegeCount: 0,
+            Control: 0,
+            Privilege: [LUID_AND_ATTRIBUTES {
+                Luid: LUID {
+                    LowPart: 0,
+                    HighPart: 0,
+                },
+                Attributes: 0,
+            }],
+        };
+        let mut length = size_of::<PRIVILEGE_SET>() as u32;
+        let mut granted = 0u32;
+        let mut allowed = 0;
+        // SAFETY: the descriptor holds the owner, group and access list the
+        // check needs, the token is an impersonation token, and every out
+        // parameter is writable for the length given.
+        if unsafe {
+            AccessCheck(
+                descriptor.0,
+                token.0,
+                MAXIMUM_ALLOWED,
+                &mapping,
+                &mut privileges,
+                &mut length,
+                &mut granted,
+                &mut allowed,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(allowed != 0 && granted & (FILE_ADD_FILE | FILE_ADD_SUBDIRECTORY) != 0)
     }
 
     /// The security a path or an open file carries, and who owns it.
