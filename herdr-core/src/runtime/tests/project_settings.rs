@@ -772,7 +772,9 @@ fn a_remote_memory_visit_whose_front_never_landed_in_time_opens_nothing_later() 
     runtime.choose_when_in_front("mini", "old-memory", key.clone());
     runtime.attach_memory_navigation("mini", "old-memory", "remote-project".into());
     runtime.acknowledge_choice("mini", "old-memory");
-    runtime.tick_async_operations(unix_milliseconds() + CLOSE_STAGE_TIMEOUT_MS + 1);
+    runtime.tick_async_operations(
+        unix_milliseconds() + crate::runtime::workspace_view::CHOICE_LANDING_TIMEOUT_MS + 1,
+    );
     mini_in_front_at(&mut runtime, &key.1);
     runtime.sync_workspace_view();
     assert!(runtime.device_in_front(crate::node::TEST_NODE));

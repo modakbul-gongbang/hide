@@ -547,11 +547,17 @@ fn a_reveal_waiting_on_a_node_dies_with_the_request() {
                     }),
                     3,
                 );
+                // A slow device's front gets longer to land than its answer.
+                runtime.tick_async_operations(unix_milliseconds() + CLOSE_STAGE_TIMEOUT_MS + 1);
                 assert!(
                     runtime.pending_choice_request().is_some(),
                     "an accepted request waits for its front"
                 );
-                runtime.tick_async_operations(unix_milliseconds() + CLOSE_STAGE_TIMEOUT_MS + 1);
+                runtime.tick_async_operations(
+                    unix_milliseconds()
+                        + crate::runtime::workspace_view::CHOICE_LANDING_TIMEOUT_MS
+                        + 1,
+                );
             },
             "workspace.choice_expired",
         ),

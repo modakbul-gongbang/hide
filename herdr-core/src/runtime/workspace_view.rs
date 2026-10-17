@@ -22,6 +22,13 @@ use crate::workspace_views::{self, Tool, WorkspaceView, WorkspaceViews};
 /// A Workspace's identity: the device and the checkout path.
 pub(super) type WorkspaceKey = (String, String);
 
+/// How long a device choice the device accepted waits for its front to land.
+/// The landing is the device's Herdr moving its focus and the device then
+/// publishing its session over its link, which over a slow network can take
+/// longer than the answer did; a click that outlives this does nothing, and
+/// only the log says so (`workspace.choice_expired`).
+pub(super) const CHOICE_LANDING_TIMEOUT_MS: u64 = 15_000;
+
 /// A device request that chooses a Workspace, until the device's front
 /// lands there. It lives as long as the request does and no longer, so what
 /// rides on it (a Memory visit, a reveal) never runs for a click the device
@@ -35,8 +42,9 @@ struct PendingChoice {
     /// The checkout the device had in front when the request left; a move
     /// to any other than this one or `key` is a choice made elsewhere.
     device_front: Option<String>,
-    /// Each stage, the answer and then the front landing, gets
-    /// `CLOSE_STAGE_TIMEOUT_MS`, as a Herdr-owned mutation's does (PRD D-08).
+    /// The answer gets `CLOSE_STAGE_TIMEOUT_MS`, as a Herdr-owned mutation's
+    /// does (PRD D-08), and the front landing after an acceptance
+    /// `CHOICE_LANDING_TIMEOUT_MS`.
     deadline_at_unix_ms: u64,
     memory_project: Option<String>,
     acknowledged: bool,
@@ -525,7 +533,7 @@ impl Runtime {
         {
             pending.acknowledged = true;
             pending.deadline_at_unix_ms =
-                unix_milliseconds().saturating_add(CLOSE_STAGE_TIMEOUT_MS);
+                unix_milliseconds().saturating_add(CHOICE_LANDING_TIMEOUT_MS);
             if pending.memory_project.is_some() {
                 self.sync_workspace_view();
             }
