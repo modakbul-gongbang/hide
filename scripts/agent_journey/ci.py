@@ -36,7 +36,9 @@ FIXTURE_LIMITS = [
     "A stand-in answers with the token its prompt or its hook context carries; no model reads the prompt.",
     "Herdr's integration runs from the hook commands the kit installed, fed the payload the stand-in writes, "
     "so a change in the real CLI's hook payload is not seen.",
-    "The working and idle screens and the session file format are the stand-in's copies of the CLI's.",
+    "The working and idle screens and titles and the session file format are the stand-in's copies of the CLI's.",
+    "A stand-in waits 5 s before its first turn, as a CLI's start takes seconds, so a first turn that ends "
+    "sooner than Hide learns the session is not exercised.",
 ]
 
 
@@ -131,7 +133,8 @@ def fixture_config(runtime, kind):
     `kind`, in the order its file lists them (web/e2e/shims/live-check.h)."""
     files = {"claude": runtime.home / ".claude/settings.json", "codex": runtime.home / ".codex/hooks.json"}
     document = json.loads(files[kind].read_text())
-    lines = ["shell\t/bin/sh", f"index\t{runtime.probe / 'fixture-sessions'}"]
+    # Each hook's stderr and exit status, kept in the run folder as evidence.
+    lines = ["shell\t/bin/sh", f"index\t{runtime.probe / 'fixture-sessions'}", f"log\t{runtime.run / f'fixture-{kind}-hooks.log'}"]
     for event, groups in document.get("hooks", {}).items():
         for group in groups:
             for hook in group.get("hooks", []):

@@ -19,7 +19,8 @@
       "fork": true,
       "title": true,
       "usage": true
-    }
+    },
+    "request_budget": 12
   },
   {
     "id": "codex",
@@ -41,7 +42,8 @@
       "fork": true,
       "title": true,
       "usage": true
-    }
+    },
+    "request_budget": 12
   },
   {
     "id": "grok",
@@ -60,7 +62,8 @@
       "fork": true,
       "title": true,
       "usage": true
-    }
+    },
+    "request_budget": 12
   },
   {
     "id": "opencode",
@@ -79,7 +82,8 @@
       "fork": true,
       "title": true,
       "usage": true
-    }
+    },
+    "request_budget": 12
   },
   {
     "id": "pi",
@@ -98,7 +102,8 @@
       "fork": true,
       "title": true,
       "usage": true
-    }
+    },
+    "request_budget": 12
   },
   {
     "id": "omp",
@@ -117,7 +122,8 @@
       "fork": true,
       "title": true,
       "usage": true
-    }
+    },
+    "request_budget": 12
   },
   {
     "id": "cursor",
@@ -136,7 +142,8 @@
       "fork": false,
       "title": false,
       "usage": false
-    }
+    },
+    "request_budget": 12
   },
   {
     "id": "antigravity",
@@ -158,6 +165,7 @@
       "fork": true,
       "title": true,
       "usage": true
-    }
+    },
+    "request_budget": 12
   }
 ]

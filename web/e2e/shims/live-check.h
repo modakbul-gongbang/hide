@@ -95,8 +95,9 @@ static int live_check(int argc, char **argv) {
    Hide's kit installed for it, keeps a session file in its agent's own
    format and answers each turn with the JOURNEY token its prompt or its hook
    context carries. `HIDE_E2E_JOURNEY` names the run's configuration: tab
-   separated lines `shell <program>`, `index <folder>` and `hook <event>
-   <command>`. Never a real model. */
+   separated lines `shell <program>`, `index <folder>`, `log <file>`, where
+   each hook's stderr and exit status go, and `hook <event> <command>`.
+   Never a real model. */
 #ifndef _WIN32
 #include <signal.h>
 #include <sys/stat.h>
@@ -104,8 +105,9 @@ static int live_check(int argc, char **argv) {
 
 #define JOURNEY_HOOKS 64
 #define JOURNEY_OUTPUT (64 * 1024)
+#define JOURNEY_BOOT_SECONDS 5
 static char journey_config[1 << 16];
-static const char *journey_shell, *journey_index;
+static const char *journey_shell, *journey_index, *journey_log;
 static const char *journey_events[JOURNEY_HOOKS], *journey_commands[JOURNEY_HOOKS];
 static int journey_hook_count, journey_codex;
 static char journey_id[64], journey_file[4096], journey_cwd[4096];
@@ -126,6 +128,7 @@ static int journey_load(const char *path) {
       *field++ = 0;
       if (strcmp(line, "shell") == 0) journey_shell = field;
       else if (strcmp(line, "index") == 0) journey_index = field;
+      else if (strcmp(line, "log") == 0) journey_log = field;
       else if (strcmp(line, "hook") == 0) {
         char *command = strchr(field, '\t');
         if (!command || journey_hook_count == JOURNEY_HOOKS) return 1;
@@ -136,7 +139,7 @@ static int journey_load(const char *path) {
     }
     line = end ? end + 1 : NULL;
   }
-  return !journey_shell || !journey_index;
+  return !journey_shell || !journey_index || !journey_log;
 }
 
 /* `in` as the inside of a JSON string; 0 when it does not fit. */
@@ -184,10 +187,13 @@ static void journey_hooks(const char *event, const char *payload, char *output, 
     int in[2], out[2];
     if (pipe(in) != 0) continue;
     if (pipe(out) != 0) { close(in[0]); close(in[1]); continue; }
+    FILE *log = fopen(journey_log, "ab");
+    if (log) { fprintf(log, "%s hook %d\n", event, i); fflush(log); }
     pid_t child = fork();
     if (child == 0) {
       dup2(in[0], 0);
       dup2(out[1], 1);
+      if (log) dup2(fileno(log), 2);
       close(in[0]); close(in[1]); close(out[0]); close(out[1]);
       execl(journey_shell, journey_shell, "-c", journey_commands[i], (char *)NULL);
       _exit(127);
@@ -213,7 +219,12 @@ static void journey_hooks(const char *event, const char *payload, char *output, 
     }
     close(out[0]);
     output[used] = 0;
-    if (child > 0) waitpid(child, NULL, 0);
+    int status = 0;
+    if (child > 0) waitpid(child, &status, 0);
+    if (log) {
+      fprintf(log, "%s hook %d exit %d\n", event, i, child > 0 && WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+      fclose(log);
+    }
   }
 }
 
@@ -232,6 +243,22 @@ static int journey_record(const char *line) {
   return fclose(file) != 0 || !written;
 }
 
+static int journey_turns;
+
+/* Codex's turn lifecycle (`task_started` in the default mode, then
+   `task_complete`), which Hide reads to know a turn waits for no one, and
+   the token count Codex writes for each model response. */
+static int journey_lifecycle(const char *kind) {
+  if (!journey_codex) return 0;
+  static char line[1024];
+  char stamp[32];
+  journey_time(stamp, sizeof stamp, "%Y-%m-%dT%H:%M:%SZ");
+  snprintf(line, sizeof line, "{\"type\":\"event_msg\",\"timestamp\":\"%s\",\"payload\":{\"type\":\"%s\","
+           "\"turn_id\":\"journey-turn-%d\"%s}}", stamp, kind, journey_turns,
+           strcmp(kind, "task_started") == 0 ? ",\"collaboration_mode_kind\":\"default\"" : "");
+  return journey_record(line);
+}
+
 static int journey_message(const char *role, const char *text) {
   static char escaped[1 << 17], line[1 << 18];
   char stamp[32];
@@ -245,8 +272,8 @@ static int journey_message(const char *role, const char *text) {
     snprintf(line, sizeof line, "{\"type\":\"user\",\"timestamp\":\"%s\",\"sessionId\":\"%s\",\"origin\":{\"kind\":\"human\"},"
              "\"promptSource\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"%s\"}}", stamp, journey_id, escaped);
   else
-    snprintf(line, sizeof line, "{\"type\":\"assistant\",\"timestamp\":\"%s\",\"sessionId\":\"%s\",\"message\":{\"role\":\"assistant\","
-             "\"content\":[{\"type\":\"text\",\"text\":\"%s\"}]}}", stamp, journey_id, escaped);
+    snprintf(line, sizeof line, "{\"type\":\"assistant\",\"timestamp\":\"%s\",\"sessionId\":\"%s\",\"message\":{\"id\":\"msg_journey_%d\","
+             "\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"%s\"}]}}", stamp, journey_id, journey_turns, escaped);
   return journey_record(line);
 }
 
@@ -267,19 +294,24 @@ static void journey_screen(const char *text) {
   live_screen(text);
 }
 
+/* Herdr reads both agents' state from the terminal title first, as each CLI
+   sets it: a braille spinner while a turn runs, Claude's `✳` and Codex's
+   plain title at rest. */
 static const char *journey_composer(void) {
-  return journey_codex ? "\xe2\x80\xba Ask Codex to do anything\r\n" : "\r\nClaude Code fixture\r\n\xe2\x9d\xaf \r\n";
+  return journey_codex ? "\033]0;codex\007\xe2\x80\xba Ask Codex to do anything\r\n"
+                       : "\033]0;\xe2\x9c\xb3 Claude Code\007\r\nClaude Code fixture\r\n\xe2\x9d\xaf \r\n";
 }
 
 static int journey_turn(const char *prompt) {
   static char payload[1 << 18], escaped[1 << 17], extra[1 << 17], output[JOURNEY_OUTPUT];
   if (!journey_escape(escaped, sizeof escaped, prompt) && *prompt) return 1;
-  journey_screen(journey_codex ? "\xe2\x80\xa2 Working (0s \xe2\x80\xa2 esc to interrupt)\r\n"
-                               : "\xe2\x9c\xbb Working\xe2\x80\xa6 (esc to interrupt)\r\n");
+  journey_screen(journey_codex ? "\033]0;\xe2\xa0\x8b codex\007\xe2\x80\xa2 Working (0s \xe2\x80\xa2 esc to interrupt)\r\n"
+                               : "\033]0;\xe2\xa0\x8b Working\007\xe2\x9c\xbb Working\xe2\x80\xa6 (esc to interrupt)\r\n");
   snprintf(extra, sizeof extra, ",\"prompt\":\"%s\"", escaped);
   journey_payload(payload, sizeof payload, "UserPromptSubmit", extra);
   journey_hooks("UserPromptSubmit", payload, output, sizeof output);
-  if (journey_message("user", prompt)) return 1;
+  journey_turns++;
+  if (journey_lifecycle("task_started") || journey_message("user", prompt)) return 1;
   /* The state reader sees the turn under way before it ends. */
   struct timespec working = {3, 0};
   nanosleep(&working, NULL);
@@ -287,6 +319,8 @@ static int journey_turn(const char *prompt) {
   const char *answer = journey_token(output, token, sizeof token) || journey_token(prompt, token, sizeof token)
     ? token : "no token in this turn";
   if (journey_message("assistant", answer)) return 1;
+  if (journey_codex && journey_record("{\"type\":\"event_msg\",\"payload\":{\"type\":\"token_count\"}}")) return 1;
+  if (journey_lifecycle("task_complete")) return 1;
   char screen[256];
   snprintf(screen, sizeof screen, "\xe2\x80\xa2 %s\r\n%s", answer, journey_composer());
   journey_screen(screen);
@@ -365,11 +399,20 @@ static int journey_open_session(int resumed) {
 }
 
 static int journey(int argc, char **argv) {
+  journey_codex = run_as_codex(argv[0]);
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--version") == 0) { puts("journey fixture 1"); return 0; }
+    /* No print mode: Hide AI's own calls get a refusal, not a session. */
+    if (strcmp(argv[i], "-p") == 0 || strcmp(argv[i], "--print") == 0 || strcmp(argv[i], "exec") == 0) {
+      fputs("journey fixture: no print mode\n", stderr);
+      return 2;
+    }
   }
+  /* The kit reads Codex's features; the stand-in is a Codex with no shared
+     daemon, which lists no daemon_auto_start row. */
+  if (journey_codex && argc == 3 && strcmp(argv[1], "features") == 0 && strcmp(argv[2], "list") == 0) return 0;
+  if (journey_codex && argc > 1 && strcmp(argv[1], "features") == 0) return 2;
   if (journey_load(getenv("HIDE_E2E_JOURNEY"))) { fputs("journey fixture: configuration unreadable\n", stderr); return 2; }
-  journey_codex = run_as_codex(argv[0]);
   if (!getcwd(journey_cwd, sizeof journey_cwd)) return 2;
   /* The product's resume arguments: Claude `--resume <id>`, Codex `resume <id>`. */
   const char *resume = NULL, *prompt = NULL;
@@ -387,7 +430,14 @@ static int journey(int argc, char **argv) {
   journey_payload(payload, sizeof payload, "SessionStart", resume ? ",\"source\":\"resume\"" : ",\"source\":\"startup\"");
   journey_hooks("SessionStart", payload, output, sizeof output);
   journey_screen(journey_composer());
-  if (prompt && !resume && journey_turn(prompt)) return 2;
+  /* A real CLI takes seconds to start before it reads its first prompt
+     (Claude Code and Codex took 2 to 4 here); a turn that ended before Hide
+     learned the session would never read working on its row. */
+  if (prompt && !resume) {
+    struct timespec boot = {JOURNEY_BOOT_SECONDS, 0};
+    nanosleep(&boot, NULL);
+    if (journey_turn(prompt)) return 2;
+  }
   static char line[1 << 16];
   size_t used = 0;
   int escape = 0;
