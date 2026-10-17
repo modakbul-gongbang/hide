@@ -17,6 +17,11 @@ pub struct JourneyAdapter {
     /// Every journey cell, `true` when the adapter declares what it measures;
     /// an undeclared cell reads N/A, never a failure.
     pub cells: JourneyCells,
+    /// How the core hands a letter to the agent at rest; absent when the
+    /// letter cell is not declared.
+    pub letter: Option<JourneyLetter>,
+    /// How a sleeping agent is woken; absent when it cannot sleep.
+    pub wake: Option<JourneyWake>,
     /// The most model requests a signed-in CI run of the journey may make
     /// for this agent, which its lane fails above: each turn the declared
     /// cells start, at most `REQUESTS_PER_TURN` each; absent for an agent
@@ -28,6 +33,34 @@ pub struct JourneyAdapter {
 /// agent that answers in more than one (a tool call it chose, a retry it
 /// makes itself), and a run past it means the journey's turns are wrong.
 pub const REQUESTS_PER_TURN: u32 = 3;
+
+/// The path a letter takes to an agent at rest, as the core chooses it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JourneyLetter {
+    /// The doorbell types its line into the composer once the pane rests
+    /// (`bell`).
+    Bell,
+    /// The agent's prompt hook hands it over with the next prompt, whoever
+    /// types it: a prompt hook and no bell (the core's
+    /// `mailbox::next_prompt_letters`).
+    NextPrompt,
+    /// Only at a tool call the model makes while it works, or through a
+    /// `hide inbox` it runs: `tool_letters` and no prompt hook.
+    Tool,
+}
+
+/// How the operator's Wake reaches a sleeping agent.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum JourneyWake {
+    /// The pane stays and `agent_wake` restarts the agent in it.
+    Pane,
+    /// Sleep closes the pane and leaves a sleeping session, which
+    /// `wake_sleeping_session` opens in a new pane
+    /// (`LaunchDialect::closes_pane_when_sleeping`).
+    SleepingSession,
+}
 
 #[derive(serde::Serialize)]
 pub struct JourneyCells {
@@ -73,6 +106,19 @@ pub fn journey_contract() -> impl Iterator<Item = JourneyAdapter> {
             .into_iter()
             .filter(|&turn| turn)
             .count() as u32;
+        let letter = cells.letter.then(|| {
+            if row.bell {
+                JourneyLetter::Bell
+            } else if row.prompt_hook.is_some() {
+                JourneyLetter::NextPrompt
+            } else {
+                JourneyLetter::Tool
+            }
+        });
+        let wake = cells.sleep_wake.then(|| match row.sleep {
+            Some(dialect) if dialect.closes_pane_when_sleeping() => JourneyWake::SleepingSession,
+            _ => JourneyWake::Pane,
+        });
         JourneyAdapter {
             id: row.id,
             herdr_kind: row.herdr.name,
@@ -80,6 +126,8 @@ pub fn journey_contract() -> impl Iterator<Item = JourneyAdapter> {
             model_flag: row.start.map_or(&[], |start| start.options().model),
             cells,
             request_budget: start.then_some(turns * REQUESTS_PER_TURN),
+            letter,
+            wake,
         }
     })
 }

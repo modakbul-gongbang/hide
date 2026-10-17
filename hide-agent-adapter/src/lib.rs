@@ -8,7 +8,7 @@ mod declarations;
 mod journey;
 pub mod usage;
 pub use declarations::ADAPTERS;
-pub use journey::{JourneyAdapter, JourneyCells, journey_contract};
+pub use journey::{JourneyAdapter, JourneyCells, JourneyLetter, JourneyWake, journey_contract};
 mod web;
 pub use web::{HookKind, WebAdapter, web_contract};
 
