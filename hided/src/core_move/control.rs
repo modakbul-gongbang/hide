@@ -214,7 +214,7 @@ pub const FORWARD_CHECKS: [CheckId; 12] = [
 ];
 
 /// The checks of a move back to this machine, each once.
-pub const BACK_CHECKS: [CheckId; 7] = [
+pub const BACK_CHECKS: [CheckId; 8] = [
     CheckId::Link,
     CheckId::Herdr,
     CheckId::OwnState,
@@ -222,6 +222,7 @@ pub const BACK_CHECKS: [CheckId; 7] = [
     CheckId::Identity,
     CheckId::TargetState,
     CheckId::AiSetup,
+    CheckId::Ai,
 ];
 
 /// How many of `checks` ran when `failed` came back, or none when some

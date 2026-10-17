@@ -2210,8 +2210,10 @@ fn a_failing_move_back_check_changes_nothing() -> Result<()> {
     let journey = (|| {
         moved_forward(&fixture)?;
         let core = fixture.target_core()?.context("the target's core")?;
-        // This machine holds brain state of its own again.
+        // This machine holds brain state of its own again, and the agent
+        // the core's Hide AI asks is signed out here.
         std::fs::write(fixture.source.state.join("labels.json"), b"{}")?;
+        fixture.sign_out_here()?;
         let target_before = listing(&fixture.target.state)?;
         fixture.event("core_move", json!({"action": "back"}))?;
         let failed = wait_for("the move back's checks", || {
@@ -2219,8 +2221,8 @@ fn a_failing_move_back_check_changes_nothing() -> Result<()> {
                 .into_iter()
                 .find(|record| record["direction"] == "back"))
         })?;
-        ensure!(failed["checks"] == json!(["own_state"]), "{failed}");
-        ensure!(failed["checked"] == 7, "{failed}");
+        ensure!(failed["checks"] == json!(["own_state", "ai"]), "{failed}");
+        ensure!(failed["checked"] == 8, "{failed}");
         ensure!(fixture.role()? == "node");
         ensure!(
             fixture.target_core()? == Some(core),
