@@ -45,9 +45,9 @@ function childrenOf(node: SyntaxNode): SyntaxNode[] {
 function blocks(node: SyntaxNode, source: Source): ReactNode[] {
   if (!source.html) return childrenOf(node).map((child, index) => block(child, source, index));
   const tree = new HtmlTree();
-  childrenOf(node).forEach((child, index) => {
+  childrenOf(node).forEach((child) => {
     if (child.name === "HTMLBlock" || child.name === "CommentBlock") tree.html(source.text.slice(child.from, child.to), true);
-    else tree.add(block(child, source, index));
+    else tree.add(block(child, source, tree.key()));
   });
   return tree.done();
 }
@@ -182,7 +182,7 @@ function span(node: SyntaxNode, source: Source, key: number): ReactNode {
     case "Link":
     case "Image": {
       const url = node.getChild("URL");
-      const href = source.html && url ? webAddress(text.slice(url.from, url.to)) : null;
+      const href = source.html && url ? (node.name === "Image" ? imageAddress : webAddress)(text.slice(url.from, url.to)) : null;
       const words = inline(node, source, LINK_PARTS);
       if (href && node.name === "Image") return <Picture key={key} src={href} alt={words.map((part) => (typeof part === "string" ? part : "")).join("")} />;
       if (href) return <WebLink key={key} href={href}>{words}</WebLink>;
@@ -234,14 +234,43 @@ const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"'
 
 type Tag = { name: string; close: boolean; attrs: Record<string, string> };
 
-/** The page an address names, when it is an http or https one; never a script, a file or a relative path. */
-export function webAddress(raw: string): string | null {
+/** The most elements open at once; a deeper opening tag stays as its text, so a body cannot nest without bound. */
+const MAX_OPEN = 32;
+
+function parsedAddress(raw: string): URL | null {
   try {
-    const url = new URL(raw.trim());
-    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+    return new URL(raw.trim());
   } catch {
     return null;
   }
+}
+
+/** The page an address names, when it is an http or https one; never a script, a file or a relative path. */
+function webAddress(raw: string): string | null {
+  const url = parsedAddress(raw);
+  return url && (url.protocol === "http:" || url.protocol === "https:") ? url.href : null;
+}
+
+/**
+ * A picture's address, which the card loads by itself as it opens: https on a
+ * public host only, so a body cannot make the operator's machine ask this
+ * computer or its network for anything. The parser has already turned a
+ * number-spelled address into dotted form.
+ */
+function imageAddress(raw: string): string | null {
+  const url = parsedAddress(raw);
+  return url && url.protocol === "https:" && !privateHost(url.hostname) ? url.href : null;
+}
+
+function privateHost(hostname: string): boolean {
+  const name = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (name === "localhost" || /\.(localhost|local|internal|lan|home)$/.test(name)) return true;
+  if (name.includes(":")) return name === "::" || name === "::1" || /^(fc|fd|fe8|fe9|fea|feb)/.test(name) || name.startsWith("::ffff:");
+  const v4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(name);
+  if (!v4) return !name.includes(".");
+  const a = Number(v4[1]);
+  const b = Number(v4[2]);
+  return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
 }
 
 /** One tag read against the allow-list, or null when it stays text: an unknown tag, an attribute it may not carry, an address that is not the web's. */
@@ -249,7 +278,7 @@ function readTag(raw: string): Tag | null {
   const match = /^<\s*(\/)?\s*([a-zA-Z][a-zA-Z0-9]*)([^>]*?)\s*\/?\s*>$/.exec(raw);
   if (!match) return null;
   const name = match[2]!.toLowerCase();
-  const allowed = ALLOWED[name];
+  const allowed = Object.hasOwn(ALLOWED, name) ? ALLOWED[name] : undefined;
   if (!allowed) return null;
   const close = match[1] === "/";
   const attrs: Record<string, string> = {};
@@ -263,7 +292,7 @@ function readTag(raw: string): Tag | null {
     if (!allowed.includes(attr)) return null;
     const value = (found[2] ?? found[3] ?? found[4] ?? "").replace(/&(amp|lt|gt|quot|apos|#39);/g, (_, entity: string) => ENTITIES[entity]!);
     if (attr === "src" || attr === "href") {
-      const address = webAddress(value);
+      const address = (attr === "src" ? imageAddress : webAddress)(value);
       if (!address) return null;
       attrs[attr] = address;
     } else if (attr === "width" || attr === "height") {
@@ -320,7 +349,8 @@ class HtmlTree {
         continue;
       }
       if (!tag.close) {
-        this.stack.push({ tag, children: [] });
+        if (this.stack.length > MAX_OPEN) this.add(piece);
+        else this.stack.push({ tag, children: [] });
         continue;
       }
       let at = this.stack.length - 1;

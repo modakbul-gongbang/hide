@@ -130,8 +130,8 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
     {!own || own.loading ? <div className="space-y-md px-md py-sm" aria-busy="true" data-record-loading="true">{[0, 1, 2].map((key) => <div key={key} className="h-(--size-control-lg) rounded-sm bg-muted" />)}</div> : own.failure ? <div role="status" className="px-md py-sm text-caption"><p>{t("sessionWork.failed")}</p><Button size="sm" variant="ghost" onClick={frame.onRead}>{t("common.retry")}</Button></div> : shown ? <div className={cn("min-h-0 flex-1 overflow-y-auto px-md pb-md text-caption [word-break:keep-all]", !connected && "opacity-(--opacity-disabled)")} data-record-content="true">
       <h2 className="flex min-w-0 items-center gap-xs py-sm text-subhead font-semibold"><AgentMark kind={shown.session.agent} /><span className="min-w-0 truncate" title={recordTitle(shown, summaries)}>{recordTitle(shown, summaries)}</span><OutputMarks outputs={titleOutputs(shown, summaries)} actions={actions} /></h2>
       <RecordPlace record={shown} actions={actions} />
-      <Work record={shown} descendants={descendants} summaries={summaries} onOpen={open} actions={actions} />
-      <Words record={shown} parent={parent ? recordTitle(parent, summaries) : liveParent} />
+      <Work key={`work:${workKey(shown.session)}`} record={shown} descendants={descendants} summaries={summaries} onOpen={open} actions={actions} />
+      <Words key={`words:${workKey(shown.session)}`} record={shown} parent={parent ? recordTitle(parent, summaries) : liveParent} />
     </div> : null}
   </div>;
 }
