@@ -83,19 +83,21 @@ def executable(fixture_bin, kind):
     return Path(found) if found else None
 
 
-def not_configured(kind, fixture_bin):
+def not_configured(kind, fixture_bin, fake=False):
     """The secret this agent's login needs, when the lane has none."""
-    if fixture_bin:
+    if fixture_bin or fake:
         return None
     secret = LOGINS[kind]["secret"]
     return None if os.environ.get(secret) else secret
 
 
-def route_names(kind, fixture_bin):
+def route_names(kind, fixture_bin, fake_env=None):
     """The environment CI mode adds to an agent, by name only (its values are paths or a key)."""
     names = ["HOME", "HIDE_STATE_DIR", "PATH", *QUIET, *LOGINS[kind]["env"]]
     if fixture_bin:
         names.append("HIDE_E2E_JOURNEY")
+    elif fake_env is not None:
+        names.extend(fake_env)
     elif LOGINS[kind]["key_env"]:
         names.append(LOGINS[kind]["key_env"])
     return names
@@ -107,9 +109,10 @@ def key_file(runtime, kind):
     return runtime.probe / "keys" / kind
 
 
-def wrapper(runtime, program, kind, path, journey_config=None):
-    """The `claude` or `codex` a pane runs: the agent in the disposable HOME,
-    with the runner's PATH behind the candidate's `hide` and, for Claude, its key."""
+def wrapper(runtime, program, kind, path, journey_config=None, fake_env=None):
+    """The program a pane runs as `kind`: the agent in the disposable HOME,
+    with the runner's PATH behind the candidate's `hide` and its key, or the
+    fake model's environment (fake_lane.py) in place of a key."""
     private_directory(runtime.bin)
     target = runtime.bin / kind
     environment = {"HOME": str(runtime.home), "HIDE_STATE_DIR": str(runtime.state),
@@ -117,10 +120,11 @@ def wrapper(runtime, program, kind, path, journey_config=None):
                    **{name: str(runtime.home / relative) for name, relative in LOGINS[kind]["env"].items()}}
     if journey_config:
         environment["HIDE_E2E_JOURNEY"] = str(journey_config)
+    environment.update(fake_env or {})
     lines = ["#!/bin/sh", "unset CLAUDE_CONFIG_DIR"]
     lines.append("export " + " ".join(f"{key}={shlex.quote(value)}" for key, value in environment.items()))
     key_env = LOGINS[kind]["key_env"]
-    if key_env and not journey_config:
+    if key_env and not journey_config and fake_env is None:
         lines.append(f"{key_env}=$(cat {shlex.quote(str(key_file(runtime, kind)))}) && export {key_env}")
     lines.append("exec " + shlex.quote(str(program)) + ' "$@"')
     write_private(target, ("\n".join(lines) + "\n").encode())

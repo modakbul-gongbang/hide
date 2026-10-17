@@ -22,6 +22,7 @@ from pathlib import Path
 import re
 import shlex
 import sqlite3
+import sys
 import time
 import tomllib
 
@@ -144,7 +145,7 @@ def route(kind, home):
     return {"args": entry["args"](home), "env": entry["env"](home), "unset": list(entry["unset"])}
 
 
-def wrapper(directory, executable, operator, state, kind, home, sandbox, path):
+def wrapper(directory, executable, operator, state, kind, home, sandbox, path, extra=None):
     """The program a pane's `claude` or `codex` runs: the agent with the
     operator's HOME, the operator's PATH behind the candidate's `hide`, and
     its route, inside the write sandbox. A spawned pane has the private
@@ -163,7 +164,7 @@ def wrapper(directory, executable, operator, state, kind, home, sandbox, path):
     if sandbox:
         command = sandbox.command(command)
     environment = {"HOME": str(operator), "HIDE_STATE_DIR": str(state), "PATH": os.pathsep.join((str(directory), path)),
-                   **QUIET, **route(kind, home)["env"]}
+                   **QUIET, **route(kind, home)["env"], **(extra or {})}
     lines = ["#!/bin/sh"]
     lines.extend("unset " + name for name in route(kind, home)["unset"])
     lines.append("export " + " ".join(f"{key}={shlex.quote(value)}" for key, value in environment.items()))
@@ -176,8 +177,13 @@ def wrapper(directory, executable, operator, state, kind, home, sandbox, path):
 def disable_hide_ai(home):
     """The candidate's Hide AI switched off in its private home: on, it would
     run the operator's signed-in CLI with the private HOME and spend requests
-    outside the agent's budget (docs/AI_PROVIDERS.md, `enabled`)."""
-    folder = home / "Library/Application Support/hide"
+    outside the agent's budget, or, with the fake model, ask it for labels
+    the native titles are judged without (docs/AI_PROVIDERS.md, `enabled`).
+    The folder is the system's state folder under that home
+    (hide_platform::host::state_dir_under)."""
+    state = ("Library/Application Support" if sys.platform == "darwin" else
+             "AppData/Local" if os.name == "nt" else ".local/state")
+    folder = home / state / "hide"
     private_directory(folder)
     write_private(folder / "ai.json", b'{"enabled": false}\n')
 

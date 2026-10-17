@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """A CI lane's outcome from one agent journey report (PRD agent-journey-check B26, B27, B29).
 
-Usage: agent-journey-lane.py <report.json> --lane fixture|login
+Usage: agent-journey-lane.py <report.json> --lane fixture|login|fake
 
 The fixture lane passes only when every cell the stand-ins imitate passed for
-each agent they imitate. Either lane fails on a failed cell, an isolation, setup or
+each agent they imitate, and the fake lane (the real CLIs answered by the
+journey's fake model) only when every built cell passed for those agents, so
+it can take the stand-ins' place. Each lane fails on a failed cell, an isolation, setup or
 cleanup failure (the journey's exit 2), or a request budget overrun; the login
-lane also fails when an agent whose key is set is refused its login or its CLI
+and fake lanes also fail when an agent is refused its login or its CLI
 is missing, as the job installed it. An agent with no key is a notice, and a turn the provider answered nothing because the key's day was
 spent is a `Not measured` warning, which keeps the lane from being green in
 the nightly report (scripts/ci-flaky-report.py), and neither fails it. Each
@@ -19,7 +21,10 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from agent_journey.cells import BUILT_CELLS  # noqa: E402
 from agent_journey.ci import FIXTURE_AGENTS, FIXTURE_CELLS  # noqa: E402
+
+LANES = {"fixture": "fixture", "fake": "fake_model"}
 
 
 def escaped(text):
@@ -36,10 +41,10 @@ def annotation(level, title, *lines):
 def judge(report, lane):
     """(passed, annotations) for one report."""
     notes, passed = [], True
-    if lane == "fixture" and not report.get("fixture"):
-        return False, [annotation("error", "agent journey", "the fixture lane read a report that is not a fixture run")]
-    if lane == "login" and report.get("fixture"):
-        return False, [annotation("error", "agent journey", "the login lane read a fixture report")]
+    for name, field in LANES.items():
+        if (lane == name) != bool(report.get(field)):
+            return False, [annotation("error", "agent journey", f"the {lane} lane read a report that is "
+                                      + (f"not a {name} run" if lane == name else f"a {name} run"))]
     if report.get("exit_code") == 2:
         passed = False
         notes.append(annotation("error", "agent journey", "the journey exited 2: isolation, setup or cleanup failed"))
@@ -63,18 +68,20 @@ def judge(report, lane):
             if cell["status"] == "fail":
                 passed = False
                 notes.append(annotation("error", f"agent journey {agent}", f"{name}: {cell['reason']}"))
-        if lane == "fixture" and agent in FIXTURE_AGENTS:
-            for name in FIXTURE_CELLS:
+        if lane in ("fixture", "fake") and agent in FIXTURE_AGENTS:
+            for name in FIXTURE_CELLS if lane == "fixture" else BUILT_CELLS:
                 cell = cells.get(name, {"status": "absent", "reason": ""})
                 if cell["status"] != "pass":
                     passed = False
-                    notes.append(annotation("error", f"agent journey {agent}",
-                                            f"{name} is {cell['status']}, a stand-in passes it: {cell['reason']}"))
+                    notes.append(annotation("error", f"agent journey {agent}", f"{name} is {cell['status']}, "
+                                            + ("a stand-in passes it" if lane == "fixture" else
+                                               "the fake model lane stands in for the stand-in only when it passes")
+                                            + f": {cell['reason']}"))
     for agent in report.get("agents", []):
-        if lane == "login" and agent.get("login"):
+        if lane in ("login", "fake") and agent.get("login"):
             passed = False
             notes.append(annotation("error", f"agent journey {agent['id']}", f"login refused: {agent['login']}"))
-        if lane == "login" and agent.get("cli_missing"):
+        if lane in ("login", "fake") and agent.get("cli_missing"):
             passed = False
             notes.append(annotation("error", f"agent journey {agent['id']}",
                                     f"{agent['cli_missing']} is not installed, though the job installs it"))
@@ -95,7 +102,7 @@ def judge(report, lane):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("report", type=Path)
-    parser.add_argument("--lane", choices=("fixture", "login"), required=True)
+    parser.add_argument("--lane", choices=("fixture", "login", "fake"), required=True)
     args = parser.parse_args(argv)
     try:
         report = json.loads(args.report.read_text())

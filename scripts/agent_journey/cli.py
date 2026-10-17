@@ -29,7 +29,7 @@ from agent_live_check.protection import (ConfigGuard, ProtectionError, beneath, 
 from agent_live_check.runtime import Runtime, clean_env
 from agent_live_check.sandbox import WriteSandbox
 
-from . import ci, cells, quota
+from . import ci, cells, fake_lane, fake_model, quota
 from .controller import Controller
 from .daemon import Daemon
 from .journey import Journey
@@ -60,6 +60,8 @@ def parser():
     value.add_argument("--herdr-bin", type=Path, help="Previously fetched pinned Herdr; bytes are checked")
     value.add_argument("--fixture-bin", type=Path,
                        help="CI only: folder holding the compiled claude and codex stand-ins (web/e2e/shims)")
+    value.add_argument("--fake-model", action="store_true",
+                       help="The real CLIs answered by the journey's fake model (fake_model.py), with no key or login")
     return value
 
 
@@ -284,9 +286,10 @@ def wait_kit(daemon, ids):
     return daemon.wait(report, KIT_SECONDS, "the kit to install each agent's hook and Herdr integration")["failed"]
 
 
-def prepare_local(runtime, report, table, rows, measured, operator, root):
+def prepare_local(runtime, report, table, rows, measured, operator, root, fake):
     """Local mode's guard, write sandbox and each agent's route; the agents
-    ready to measure."""
+    ready to measure. With `fake` (each agent's fake model URL) no login is
+    read or copied: each agent's private folder points it at the fake."""
     run, owner = runtime.run, runtime.owner
     report["agents"].extend({"id": key} for key in measured)
     for key in measured:
@@ -316,11 +319,17 @@ def prepare_local(runtime, report, table, rows, measured, operator, root):
         if not executables[key]:
             cells.settle_agent(table, key, f"CLI not installed: {kind} is not on PATH")
             continue
+        extra = fake_lane.configure(kind, runtime.home, fake[key], root, local=True) if fake else None
+        if extra is not None:
+            agent["fake_env"] = sorted(extra)
         launch = wrapper(runtime.bin, executables[key], operator, runtime.state, kind, runtime.home, sandbox,
-                         os.environ.get("PATH", ""))
+                         os.environ.get("PATH", ""), extra)
         environment = {**clean_env(), "HOME": str(operator), "TMPDIR": str(run / "agent-tmp")}
         _, version, _ = owner.run([str(launch), "--version"], env=environment, check=False)
         agent["version"] = version.strip()[:120]
+        if fake:
+            ready.append(key)
+            continue
         if kind == "claude" and not claude_trusts(operator, root):
             agent["trust"] = f"the measured repository {root} is not trusted in Claude"
             cells.settle_agent(table, key, f"the measured repository is not trusted in Claude; open Claude once in {root} and accept")
@@ -356,15 +365,16 @@ def prepare_local(runtime, report, table, rows, measured, operator, root):
     return sandbox, guard, ready
 
 
-def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
-    """CI mode's agents in the disposable HOME, signed in with the lane's keys
-    or replaced by the fixture stand-ins; the agents ready to measure."""
+def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root, fake):
+    """CI mode's agents in the disposable HOME, signed in with the lane's keys,
+    pointed at the fake model (`fake`, each agent's URL) or replaced by the
+    fixture stand-ins; the agents ready to measure."""
     ready = []
     for key in measured:
         kind = rows[key]["herdr_kind"]
         agent = {"id": key}
         report["agents"].append(agent)
-        secret = ci.not_configured(kind, fixture_bin)
+        secret = ci.not_configured(kind, fixture_bin, bool(fake))
         if secret:
             agent["not_configured"] = secret
             cells.settle_agent(table, key, f"not configured ({secret})")
@@ -374,16 +384,19 @@ def prepare_ci(runtime, report, table, rows, measured, fixture_bin, root):
             agent["cli_missing"] = kind
             cells.settle_agent(table, key, f"CLI not installed: {kind} is not on PATH")
             continue
-        launch = ci.wrapper(runtime, program, kind, os.environ.get("PATH", ""),
-                            runtime.probe / f"fixture-{kind}.config" if fixture_bin else None)
         # The kit installs an agent's hooks only where its own folder is, as
         # a CLI that has run once leaves it; a new runner has none. Made
         # before the CLI first runs, as Codex writes into it (CODEX_HOME).
         private_directory(runtime.home.joinpath(*rows[key]["home_folder"]))
+        fake_env = fake_lane.configure(kind, runtime.home, fake[key], root, local=False) if fake else None
+        if fake_env is not None:
+            agent["fake_env"] = sorted(fake_env)
+        launch = ci.wrapper(runtime, program, kind, os.environ.get("PATH", ""),
+                            runtime.probe / f"fixture-{kind}.config" if fixture_bin else None, fake_env)
         environment = {**clean_env(), "HOME": str(runtime.home), "TMPDIR": runtime.env["TMPDIR"]}
         _, version, _ = runtime.owner.run([str(launch), "--version"], env=environment, check=False)
         agent["version"] = version.strip()[:120]
-        if not fixture_bin:
+        if not fixture_bin and not fake:
             refusal = ci.login(runtime, kind, launch, root)
             if refusal:
                 agent["login"] = refusal
@@ -423,6 +436,9 @@ def main(argv=None):
     local = args.mode == "local"
     if local and args.fixture_bin:
         refuse("fixture_bin_is_ci_only: the stand-ins run with --mode ci")
+    if args.fake_model and args.fixture_bin:
+        refuse("fake_model_or_fixture_bin: the stand-ins answer for themselves")
+    fake = args.fake_model
     if local and sys.platform != "darwin":
         refuse("local_mode_runs_on_macos_only: it needs sandbox-exec and the keychain logins; the CI layer measures other systems")
     if not local and sys.platform not in ("darwin", "linux"):
@@ -432,7 +448,7 @@ def main(argv=None):
     # A signed-in CI run reads which refusals leave a turn unmeasured before
     # it spends a request; a missing or misshapen contract stops it here.
     quota_rows = None
-    if not local and not fixture_bin:
+    if not local and not fixture_bin and not fake:
         try:
             quota_rows = quota.contract()
         except ValueError as error:
@@ -475,6 +491,7 @@ def main(argv=None):
     report = {"format": 1, "mode": args.mode, "fixture": bool(fixture_bin), "selected": selected, "models": models,
               "herdr": {}, "agents": [], "table": table, "systems": systems(args.mode), "configuration": {},
               **({"fixture_limits": ci.FIXTURE_LIMITS} if fixture_bin else {}),
+              **({"fake_model": True, "fake_model_limits": fake_lane.LIMITS} if fake else {}),
               "leftover_copies": leftover_copies(checkout, run), "measured_repository": str(root),
               "leftovers": journey_leftovers(root, checkout, run), "created": [],
               "cleanup": {"confirmed": False}, "failures": []}
@@ -482,24 +499,31 @@ def main(argv=None):
     previous = {signum: signal.signal(signum, lambda *_: owner.cancelled.set())
                 for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
     runtime = guard = daemon = None
+    # One fake model per agent, so each one's log counts that agent's requests alone.
+    servers = {}
     try:
         runtime = Runtime(checkout, run, operator, owner, herdr_bin=herdr,
                           home=run / "probe/daemon-home")
         report["package"] = str(package(runtime))
+        if fake:
+            for key in measured:
+                servers[key] = fake_model.serve(run / f"fake-model-{key}.jsonl")[0]
+        urls = {key: f"http://127.0.0.1:{server.server_address[1]}" for key, server in servers.items()}
         # Codex's sessions belong in its private home, never the operator's, and
-        # in CI mode Claude's do too: its agents run in this home.
-        for relative in (".codex/sessions",) if local else (".codex/sessions", ".claude/projects"):
+        # in CI mode or with the fake model Claude's do too: it writes them there.
+        for relative in (".codex/sessions",) if local and not fake else (".codex/sessions", ".claude/projects"):
             sessions = runtime.home / relative
             if sessions.is_symlink():
                 sessions.unlink()
         write_private(runtime.bin / "hide", ("#!/bin/sh\nexec " + shlex.quote(str(runtime.hide)) + ' "$@"\n').encode())
         (runtime.bin / "hide").chmod(0o700)
-        if local:
+        if local or fake:
             # Before hided starts, which reads the file once.
             disable_hide_ai(runtime.home)
-            sandbox, guard, ready = prepare_local(runtime, report, table, rows, measured, operator, root)
+        if local:
+            sandbox, guard, ready = prepare_local(runtime, report, table, rows, measured, operator, root, urls)
         else:
-            sandbox, ready = None, prepare_ci(runtime, report, table, rows, measured, fixture_bin, root)
+            sandbox, ready = None, prepare_ci(runtime, report, table, rows, measured, fixture_bin, root, urls)
         report["herdr"] = runtime.start()
         if sandbox:
             allow_hook_route(sandbox, runtime)
@@ -528,14 +552,16 @@ def main(argv=None):
                 journey = Journey(runtime, daemon, controller, table, rows[key], root, agent, reader,
                                   branch=f"journey/{run_id}-{key}", created=report["created"],
                                   sessions=(ROUTES[rows[key]["herdr_kind"]]["sessions"](operator, runtime.home)
-                                            if local else runtime.home),
-                                  route=(route(rows[key]["herdr_kind"], runtime.home) if local
-                                         else {"args": [], "env": ci.route_names(rows[key]["herdr_kind"], fixture_bin)}),
+                                            if local and not fake else runtime.home),
+                                  route=({**route(rows[key]["herdr_kind"], runtime.home),
+                                          **({"fake_env": agent["fake_env"]} if fake else {})} if local
+                                         else {"args": [], "env": ci.route_names(rows[key]["herdr_kind"], fixture_bin,
+                                                                                 agent.get("fake_env"))}),
                                   model=rows[key]["model_flag"] and models.get(key),
                                   quota=quota_rows)
                 for step in ("start", "letter", "sleep_wake", "resume"):
                     journey.step(step)
-                untrusted_reason = (ROUTES[rows[key]["herdr_kind"]]["untrusted"] if local else
+                untrusted_reason = (ROUTES[rows[key]["herdr_kind"]]["untrusted"] if local and not fake else
                                     ci.FIXTURE_UNTRUSTED if fixture_bin else None)
                 if untrusted_reason:
                     cells.settle(table, key, "start_untrusted", cells.NOT_MEASURED,
@@ -543,6 +569,10 @@ def main(argv=None):
                 else:
                     journey.step("untrusted", untrusted)
                 agent["requests"] = journey.requests()
+                if fake:
+                    # What a provider would have been asked; the session files may not show each one.
+                    agent["session_requests"] = agent["requests"]
+                    agent["requests"] = fake_lane.requests(run / f"fake-model-{key}.jsonl")
                 agent["request_budget"] = rows[key].get("request_budget")
     except Exception as error:
         # A stop the operator asked for is not a failure; the cells say "interrupted".
@@ -552,6 +582,9 @@ def main(argv=None):
                                                  for frame in traceback.extract_tb(error.__traceback__)[-4:]],
                                           **({"path": error.path} if isinstance(error, ProtectionError) and error.path else {})})
     finally:
+        for server in servers.values():
+            server.shutdown()
+            server.server_close()
         if daemon:
             daemon.close()
         if runtime:
@@ -613,7 +646,7 @@ def main(argv=None):
                         or (report.get("repository_cleanup") or {}).get("kept"))
     # An interrupted run says so with 3 whatever it measured, or 2 when its cleanup is unconfirmed.
     code = (2 if setup_failed else 3) if interrupted else cells.exit_code(table, selected, setup_failed=setup_failed)
-    report["budget_failures"] = budget_failures(report["agents"]) if not local and not fixture_bin else []
+    report["budget_failures"] = budget_failures(report["agents"]) if fake or (not local and not fixture_bin) else []
     if report["budget_failures"] and code in (0, 3):
         code = 1
     report["exit_code"] = code

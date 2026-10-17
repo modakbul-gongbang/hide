@@ -79,6 +79,31 @@ class Fixture(unittest.TestCase):
     def test_each_lane_refuses_the_other_lanes_report(self):
         self.assertFalse(lane.judge(report(self.table(), []), "fixture")[0])
         self.assertFalse(lane.judge(report(self.table(), [], fixture=True), "login")[0])
+        for name in ("fixture", "login"):
+            with self.subTest(name):
+                self.assertFalse(lane.judge(report(self.table(), [], fake_model=True), name)[0])
+        self.assertFalse(lane.judge(report(self.table(), []), "fake")[0])
+
+
+class FakeModel(unittest.TestCase):
+    def table(self, **override):
+        cells = {name: {"status": "pass", "reason": ""} for name in lane.BUILT_CELLS}
+        return {agent: {**cells, **override} for agent in lane.FIXTURE_AGENTS}
+
+    def test_every_built_cell_passing_passes(self):
+        self.assertEqual(lane.judge(report(self.table(), [], fake_model=True), "fake"), (True, []))
+
+    def test_the_folder_question_a_stand_in_cannot_ask_must_pass(self):
+        # The lane takes the stand-ins' place only when it measures what they cannot.
+        passed, notes = lane.judge(report(self.table(start_untrusted={"status": "not measured", "reason": "x"}), [],
+                                          fake_model=True), "fake")
+        self.assertFalse(passed)
+        self.assertIn("::error title=agent journey claude-code::start_untrusted is not measured, the fake model lane "
+                      "stands in for the stand-in only when it passes: x", notes)
+
+    def test_a_missing_cli_fails(self):
+        passed, _ = lane.judge(report(self.table(), [{"id": "grok", "cli_missing": "grok"}], fake_model=True), "fake")
+        self.assertFalse(passed)
 
 
 if __name__ == "__main__":
