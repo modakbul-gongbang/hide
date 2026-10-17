@@ -1578,8 +1578,13 @@ async fn scoped_client_loop(
                                     *command_relay.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(relay);
                                     // Only an area's selected View is ever on screen; the
                                     // CLI refuses input to any other before sending it.
-                                    json!({"selected": result.views.iter().flatten()
-                                        .any(|view| view.view_id == display_id && view.selected)})
+                                    // `source_url` is the address the core keeps for
+                                    // the display: a device's page loads from a loopback
+                                    // route here, and the CLI names this address.
+                                    let view = result.views.iter().flatten()
+                                        .find(|view| view.view_id == display_id);
+                                    json!({"selected": view.is_some_and(|view| view.selected),
+                                        "source_url": view.map(|view| view.target.as_str())})
                                 }
                                 ScopedRequest::Delivery(command, hint) => {
                                     crate::hook_request::delivery(&core, &cap, command, hint)?
@@ -1704,7 +1709,7 @@ async fn scoped_client_loop(
                         let outcome = match (outcome, &relay_display) {
                             (Ok(Ok(result)), Some(display_id)) => {
                                 use crate::browser_control::Relay;
-                                let mut ready = json!({"display_id": display_id, "selected": result["selected"]});
+                                let mut ready = json!({"display_id": display_id, "selected": result["selected"], "source_url": result["source_url"]});
                                 let chosen = chosen
                                     .lock()
                                     .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -3046,7 +3051,7 @@ fn index_result(
                 })
                 .collect(),
             truncated,
-            false,
+            refreshing,
             None,
         ),
         IndexAnswer::Failed(message) => (Vec::new(), false, false, Some(message)),

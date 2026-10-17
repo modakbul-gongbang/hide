@@ -80,6 +80,8 @@ pub async fn run(page: &mut Page, command: Command) -> Result<Output, Failure> {
         } => {
             let filter = interactive.then_some("interactive");
             let mut composite = page.snapshot(filter, "auto").await?;
+            composite.top =
+                super::page::with_source_address(&composite.top, page.source.as_deref());
             let key = if interactive { "interactive" } else { "full" };
             let previous = page.swap_baseline(key, &mut composite).await?;
             let text = composite.text();
