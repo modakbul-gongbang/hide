@@ -55,8 +55,11 @@ impl ReaderFeatures {
                 features.insert(Usage);
             }
             // Memory reads a session through its conversation reader
-            // (`Call::SessionConversation`).
-            if agent.is_jsonl() && row.conversation.is_some() {
+            // (`Call::SessionConversation`): a JSONL file's, or OpenCode's
+            // database read by id. Cursor's graph has none for Memory.
+            if (agent.is_jsonl() || agent == hide_session::Agent::OpenCode)
+                && row.conversation.is_some()
+            {
                 features.insert(Memory);
             }
             if agent.reports_activity() {
@@ -425,6 +428,7 @@ mod reader_tests {
             ReaderFeature::Labels,
             ReaderFeature::Titles,
             ReaderFeature::Conversation,
+            ReaderFeature::Memory,
             ReaderFeature::Links,
             ReaderFeature::Activity,
             ReaderFeature::Turns,
@@ -432,11 +436,10 @@ mod reader_tests {
         ] {
             assert!(facts.supports("opencode", feature), "{feature:?}");
         }
-        // Its Memory receipts arrive with its labels, not a file pass.
-        assert!(!facts.supports("opencode", ReaderFeature::Memory));
         let retained = ReaderFeatures::protocol24();
         for feature in [
             ReaderFeature::Conversation,
+            ReaderFeature::Memory,
             ReaderFeature::Activity,
             ReaderFeature::Turns,
             ReaderFeature::UserTurnContent,

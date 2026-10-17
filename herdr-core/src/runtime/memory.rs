@@ -386,11 +386,40 @@ pub(crate) fn project_sessions(
     Ok(page.rows)
 }
 
+/// How far `session`'s conversation reaches and when it was last written:
+/// a session file's size and modification time, or for OpenCode, which
+/// keeps no file, how many messages its database holds for the session and
+/// its newest write, in the unit its conversation read counts (a message's
+/// index).
 pub(crate) fn session_stat(
     sessions_node: &dyn NodeLink,
     session: &ProjectSession,
     timeout: std::time::Duration,
 ) -> Result<SessionStat, String> {
+    if session.agent == Agent::OpenCode {
+        let activity: hide_session::session_activity::SessionActivity =
+            hide_node_link::link::call_as_reader(
+                sessions_node,
+                session.agent,
+                hide_node_link::sessions::ReaderFeature::Activity,
+                Call::SessionActivity {
+                    request: hide_session::session_activity::SessionActivityRequest {
+                        agent: session.agent,
+                        reference_kind: "id".to_owned(),
+                        reference_value: session.id.clone(),
+                        cwd: Some(session.checkout_path.to_string_lossy().into_owned()),
+                        exact_route: false,
+                        expected_id: None,
+                    },
+                },
+                timeout,
+            )
+            .map_err(|error| error.to_string())?;
+        return Ok(SessionStat {
+            size: activity.bytes,
+            modified_unix_ms: Some(activity.modified_at_unix_ms),
+        });
+    }
     hide_node_link::link::call_as_reader(
         sessions_node,
         session.agent,

@@ -6,8 +6,8 @@
 //! through its own node's link. For each of its sessions it records the
 //! receipts a live pane's label read cannot see (a session started outside
 //! Herdr, or whose pane is gone), from a JSONL file or OpenCode's database,
-//! and analyzes a session once its file has
-//! been quiet for [`MEMORY_QUIESCENCE_MS`] or its pane closed. A pass runs on
+//! and analyzes a session once its conversation has been quiet for
+//! [`MEMORY_QUIESCENCE_MS`] or its pane closed. A pass runs on
 //! a worker off the runtime lock; the lock is taken only to report a
 //! Project's state and to finish.
 //!
@@ -32,7 +32,6 @@ use hide_memory::{
     AnalysisBatch, ApplyOptions, ApplySummary, Candidate, CandidateRelation, CursorReader,
     HideNativeAnalyzer, MemoryStore, ReceiptRecord, SessionCursorRecord, SessionSourceRecord,
 };
-use hide_node_link::protocol::Call;
 use hide_node_link::sessions::ReaderFeature;
 use hide_session::{EventKind, ProjectSession, SessionAvailability};
 use serde_json::{Value, json};
@@ -72,8 +71,9 @@ const COMPARISON_TEXT_LIMIT_BYTES: usize = 16 * 1024;
 const FAILED_READS_LIMIT: usize = 4096;
 
 /// The session read failures the log already has: each by its kind and
-/// session, with the version of the file it failed on (its size and
-/// modification time; an OpenCode session's row has only its update time).
+/// session, with the version of the conversation it failed on (a file's size
+/// and modification time; an OpenCode session's message count and newest
+/// write).
 type FailedReads = HashMap<(&'static str, MemorySession), (u64, Option<u64>)>;
 
 /// Memory's background state on the runtime, owned by this module.
@@ -1032,41 +1032,24 @@ fn walk_project(
     {
         log_ended_hold(project_id, &ended, "expired");
     }
-    // Memory analyzes the sessions of agents the node holding them reads for
-    // Memory (the JSONL ones: Claude Code, Codex, Grok, Pi, omp), which it
-    // does through their conversation reader; an OpenCode session, kept in
-    // OpenCode's database, is walked for its receipts alone through that
-    // reader (D-16). A session the node has no such reader for, an older
-    // node's, is one Memory does not read, never a failed read.
+    // Memory walks and analyzes the sessions of agents the node holding them
+    // reads for Memory, through their conversation reader: a JSONL file's
+    // (Claude Code, Codex, Grok, Pi, omp, agy) by byte offset, and OpenCode's
+    // database by message index, each with the same receipts, eligibility,
+    // daily cap and cursor rules (D-16). A session the node has no such
+    // reader for, an older node's or Cursor's, is one Memory does not read,
+    // never a failed read.
     let reads = |session: &ProjectSession, feature| {
         sessions_node
             .reader_features()
             .is_some_and(|readers| readers.supports(session.agent.as_str(), feature))
     };
-    let mut sessions = Vec::new();
-    for session in project_sessions(sessions_node, &identity, SESSION_CALL_TIMEOUT)? {
-        if reads(&session, ReaderFeature::Memory) && reads(&session, ReaderFeature::Conversation) {
-            sessions.push(session);
-        } else if session.agent == hide_session::Agent::OpenCode
-            && reads(&session, ReaderFeature::Conversation)
-            && matches!(session.availability, SessionAvailability::Available)
-            && !input
-                .live
-                .contains(&(session.agent.as_str(), session.id.clone()))
-            && !input.cancel.is_cancelled()
-        {
-            match read_database_receipts(store, sessions_node, project_id, &session) {
-                Ok(()) => outcome.read_succeeded(RECEIPTS_FAILED, &session),
-                Err(message) => outcome.read_failed(
-                    RECEIPTS_FAILED,
-                    project_id,
-                    &session,
-                    (0, Some(session.updated_at_unix_ms)),
-                    &message,
-                ),
-            }
-        }
-    }
+    let sessions = project_sessions(sessions_node, &identity, SESSION_CALL_TIMEOUT)?
+        .into_iter()
+        .filter(|session| {
+            reads(session, ReaderFeature::Memory) && reads(session, ReaderFeature::Conversation)
+        })
+        .collect::<Vec<_>>();
     // What a card rests on is compared with the repository first: it needs
     // no model, so it runs whether Hide AI is on or off (D-06).
     let mut facts = CheckoutFacts::new(sessions_node, root);
@@ -1503,87 +1486,6 @@ fn read_through(
     } else {
         offset.max(stat.size)
     }
-}
-
-/// Records the receipts an OpenCode session stored past the receipt cursor,
-/// read message by message through the conversation reader the label read
-/// uses, so a receipt carries the same message index, and the same turn,
-/// whichever of the two found it. One bounded read per pass; the cursor keeps
-/// the session time it was read up to, or none while more remains.
-fn read_database_receipts(
-    store: &mut MemoryStore,
-    sessions_node: &dyn NodeLink,
-    project_id: &str,
-    session: &ProjectSession,
-) -> Result<(), String> {
-    let provider = session.agent.as_str();
-    let saved = store
-        .load_cursor(CursorReader::Receipts, project_id, provider, &session.id)
-        .map_err(|error| error.to_string())?;
-    if saved
-        .as_ref()
-        .is_some_and(|cursor| cursor.updated_at_unix_ms >= session.updated_at_unix_ms)
-    {
-        return Ok(());
-    }
-    let checkpoint = saved
-        .as_ref()
-        .filter(|record| !record.checkpoint.is_empty())
-        .map(|record| serde_json::from_slice(&record.checkpoint))
-        .transpose()
-        .map_err(|error| format!("session_checkpoint:{error}"))?;
-    let transcript: hide_session::label_transcript::LabelTranscript =
-        hide_node_link::link::call_as_reader(
-            sessions_node,
-            session.agent,
-            ReaderFeature::Conversation,
-            Call::LabelTranscript {
-                request: hide_session::label_transcript::LabelTranscriptRequest {
-                    agent: session.agent,
-                    reference_kind: "id".into(),
-                    reference_value: session.id.clone(),
-                    cwd: Some(session.checkout_path.to_string_lossy().into_owned()),
-                    checkpoint,
-                    subagents: Default::default(),
-                    turns: None,
-                },
-            },
-            SESSION_CALL_TIMEOUT,
-        )
-        .map_err(|error| error.to_string())?;
-    for receipt in &transcript.memory_receipts {
-        record_receipt(
-            store,
-            project_id,
-            provider,
-            &session.id,
-            true,
-            &receipt.text,
-            receipt.offset,
-        )?;
-    }
-    store
-        .save_cursor(
-            CursorReader::Receipts,
-            &SessionCursorRecord {
-                project_id: project_id.to_owned(),
-                provider: provider.to_owned(),
-                session_id: session.id.clone(),
-                byte_offset: transcript.checkpoint.offset(),
-                checkpoint: serde_json::to_vec(&transcript.checkpoint)
-                    .map_err(|error| error.to_string())?,
-                last_content_hash: None,
-                operator_events: 0,
-                updated_at_unix_ms: if transcript.has_more {
-                    0
-                } else {
-                    session.updated_at_unix_ms
-                },
-            },
-            &[],
-        )
-        .map_err(|error| error.to_string())?;
-    Ok(())
 }
 
 /// Records one receipt a session carried, when its tag is the one this
@@ -2486,6 +2388,7 @@ mod tests {
         RouterConfig,
     };
     use hide_memory::{CandidateKind, CandidateRelation, MemoryLifecycle};
+    use hide_node_link::protocol::Call;
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -3251,9 +3154,10 @@ mod tests {
     }
 
     #[test]
-    fn an_opencode_session_outside_a_pane_has_its_receipt_recorded_once_by_the_walk() {
-        // B13, D-16: OpenCode keeps its sessions in a database, read through
-        // the conversation reader the label read uses.
+    fn an_opencode_session_is_analyzed_once_by_message_and_its_report_ends_by_that_analysis() {
+        // B13, D-16 and PRD memory-stale-cards D-14 for OpenCode: its sessions
+        // live in OpenCode's database and are read message by message, so its
+        // cursors and a report's place count messages, not bytes.
         const OPENCODE: &str = "ses_0a1b2c3d4e5f60718293a4b5c6";
         let fixture = Fixture::new();
         let directory = fixture._temp.path().join("home/.local/share/opencode");
@@ -3295,7 +3199,6 @@ mod tests {
                 ],
             )
             .unwrap();
-        drop(connection);
         let key = ("opencode", OPENCODE.to_owned());
         let delivered = || {
             fixture
@@ -3305,17 +3208,209 @@ mod tests {
                 .unwrap()
                 .provided_session_count
         };
+        let analyzed_to = || {
+            fixture
+                .store()
+                .load_cursor(
+                    CursorReader::Analysis,
+                    &fixture.project_id,
+                    "opencode",
+                    OPENCODE,
+                )
+                .unwrap()
+                .map(|cursor| cursor.byte_offset)
+        };
+        let sent = |call: usize| -> Value {
+            serde_json::from_str(&fixture.backend.inputs.lock().unwrap()[call]).unwrap()
+        };
+        let events = |sent: &Value| {
+            sent["new_events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| {
+                    (
+                        event["offset"].as_u64().unwrap(),
+                        event["kind"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
 
         // A live pane's label read owns the session: the walk records only
-        // the fixture's Claude Code session.
-        fixture.pass_for(key.clone(), true, false);
+        // the fixture's Claude Code session, and nothing is analyzed.
+        assert!(fixture.pass_for(key.clone(), true, false).0.is_empty());
         assert_eq!(delivered(), 1);
+        // Outside a pane the walk records its receipt, once; a session
+        // written a moment ago is not quiet, so it is not analyzed yet.
+        assert!(fixture.pass_for(key.clone(), false, false).0.is_empty());
+        assert_eq!(delivered(), 2);
+        assert!(fixture.pass_for(key.clone(), false, false).0.is_empty());
+        assert_eq!(delivered(), 2);
+        assert_eq!((fixture.calls(), analyzed_to()), (0, None));
 
-        fixture.pass_for(key.clone(), false, false);
-        assert_eq!(delivered(), 2);
-        fixture.pass_for(key, false, false);
-        assert_eq!(delivered(), 2);
-        assert_eq!(fixture.calls(), 0, "an OpenCode session is not analyzed");
+        // Its pane closed: one call carries the operator's request, the
+        // letter and the image (message 0, 3 and 4) and the answer
+        // (message 5), never the text OpenCode or Hide's plugin added, and
+        // the cursor stands after the sixth and last message.
+        fixture.answer(&[]);
+        assert_eq!(
+            fixture.pass_for(key.clone(), false, true).0,
+            ["analyzing", "learned one"]
+        );
+        assert_eq!(fixture.calls(), 1);
+        let first = sent(0);
+        assert_eq!(
+            events(&first),
+            [
+                (0, "human".to_owned()),
+                (3, "human".to_owned()),
+                (4, "human".to_owned()),
+                (5, "assistant".to_owned()),
+            ]
+        );
+        assert!(
+            first["new_events"][0]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("요청 보기를 만들어줘")
+        );
+        assert!(
+            !first["new_events"]
+                .to_string()
+                .contains("hide-memory-receipt")
+        );
+        assert_eq!(analyzed_to(), Some(6));
+
+        // Nothing new: a second pass asks nothing.
+        assert!(fixture.pass_for(key.clone(), false, true).0.is_empty());
+        assert_eq!((fixture.calls(), analyzed_to()), (1, Some(6)));
+
+        // The agent reports m1 from a step OpenCode is still writing; the
+        // report's place is where the conversation reached then, as the node
+        // answers it: seven messages.
+        connection
+            .execute(
+                "INSERT INTO message VALUES ('msg_07', ?1, 1790989400000, ?2, ?3)",
+                rusqlite::params![
+                    OPENCODE,
+                    now_ms() as i64,
+                    json!({"role": "assistant", "time": {"created": 1790989400000_u64}})
+                        .to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO part VALUES ('prt_09', 'msg_07', ?1, 1790989400000, 1790989400000, ?2)",
+                rusqlite::params![
+                    OPENCODE,
+                    json!({"type": "text", "text": "I reported m1 as stale."}).to_string()
+                ],
+            )
+            .unwrap();
+        let identity =
+            project_identity(fixture.node.as_ref(), &crate::node::test_node(), &checkout).unwrap();
+        let session = project_sessions(fixture.node.as_ref(), &identity, SESSION_CALL_TIMEOUT)
+            .unwrap()
+            .into_iter()
+            .find(|session| session.id == OPENCODE)
+            .unwrap();
+        let place = session_stat(fixture.node.as_ref(), &session, SESSION_CALL_TIMEOUT)
+            .unwrap()
+            .size;
+        assert_eq!(place, 7);
+        assert!(matches!(
+            fixture
+                .store()
+                .report_stale(
+                    &fixture.project_id,
+                    1,
+                    &hide_memory::StaleReporter {
+                        runtime: "opencode",
+                        session_id: OPENCODE,
+                        report_offset: Some(place),
+                    },
+                    "The operator said the hook may take 300 ms now",
+                    now_ms(),
+                )
+                .unwrap(),
+            hide_memory::StaleOutcome::Held(_)
+        ));
+        let held = || {
+            fixture
+                .store()
+                .hold(&fixture.project_id, 1, now_ms())
+                .unwrap()
+                .is_some()
+        };
+
+        // A pass that reaches the unfinished step has read up to the report,
+        // not past it: it asks nothing and the card stays held.
+        assert!(fixture.pass_for(key.clone(), false, true).0.is_empty());
+        assert_eq!((fixture.calls(), analyzed_to()), (1, Some(7)));
+        assert!(held());
+
+        // The step finishes and the operator answers: the next analysis
+        // resumes at the step, names m1 as reported, and its cursor passing
+        // the report's place ends the hold.
+        connection
+            .execute(
+                "UPDATE message SET data = ?1, time_updated = ?2 WHERE id = 'msg_07'",
+                rusqlite::params![
+                    json!({"role": "assistant", "time": {"created": 1790989400000_u64,
+                        "completed": 1790989410000_u64}, "finish": "stop"})
+                    .to_string(),
+                    now_ms() as i64
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO message VALUES ('msg_08', ?1, 1790989500000, 1790989500000, ?2)",
+                rusqlite::params![
+                    OPENCODE,
+                    json!({"role": "user", "time": {"created": 1790989500000_u64}}).to_string()
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO part VALUES ('prt_10', 'msg_08', ?1, 1790989500000, 1790989500000, ?2)",
+                rusqlite::params![
+                    OPENCODE,
+                    json!({"type": "text", "text": "Thanks, the hook stays fast"}).to_string()
+                ],
+            )
+            .unwrap();
+        drop(connection);
+        fixture
+            .backend
+            .answers
+            .lock()
+            .unwrap()
+            .push(json!({"candidates": [], "alias_backfill": []}));
+        assert_eq!(
+            fixture.pass_for(key.clone(), false, true).0,
+            ["analyzing", "analyzed"]
+        );
+        assert_eq!(fixture.calls(), 2);
+        let second = sent(1);
+        assert_eq!(
+            events(&second),
+            [(6, "assistant".to_owned()), (7, "human".to_owned())]
+        );
+        let reported = second["similar_memories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|card| card["id"] == "m1")
+            .expect("the reported card is compared");
+        assert_eq!(reported["reported"], true);
+        assert_eq!(analyzed_to(), Some(8));
+        assert!(!held(), "the analysis read past the report");
+        assert!(fixture.pass_for(key, false, true).0.is_empty());
+        assert_eq!(fixture.calls(), 2);
     }
 
     #[test]

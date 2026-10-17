@@ -495,15 +495,115 @@ pub(crate) fn read_as(
     owner: Owner<'_>,
 ) -> Result<(LabelTranscript, Proven), String> {
     with_read(home, |connection| {
-        read_connection(connection, request, owner)
+        read_connection(connection, request, owner).map(|page| (page.transcript, page.proven))
     })?
+}
+
+/// One bounded page of the root session `scope` names, in the shape every
+/// Memory reader answers (`Call::SessionConversation`): the same read as
+/// [`read`], so an event's offset is its message's index and the checkpoint
+/// counts messages. A receipt Hide's plugin stored in a synthetic part is a
+/// provider-injected event at its message's index, where the label read
+/// reports it, so either reader names it by the same turn. A person's
+/// message is classified as the file readers classify one: injected context
+/// or an interruption is not the operator's words.
+pub fn read_conversation(
+    home: &Path,
+    scope: &crate::SessionReadScope,
+    saved: Option<ConversationCheckpoint>,
+) -> Result<crate::ConversationRead, String> {
+    let request = LabelTranscriptRequest {
+        agent: crate::Agent::OpenCode,
+        reference_kind: "id".to_owned(),
+        reference_value: scope.id.clone(),
+        cwd: Some(scope.cwd.clone()),
+        checkpoint: saved,
+        subagents: Default::default(),
+        turns: None,
+    };
+    let page = with_read(home, |connection| {
+        read_connection(
+            connection,
+            &request,
+            Owner::Root {
+                cwd: Some(&scope.cwd),
+            },
+        )
+    })??;
+    Ok(page.conversation())
+}
+
+/// What one read of [`read_connection`] found, before it is shaped for the
+/// label read or the conversation page.
+struct Page {
+    transcript: LabelTranscript,
+    proven: Proven,
+    /// The row bytes the read loaded.
+    read_bytes: u64,
+    /// When each of `transcript.memory_receipts`' messages was written.
+    receipt_times: Vec<u64>,
+}
+
+impl Page {
+    fn conversation(self) -> crate::ConversationRead {
+        use crate::{ConversationEvent, EventKind};
+        let transcript = self.transcript;
+        let messages = transcript.events.into_iter().map(|event| {
+            let (role, kind) = match event.kind {
+                LabelEventKind::Human if crate::is_interruption(&event.text) => {
+                    ("user", EventKind::Interrupted)
+                }
+                LabelEventKind::Human if crate::has_injected_prefix(&event.text) => {
+                    ("user", EventKind::Injected)
+                }
+                LabelEventKind::Human => ("user", EventKind::Human),
+                LabelEventKind::Assistant => ("assistant", EventKind::Assistant),
+                LabelEventKind::Interrupted => ("user", EventKind::Interrupted),
+            };
+            let images = if kind == EventKind::Human {
+                event.images
+            } else {
+                0
+            };
+            (
+                event.offset,
+                ConversationEvent::new(role, kind, event.at_unix_ms, event.text)
+                    .with_images(images),
+            )
+        });
+        let receipts = transcript
+            .memory_receipts
+            .into_iter()
+            .zip(self.receipt_times)
+            .map(|(receipt, at)| {
+                (
+                    receipt.offset,
+                    ConversationEvent::new("user", EventKind::Injected, at, receipt.text)
+                        .with_provider_injected(true),
+                )
+            });
+        // Both come in message order; a message's own event goes before the
+        // receipts stored in it.
+        let mut events = messages.chain(receipts).collect::<Vec<_>>();
+        events.sort_by_key(|(offset, _)| *offset);
+        let (event_offsets, events) = events.into_iter().unzip();
+        crate::ConversationRead {
+            events,
+            event_offsets,
+            checkpoint: transcript.checkpoint,
+            has_more: transcript.has_more,
+            rescanned: transcript.rescanned.is_some(),
+            read_bytes: self.read_bytes,
+            skipped_reasons: transcript.skipped_reasons,
+        }
+    }
 }
 
 fn read_connection(
     connection: &Connection,
     request: &LabelTranscriptRequest,
     owner: Owner<'_>,
-) -> Result<(LabelTranscript, Proven), String> {
+) -> Result<Page, String> {
     if request.reference_kind != "id" {
         return Err("session_kind_unsupported".to_owned());
     }
@@ -584,6 +684,7 @@ fn read_connection(
         sightings: Vec::new(),
         issue_sightings: Vec::new(),
         receipts: Vec::new(),
+        receipt_times: Vec::new(),
         skipped: std::collections::BTreeMap::new(),
         turn_error: None,
     };
@@ -753,6 +854,7 @@ fn read_connection(
         .into_iter()
         .map(|(reason, count)| (reason.to_owned(), count))
         .collect();
+    let receipt_times = transcript.receipt_times;
     let transcript = LabelTranscript {
         confirmed: proven.confirmed(session_id)?,
         events: transcript.events,
@@ -770,7 +872,12 @@ fn read_connection(
         subagents: Default::default(),
         turns: Some(turns),
     };
-    Ok((transcript, proven))
+    Ok(Page {
+        transcript,
+        proven,
+        read_bytes: spent,
+        receipt_times,
+    })
 }
 
 /// The question marks of the message OpenCode is still writing, or `None`
@@ -852,6 +959,8 @@ struct Read {
     sightings: Vec<PrSighting>,
     issue_sightings: Vec<PrSighting>,
     receipts: Vec<MemoryReceiptPart>,
+    /// When each receipt's message was written, beside `receipts`.
+    receipt_times: Vec<u64>,
     skipped: std::collections::BTreeMap<&'static str, usize>,
     /// A question record Hide cannot fold; the read is refused, as a native
     /// file's is, rather than reporting a wait it does not know.
@@ -899,7 +1008,7 @@ impl Read {
                     // reported for Memory to check.
                     if part.get("synthetic").and_then(Value::as_bool) == Some(true) {
                         if role == Some("user") {
-                            self.receipts(body, offset);
+                            self.receipts(body, offset, at);
                         }
                         continue;
                     }
@@ -939,10 +1048,11 @@ impl Read {
         (human, questions)
     }
 
-    fn receipts(&mut self, body: &str, offset: u64) {
+    fn receipts(&mut self, body: &str, offset: u64, at: u64) {
         if !crate::label_transcript::note_receipts(&mut self.receipts, body, offset) {
             self.skip("memory_receipt_capacity");
         }
+        self.receipt_times.resize(self.receipts.len(), at);
     }
 
     fn tool(&mut self, part: &Value, message_at: u64) {

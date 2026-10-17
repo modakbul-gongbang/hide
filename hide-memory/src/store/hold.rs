@@ -71,9 +71,11 @@ pub struct CardHold {
 pub struct StaleReporter<'a> {
     pub runtime: &'a str,
     pub session_id: &'a str,
-    /// The session file's length when the report was made; the hold ends
-    /// once its analysis cursor passes it (D-14). `None` when the session's
-    /// node could not say, and the hold then lasts to its deadline.
+    /// How far the session's conversation reached when the report was made,
+    /// in its analysis cursor's unit: a session file's length, or an
+    /// OpenCode session's message count. The hold ends once that cursor
+    /// passes it (D-14). `None` when the session's node could not say, and
+    /// the hold then lasts to its deadline.
     pub report_offset: Option<u64>,
 }
 
