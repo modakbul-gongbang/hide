@@ -401,7 +401,7 @@ What the move leaves on each machine:
 | The machine giving the core | `~/.hide/state/core-move-abandoned.json` | The moves you stopped waiting for whose other machine has not been reached yet to stop or retire its core, at most 8; present only while one is left |
 | The core machine | `~/.hide/state/core-handover.json` | Whether its core waits for the move's first link, runs, or stopped or retired for a move back |
 | The core machine | `~/Library/LaunchAgents/dev.withhide.core.plist` | The login item that runs `hided core-login` at login and keeps the core running |
-| The core machine | `~/.hide/state/Logs/core.log` | What the login item's core prints, set aside as `core.log.1` at a start once it passes 1 MiB, replacing the one before |
+| The core machine | `~/.hide/state/Logs/core.log` | What the login item's core prints, set aside as `core.log.1` once it passes 1 MiB, replacing the one before; the running core looks at its size every minute and goes on in a new file |
 | The core machine | `~/.hide/state/move-incoming/` | A copy being received; empty once the move ends |
 | The core machine | `~/.hide/state/moved-out/<move>/` | The state of the core of a move you stopped waiting for, set aside there when this Mac reached it |
 
