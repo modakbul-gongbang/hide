@@ -17,6 +17,7 @@ import json
 import os
 from pathlib import Path
 import shlex
+import tomllib
 
 from agent_live_check.protection import ProtectionError, private_directory, write_private
 
@@ -148,3 +149,35 @@ def allow_one_shot_references(sandbox, runtime):
     replacement = sandbox.profile.with_suffix(".next")
     write_private(replacement, ("\n".join(sandbox.rules) + "\n").encode())
     replacement.replace(sandbox.profile)
+
+
+def operator_trust(operator, run):
+    """The folder trust the operator's own agent files hold for a path of this
+    run, by file and key (PRD B14): the candidate records trust for each
+    worktree it spawns into, and must record Codex's only in the private
+    CODEX_HOME the agent reads. A file that is there and cannot be read is a
+    failure, never an empty answer."""
+    run = run.resolve()
+
+    def ours(key):
+        try:
+            return Path(key).resolve().is_relative_to(run)
+        except (OSError, ValueError):
+            return False
+    found = {}
+    codex = operator / ".codex/config.toml"
+    if codex.is_file():
+        try:
+            projects = tomllib.loads(codex.read_text()).get("projects", {})
+        except (OSError, ValueError) as error:
+            raise ProtectionError(f"operator_codex_config_unreadable: {error}", path=codex) from error
+        found[str(codex)] = [f"projects.{json.dumps(key)}" for key in projects if ours(key)]
+    claude = operator / ".claude.json"
+    if claude.is_file():
+        try:
+            projects = json.loads(claude.read_text()).get("projects", {})
+        except (OSError, ValueError) as error:
+            raise ProtectionError(f"operator_claude_json_unreadable: {error}", path=claude) from error
+        found[str(claude)] = [f"projects.{json.dumps(key)}.hasTrustDialogAccepted" for key, entry in projects.items()
+                              if ours(key) and isinstance(entry, dict) and "hasTrustDialogAccepted" in entry]
+    return found

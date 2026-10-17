@@ -51,9 +51,14 @@ def markdown(report):
         if agent.get("spawn"):
             lines.append(f"- route: `{text(json.dumps(agent['spawn']['route']))}`")
         lines.append("")
+    if report.get("product_findings"):
+        lines.extend(["## Product findings", ""])
+        lines.extend(f"- {text(finding)}" for finding in report["product_findings"])
+        lines.append("")
     lines.extend(["## Isolation, operator files and cleanup", "", "```json",
                   json.dumps({key: report[key] for key in ("measured_repository", "created", "repository_cleanup", "leftovers",
-                                               "configuration", "leftover_copies", "cleanup", "failures") if key in report},
+                                               "configuration", "operator_trust", "leftover_copies", "cleanup", "failures")
+                                if key in report},
                              indent=2, default=str), "```", ""])
     return "\n".join(lines)
 

@@ -31,7 +31,8 @@ from . import ci, cells, quota
 from .controller import Controller
 from .daemon import Daemon
 from .journey import Journey
-from .local import ROUTES, allow_one_shot_references, codex_login_refusal, route, trust_codex, wrapper
+from .local import (ROUTES, allow_one_shot_references, codex_login_refusal, operator_trust, route, trust_codex,
+                    wrapper)
 from .report import save, table_lines
 
 KIT_SECONDS = 90
@@ -112,6 +113,27 @@ def journey_leftovers(root, checkout, run):
                  and Path(line.removeprefix("worktree ")).is_relative_to(runs)
                  and not Path(line.removeprefix("worktree ")).is_relative_to(run.resolve())]
     return {"branches": branches, "worktrees": worktrees}
+
+
+def check_operator_trust(report, operator, run, when):
+    """Records the operator files' trust entries for this run's paths at
+    `when`: a Codex entry there is an isolation failure, a Claude one is
+    reported by key, and one left after the cleanup is a product finding."""
+    trust = report.setdefault("operator_trust", {})
+    try:
+        found = trust[when] = operator_trust(operator, run)
+    except ProtectionError as error:
+        report["failures"].append({"type": "ProtectionError", "reason": str(error)})
+        return
+    for path, keys in found.items():
+        if not keys:
+            continue
+        if path.endswith("config.toml"):
+            report["failures"].append({"type": "IsolationError", "path": path,
+                                       "reason": f"operator_codex_trust_written: {', '.join(keys)}"})
+        elif when == "after":
+            report.setdefault("product_findings", []).append(
+                f"the candidate left Claude trust in the operator's {path} after its worktrees were removed: {', '.join(keys)}")
 
 
 def claude_trusts(operator, root):
@@ -437,6 +459,9 @@ def main(argv=None):
             if log.is_file() and not log.is_symlink():
                 with open(log, "rb") as stream:
                     write_private(run / "herdr-server.log", stream.read(1024 * 1024))
+        if local:
+            # Before the cleanup, which removes the trust the candidate recorded with its worktrees.
+            check_operator_trust(report, operator, run, "during")
         if runtime and report["created"]:
             try:
                 report["repository_cleanup"] = remove_created(runtime, root, report["created"])
@@ -459,6 +484,8 @@ def main(argv=None):
                 report["configuration"] = guard.finish()
             except Exception as error:
                 report["configuration"] = {"failures": [{"reason": str(error)}]}
+        if local:
+            check_operator_trust(report, operator, run, "after")
         for signum, handler in previous.items():
             signal.signal(signum, handler)
     interrupted = owner.cancelled.is_set()

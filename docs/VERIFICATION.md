@@ -334,7 +334,7 @@ Every prompt asks only for a fresh token (`Reply with exactly <token>`), so a mo
 | `letter` | A token sent with `hide request send` comes back in the turn Hide's doorbell opened, and `hide request show` says delivered |
 | `sleep_wake` | After the daemon's Sleep event the row reads asleep, and after Wake it runs again |
 | `resume` | The operator opens the woken agent (`focus_pane`), its terminal takes this screen's keys, a typed token prompt is answered in the session it slept in, and Herdr reports the same session id |
-| `start_untrusted` | A start in a repository the account never trusted, with no preparation |
+| `start_untrusted` | A start in a repository the account never trusted, with no preparation, passes once Hide has recorded the trust of the worktree it made |
 
 The cells an adapter declares come from `contracts/agent-journey.json`, which `hide-agent-adapter` generates and its contract test keeps current ([contracts/README.md](../contracts/README.md#agent-journey)).
 It does not prove the desktop window, a physical keyboard, an agent other than the declared rows, or a model, provider or CLI version other than the ones its report names.
@@ -358,6 +358,8 @@ Build `hided`, `hide` and the hooks with `bash scripts/verify-cargo.sh cli` and 
 It reuses `scripts/agent_live_check`'s isolation: the pinned Herdr on a private socket, this worktree's `hided` on private state with the kit installed into a private daemon home, the write sandbox and the process guardian.
 Claude keeps the operator's HOME for its keychain sign-in and reads only the candidate's settings; Codex reads a private `CODEX_HOME` holding a 0600 copy of its login, removed at the end, and the measured repository's trust, written only there.
 The journey writes no operator file; the entries Claude itself leaves in `~/.claude.json` and `~/.claude/projects` for the run's paths are listed by file and key and left alone.
+Hide records folder trust for each worktree it spawns an agent into, and must record Codex's only in the private `CODEX_HOME` the agent reads: before the cleanup and after it the journey reads the operator's `~/.codex/config.toml` and `~/.claude.json` for trust entries naming a path of the run.
+A Codex entry there is an isolation failure (exit 2); a Claude one is reported by key, and one left after the cleanup is listed as a product finding.
 Every exit ends the agents, panes, Herdr and `hided` and confirms it, and removes the run's `journey/<run-id>-*` branches and worktrees only when the name and start commit match its record.
 Never run a cargo build or test while it runs: either relinks `target/debug` under the running `hided`.
 
