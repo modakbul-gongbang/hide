@@ -5,11 +5,13 @@ same on every system; only these forms differ (docs/VERIFICATION.md, Agent
 journey).
 
 The Windows forms follow what the repository already does there: the e2e
-fixtures' home and tool PATH (`web/e2e/platform-fixture.ts`), the pane shell
-Hide and Herdr start (Windows PowerShell, `hide-host`'s shell integration),
-and PowerShell's quoting (`hide-agent-hooks`' `Quoting::PowerShell`).
+fixtures' home and tool PATH (`web/e2e/platform-fixture.ts`) and their pane
+shell, cmd.exe named as Herdr's default shell with its prompt from PROMPT,
+and its commands (`web/e2e/herdr-fixture.ts`). The panes Hide makes for an
+agent run the shell its own integration names, whatever Herdr's default.
 """
 
+import json
 import os
 from pathlib import Path
 import shlex
@@ -75,20 +77,23 @@ def temp_env(folder):
     return values
 
 
-def powershell_quote(value):
-    """`value` as a PowerShell single-quoted string; the typographic single
-    quotes PowerShell also ends a string on are doubled too."""
-    return "'" + "".join(c * 2 if c in "'‘’‚‛" else c for c in str(value)) + "'"
+def cmd_quote(value):
+    """`value` as one quoted cmd.exe word. cmd expands % inside quotes too,
+    and a quote ends the quoted value, so neither can be carried."""
+    value = str(value)
+    if any(character in value for character in '"%\r\n'):
+        raise ValueError(f"cmd.exe cannot carry {value!r}")
+    return f'"{value}"'
 
 
 class PaneShell:
     """What an owned pane's shell is told: zsh on Unix, from SHELL with a
-    private ZDOTDIR; on Windows the Windows PowerShell Herdr starts there,
-    whose prompt is set once it runs."""
+    private ZDOTDIR; cmd.exe on Windows, where Herdr ignores SHELL and starts
+    the shell its configuration names."""
 
     def environment(self, home):
         if WINDOWS:
-            return {}
+            return {"PROMPT": READY.removesuffix(">") + "$G "}
         return {"SHELL": "/bin/zsh", "ZDOTDIR": str(home), "skip_global_compinit": "1"}
 
     def files(self):
@@ -97,14 +102,14 @@ class PaneShell:
             return []
         return [(".zshrc", f"skip_global_compinit=1\nPS1='{READY} '\n".encode())]
 
-    def prompt_line(self):
-        """Typed once into a new pane on Windows: the ready prompt, kept inside
-        the prompt wrapper Herdr gives its PowerShell panes when it has one."""
+    def herdr_config(self):
+        """The lines of Herdr's configuration that name the pane shell."""
         if not WINDOWS:
-            return None
-        prompt = "{ " + powershell_quote(READY + " ") + " }"
-        return ("if ($null -ne $global:__HerdrOriginalPrompt) { $global:__HerdrOriginalPrompt = " + prompt
-                + " } else { function global:prompt " + prompt + " }")
+            return ""
+        shell = os.environ.get("ComSpec", "")
+        if not Path(shell).is_absolute() or not Path(shell).is_file():
+            raise FileNotFoundError("Windows needs an absolute ComSpec for the pane shell")
+        return f"[terminal]\ndefault_shell = {json.dumps(shell)}\n"
 
     def program(self, argv, output, status):
         """Runs `argv` with its standard output in `output` and its exit status
@@ -113,11 +118,10 @@ class PaneShell:
             command = " ".join(shlex.quote(str(value)) for value in argv)
             return (f"{command} > {shlex.quote(str(output))} 2>/dev/null; "
                     f"printf '%s' \"$?\" > {shlex.quote(str(status))}")
-        # Windows PowerShell's `>` writes UTF-16; Set-Content writes the
-        # program's lines as ASCII, and its exit status after them.
-        command = "& " + " ".join(powershell_quote(value) for value in argv)
-        return (f"{command} 2>$null | Set-Content -LiteralPath {powershell_quote(output)} -Encoding ascii; "
-                f"Set-Content -LiteralPath {powershell_quote(status)} -Value $LASTEXITCODE -Encoding ascii -NoNewline")
+        # `call echo %^errorlevel%` reads the status when it runs, not when
+        # the line is parsed.
+        command = " ".join(cmd_quote(value) for value in argv)
+        return f"{command} > {cmd_quote(output)} 2> nul & >{cmd_quote(status)} call echo %^errorlevel%"
 
     def read_variable(self, name, source, ready):
         """Sets `name` in the shell, for what it starts later, from the first
@@ -125,8 +129,7 @@ class PaneShell:
         if not WINDOWS:
             return (f"IFS= read -r {name} < {shlex.quote(str(source))}; export {name}; "
                     f": > {shlex.quote(str(ready))}")
-        return (f"$env:{name} = Get-Content -LiteralPath {powershell_quote(source)} -TotalCount 1; "
-                f"New-Item -ItemType File -Path {powershell_quote(ready)} | Out-Null")
+        return f"set /p {name}=<{cmd_quote(source)} & type nul > {cmd_quote(ready)}"
 
 
 def launcher(path, argv, *, environment=(), unset=(), file_variables=()):
@@ -148,16 +151,12 @@ def launcher(path, argv, *, environment=(), unset=(), file_variables=()):
         path.chmod(0o700)
         return path
     target = path.with_name(path.name + ".cmd")
-    for value in [*environment.values(), *map(str, argv), *(str(file) for _, file in file_variables)]:
-        # cmd expands % inside quotes too, and a quote ends the quoted value.
-        if any(character in value for character in '"%\r\n'):
-            raise ValueError(f"cmd.exe cannot carry {value!r} in a launcher")
-    lines = ["@echo off", *(f'set "{name}="' for name in unset),
-             *(f'set "{key}={value}"' for key, value in environment.items()),
-             *(f'set /p {name}=<"{file}"' for name, file in file_variables),
+    lines = ["@echo off", *(f"set {cmd_quote(name + '=')}" for name in unset),
+             *(f"set {cmd_quote(f'{key}={value}')}" for key, value in environment.items()),
+             *(f"set /p {name}=<{cmd_quote(file)}" for name, file in file_variables),
              # The last line: its exit status is the file's, and a program
              # that is itself a .cmd (an npm install's) takes over the run.
-             " ".join(f'"{value}"' for value in argv) + " %*"]
+             " ".join(cmd_quote(value) for value in argv) + " %*"]
     write_private(target, ("\r\n".join(lines) + "\r\n").encode())
     return target
 

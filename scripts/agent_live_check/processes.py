@@ -463,6 +463,7 @@ class OwnedProcesses:
                     raise ProcessSafetyError("cleanup_unconfirmed")
                 time.sleep(0.01)
             child.wait(timeout=END_SECONDS)
+            self.port.settle(job, END_SECONDS)
         except (OSError, subprocess.TimeoutExpired, ProcessSafetyError) as error:
             # Its handle stays open: closing it is still the last resort.
             self.children[child] = job

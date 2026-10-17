@@ -217,12 +217,15 @@ class JobPort:
     ended at once and keeps the reason for its owner."""
 
     QUIT = 0
+    # A message no job sends: the port has read everything queued before it.
+    SETTLED = 0xFFFFFFFF
 
     def __init__(self, reasons):
         self.handle = CreateIoCompletionPort(INVALID_HANDLE_VALUE, None, 0, 1)
         if not self.handle:
             raise failed("CreateIoCompletionPort")
         self.jobs, self.lock, self.reasons = {}, threading.Lock(), reasons
+        self.settling = {}
         self.thread = threading.Thread(target=self.read, daemon=True)
         self.thread.start()
 
@@ -234,6 +237,17 @@ class JobPort:
         with self.lock:
             self.jobs.pop(job.key, None)
 
+    def settle(self, job, seconds):
+        """Returns once the port has read every message `job` sent before
+        now, so a refusal that came just before its end is on the job."""
+        done = threading.Event()
+        with self.lock:
+            self.settling[job.key] = done
+        if not PostQueuedCompletionStatus(self.handle, self.SETTLED, job.key, None):
+            raise failed("PostQueuedCompletionStatus")
+        if not done.wait(seconds):
+            raise OSError("job_port_unsettled")
+
     def read(self):
         message, key, overlapped = wintypes.DWORD(), ctypes.c_size_t(), ctypes.c_void_p()
         while True:
@@ -242,6 +256,12 @@ class JobPort:
                 return
             if key.value == self.QUIT:
                 return
+            if message.value == self.SETTLED:
+                with self.lock:
+                    done = self.settling.pop(key.value, None)
+                if done is not None:
+                    done.set()
+                continue
             reason = self.reasons.get(message.value)
             if reason is None:
                 continue

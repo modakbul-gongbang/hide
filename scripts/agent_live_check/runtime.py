@@ -134,7 +134,8 @@ class Runtime:
             self.env = base
             for name, data in self.shell.files():
                 write_private(self.home / name, data)
-            write_private(run / "herdr.toml", b"[update]\nversion_check = false\n[sound]\nenabled = false\n")
+            write_private(run / "herdr.toml", ("[update]\nversion_check = false\n[sound]\nenabled = false\n"
+                                               + self.shell.herdr_config()).encode())
             self.daemon_env = {**base, "HIDE_STATE_DIR": str(self.state), "HIDE_PORT": "0",
                                "HIDE_KEEP_ALIVE": "1", "HIDED_UI_DIR": str(checkout / "web/dist")}
             # hided observes native session identity using its usual reader.
@@ -244,10 +245,6 @@ class Runtime:
         workspace = created["workspace"]["workspace_id"]
         pane = created["root_pane"]["pane_id"]
         self.workspaces.add(workspace)
-        if line := self.shell.prompt_line():
-            # Windows PowerShell's own prompt first, then the ready marker.
-            self.wait(lambda: any(row.startswith("PS ") for row in self.screen(pane).splitlines()), 20)
-            self.send(pane, line)
         self.wait(lambda: READY in self.screen(pane), 10)
         # Exercise the real checkout/capability boundary in its actual shell;
         # no synthetic native-session declaration or copied operator capability.
@@ -278,7 +275,8 @@ class Runtime:
         # hooks. Only the actual pane's shell receives it, before native start.
         reference_input = self.run / (name + ".reference-input")
         ready = self.run / (name + ".reference-ready")
-        write_private(reference_input, (str(reference) + "\n").encode())
+        # One line with no line break, which cmd.exe's `set /p` reads whole.
+        write_private(reference_input, str(reference).encode())
         self.send(pane, self.shell.read_variable("HIDE_CAP_REF", reference_input, ready))
         self.wait(lambda: ready.exists(), 5)
         reference_input.unlink()
@@ -425,7 +423,8 @@ class Runtime:
             raise ProcessError("pane_not_at_owned_shell")
         output, status = self.run / (name + ".out"), self.run / (name + ".status")
         self.send(pane, self.shell.program(argv, output, status))
-        self.wait(lambda: status.exists() and status.read_text().removeprefix("-").isdigit(), 10)
+        # cmd.exe's echo ends the status with a line break.
+        self.wait(lambda: status.exists() and status.read_text().strip().removeprefix("-").isdigit(), 10)
         if output.stat().st_size > MAX_OUTPUT:
             raise ProcessError("pane_command_output_over_budget")
         return int(status.read_text()), output.read_text()
