@@ -48,6 +48,8 @@ pub(super) struct FakeDevice {
     gate: Mutex<Gate>,
     released: Condvar,
     saves: Mutex<Vec<String>>,
+    /// The files read through this device, by their path.
+    reads: Mutex<Vec<String>>,
     pins: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
     closes: Mutex<Vec<&'static str>>,
 }
@@ -59,6 +61,7 @@ impl FakeDevice {
             gate: Mutex::new(Gate::default()),
             released: Condvar::new(),
             saves: Mutex::new(Vec::new()),
+            reads: Mutex::new(Vec::new()),
             pins: Mutex::new(HashMap::new()),
             closes: Mutex::new(Vec::new()),
         })
@@ -97,6 +100,10 @@ impl FakeDevice {
     fn saves(&self) -> Vec<String> {
         self.saves.lock().unwrap().clone()
     }
+
+    fn reads(&self) -> Vec<String> {
+        self.reads.lock().unwrap().clone()
+    }
 }
 
 impl NodeLink for FakeDevice {
@@ -114,6 +121,9 @@ impl NodeLink for FakeDevice {
                 Call::OpenDocument { path, .. } => Some(path.as_str()),
                 _ => None,
             };
+            if let Some(read) = read {
+                self.reads.lock().unwrap().push(read.to_owned());
+            }
             let mut gate = self.gate.lock().unwrap();
             gate.waiting += 1;
             while gate.held || read.is_some_and(|read| gate.held_reads.contains(read)) {
@@ -179,6 +189,12 @@ struct Fixture {
 
 impl Fixture {
     fn new() -> Self {
+        Self::with(|runtime| runtime)
+    }
+
+    /// The fixture with `setup` applied to the runtime before its workers
+    /// start.
+    fn with(setup: impl FnOnce(Runtime) -> Runtime) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().canonicalize().unwrap();
         std::fs::write(root.join("a.txt"), "old\n").unwrap();
@@ -215,7 +231,7 @@ impl Fixture {
         // The checkout is written by the runtime's workers, so it is the
         // runtime's and goes after they have let go.
         runtime.test_dirs.push(dir);
-        let shared = SharedRuntime::new(runtime);
+        let shared = SharedRuntime::new(setup(runtime));
         shared
             .lock()
             .unwrap()
@@ -241,6 +257,10 @@ impl Fixture {
             let mut node = super::device_catalog::connected_status(DEVICE);
             node.session = Some(session);
             runtime.snapshot.status.remote.push(node);
+            let mut row = runtime.snapshot.navigator.devices[0].clone();
+            row.id = DEVICE.to_owned();
+            row.kind = "remote".to_owned();
+            runtime.snapshot.navigator.devices.push(row);
             runtime.snapshot.navigator.focused_device_id = Some(DEVICE.to_owned());
             runtime.snapshot.navigator.focused_workspace_id = None;
             runtime.snapshot.navigator.focused_checkout_id = None;
@@ -373,53 +393,95 @@ fn a_device_file_is_read_on_a_worker_and_shows_as_a_tab_when_it_arrives() {
 
 /// A terminal link to a file of a node's own checkout, which a window on
 /// that node prints: the checkout is in the node's session, so the reveal
-/// finds it there, opens the file and moves no focus of the core's, since
-/// the node's Herdr owns that checkout's focus. One not in front on the node
-/// is refused whole, before anything is read.
+/// finds it there, reads the file through the node and moves no focus of the
+/// core's, since the node's Herdr owns that checkout's focus.
 #[test]
-fn a_file_of_a_nodes_checkout_in_front_is_revealed_and_one_behind_is_refused() {
+fn a_file_of_a_nodes_checkout_in_front_is_revealed_through_the_node() {
     let f = Fixture::new().in_node_session();
-    std::fs::write(f.root.join("b.txt"), "b\n").unwrap();
-    let reveal = |name: &str| {
-        f.dispatch(
-            "reveal_path",
-            serde_json::json!({
-                "path": f.path(name), "workspace_id": WORKSPACE, "checkout_id": &f.checkout,
-                "is_directory": false, "device_id": DEVICE,
-            }),
-        );
-    };
-    reveal("a.txt");
+    f.dispatch("reveal_path", node_reveal(&f, "a.txt"));
     f.wait("the revealed file", |runtime| {
         runtime.snapshot.editor.document.is_some()
     });
-    {
-        let runtime = f.shared.lock().unwrap();
-        assert_eq!(runtime.snapshot.status.last_error, None);
-        assert_eq!(
-            runtime.snapshot.ui_state.selected_path.as_deref(),
-            Some(f.path("a.txt").as_str())
-        );
-        assert!(runtime.snapshot.ui_state.right_panel_visible);
-        assert_eq!(runtime.snapshot.navigator.focused_checkout_id, None);
-    }
-
-    f.shared.lock().unwrap().snapshot.status.remote[0]
-        .session
-        .as_mut()
-        .unwrap()
-        .focused_checkout_id = None;
-    reveal("b.txt");
-    assert_eq!(f.last_error().as_deref(), Some("reveal.not_in_front"));
     let runtime = f.shared.lock().unwrap();
-    assert!(
-        runtime.snapshot.editor.opening.is_empty(),
-        "nothing is read"
-    );
+    assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(
         runtime.snapshot.ui_state.selected_path.as_deref(),
         Some(f.path("a.txt").as_str())
     );
+    assert!(runtime.snapshot.ui_state.right_panel_visible);
+    assert_eq!(runtime.snapshot.navigator.focused_checkout_id, None);
+    assert!(
+        f.device.reads().iter().any(|read| read.ends_with("a.txt")),
+        "read through the node: {:?}",
+        f.device.reads()
+    );
+}
+
+/// The same click while the node shows another checkout, as on the Overview:
+/// the node's Herdr is asked to bring the checkout forward, nothing is read
+/// meanwhile, and the file is revealed once the node's front lands there, as
+/// a click on this machine's checkout brings it forward.
+#[test]
+fn a_file_of_a_nodes_checkout_behind_is_revealed_once_the_node_brings_it_forward() {
+    let f = Fixture::with(|runtime| {
+        super::workspace_view::with_new_views(runtime, "documents-node-reveal")
+    })
+    .in_node_session();
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime.install_remote_control(RemoteControlContext::new(
+            DEVICE,
+            Arc::new(super::device_catalog::RecordingHerdr {
+                requests: requests.clone(),
+            }),
+            Weak::new(),
+            crate::handle::ChangeNotifier::noop(),
+        ));
+        let session = runtime.snapshot.status.remote[0].session.as_mut().unwrap();
+        session.focused_workspace_id = None;
+        session.focused_checkout_id = None;
+        runtime.snapshot.navigator.focused_device_id = Some(crate::node::TEST_NODE.to_owned());
+    }
+    f.dispatch("reveal_path", node_reveal(&f, "a.txt"));
+    {
+        let runtime = f.shared.lock().unwrap();
+        assert_eq!(runtime.snapshot.status.last_error, None);
+        assert_eq!(
+            runtime.snapshot.navigator.focused_device_id.as_deref(),
+            Some(DEVICE),
+            "the node comes forward with the request"
+        );
+        assert!(
+            runtime.snapshot.editor.opening.is_empty(),
+            "nothing is read yet"
+        );
+        assert!(f.device.reads().is_empty());
+    }
+    f.wait("the request to reach the node's Herdr", |_| {
+        !requests.lock().unwrap().is_empty()
+    });
+
+    // The node's Herdr moved its front to the checkout; the sync sees it land.
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        let session = runtime.snapshot.status.remote[0].session.as_mut().unwrap();
+        session.focused_workspace_id = Some(WORKSPACE.to_owned());
+        session.focused_checkout_id = Some(f.checkout.clone());
+        runtime.sync_workspace_view();
+    }
+    f.wait("the revealed file", |runtime| {
+        runtime.snapshot.ui_state.selected_path.as_deref() == Some(f.path("a.txt").as_str())
+    });
+    assert!(f.device.reads().iter().any(|read| read.ends_with("a.txt")));
+    assert_eq!(f.last_error(), None);
+}
+
+fn node_reveal(f: &Fixture, name: &str) -> Value {
+    serde_json::json!({
+        "path": f.path(name), "workspace_id": WORKSPACE, "checkout_id": &f.checkout,
+        "is_directory": false, "device_id": DEVICE,
+    })
 }
 
 /// A read still running when its device is removed opens no tab when its

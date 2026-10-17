@@ -28,6 +28,9 @@ struct PendingChoice {
     key: WorkspaceKey,
     memory_project: Option<String>,
     memory_acknowledged: bool,
+    /// A path the operator clicked in the chosen checkout, revealed once it
+    /// is in front (`Runtime::reveal_when_in_front`).
+    reveal: Option<super::RevealPathPayload>,
 }
 
 pub(super) struct WorkspaceViewStore {
@@ -404,6 +407,7 @@ impl Runtime {
                 key,
                 memory_project: None,
                 memory_acknowledged: false,
+                reveal: None,
             });
         }
     }
@@ -436,6 +440,26 @@ impl Runtime {
         {
             pending.memory_project = Some(workspace);
         }
+    }
+
+    /// Keeps `reveal` on the device Workspace choice `request` made, to run
+    /// once that Workspace is in front; false when no such choice waits.
+    pub(super) fn attach_reveal(
+        &mut self,
+        device: &str,
+        request: &str,
+        reveal: super::RevealPathPayload,
+    ) -> bool {
+        let Some(pending) = self
+            .workspace_views
+            .as_mut()
+            .and_then(|store| store.pending_choice.as_mut())
+            .filter(|pending| pending.device_id == device && pending.request_id == request)
+        else {
+            return false;
+        };
+        pending.reveal = Some(reveal);
+        true
     }
 
     pub(super) fn acknowledge_memory_navigation(&mut self, device: &str, request: &str) {
@@ -710,14 +734,18 @@ impl Runtime {
                         && (pending.memory_project.is_none() || pending.memory_acknowledged)
                 })
         {
-            let memory_project = self
+            let (memory_project, reveal) = self
                 .workspace_views
                 .as_mut()
                 .and_then(|store| store.pending_choice.as_mut())
-                .and_then(|pending| pending.memory_project.take());
+                .map(|pending| (pending.memory_project.take(), pending.reveal.take()))
+                .unwrap_or_default();
             self.mark_workspace_chosen(key);
             if let Some(project) = memory_project {
                 self.show_project_memory_at(key, project);
+            }
+            if let Some(reveal) = reveal {
+                self.reveal_path(reveal);
             }
         }
         self.restore_front_when_ready();

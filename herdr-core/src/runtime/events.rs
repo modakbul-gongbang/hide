@@ -528,7 +528,7 @@ pub(super) struct FileClosePayload {
 /// the checkout switch, the panel, the tree and the editor tab land in one
 /// event or the dispatch's fire-and-forget ordering would let the operator
 /// see a half-applied reveal.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 pub(super) struct RevealPathPayload {
     pub(super) path: String,
     pub(super) workspace_id: String,
