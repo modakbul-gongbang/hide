@@ -20,6 +20,7 @@ import tempfile
 import traceback
 
 from agent_live_check.cli import default_herdr, operator_routing
+from agent_live_check.credential_snapshot import CredentialSnapshotUnavailable
 from agent_live_check.mid_turn import allow_hook_route
 from agent_live_check.overlay import prepare as prepare_overlay
 from agent_live_check.processes import OwnedProcesses, ProcessError
@@ -32,8 +33,8 @@ from . import ci, cells, quota
 from .controller import Controller
 from .daemon import Daemon
 from .journey import Journey
-from .local import (ROUTES, allow_one_shot_references, claude_session_folders, codex_login_refusal, operator_trust,
-                    route, trust_codex, wrapper)
+from .local import (ROUTES, TRUST, allow_one_shot_references, claude_session_folders, operator_trust, route,
+                    wrapper)
 from .report import save, table_lines
 
 KIT_SECONDS = 90
@@ -47,9 +48,6 @@ def systems(mode):
                    "not measured: local mode runs on macOS only; the CI layer measures it" if mode == "local" else
                    "not measured: another CI leg measures it")
             for name in SYSTEM_NAMES.values()}
-CODEX_LOGIN_COPY = {"id": "codex", "overlay": {
-    "env": {"CODEX_HOME": "."}, "copies": [[".codex/auth.json", "auth.json"]], "settings": [],
-    "provenance": "A private CODEX_HOME holding a copy of the login (docs/AI_PROVIDERS.md); a refresh stays in the copy."}}
 
 
 def parser():
@@ -261,27 +259,41 @@ def package(runtime):
     return resources
 
 
-def wait_kit(runtime, kinds):
-    """The candidate kit installed Hide's hooks and Herdr's integration in the private home."""
-    files = {"claude": [runtime.home / ".claude/settings.json"],
-             "codex": [runtime.home / ".codex/hooks.json"]}
-
-    def installed():
-        for kind in kinds:
-            for file in files[kind]:
-                if not file.is_file():
-                    return False
-                content = file.read_text(errors="replace")
-                if "hide-agent-hooks" not in content or "herdr" not in content.lower():
-                    return False
-        return True
-    runtime.wait(installed, KIT_SECONDS)
+def wait_kit(daemon, ids):
+    """The candidate kit's own report, as Settings reads it: Hide's hook and
+    Herdr's integration of each agent in the private home, once each is
+    installed or failed. Returns each failed piece's reason by agent."""
+    def report(rest):
+        devices = (rest.get("navigator") or {}).get("devices") or []
+        device = next((device for device in devices if device.get("kind") == "local"), None)
+        rows = {row.get("id"): row for row in ((device or {}).get("kit") or {}).get("agents") or []}
+        failed = {}
+        for key in ids:
+            row = rows.get(key)
+            if not row or not row.get("herdr"):
+                return None
+            for name, piece in (("hook", row.get("hook")), ("herdr", row["herdr"])):
+                # No hook: the agent takes the skill only.
+                if piece is None:
+                    continue
+                if piece.get("state") == "failed":
+                    failed.setdefault(key, []).append(f"{name}: {piece.get('reason')}")
+                elif piece.get("state") != "installed":
+                    return None
+        return {"failed": failed}
+    return daemon.wait(report, KIT_SECONDS, "the kit to install each agent's hook and Herdr integration")["failed"]
 
 
 def prepare_local(runtime, report, table, rows, measured, operator, root):
     """Local mode's guard, write sandbox and each agent's route; the agents
     ready to measure."""
     run, owner = runtime.run, runtime.owner
+    report["agents"].extend({"id": key} for key in measured)
+    for key in measured:
+        unmeasured = ROUTES[rows[key]["herdr_kind"]].get("unmeasured")
+        if unmeasured:
+            cells.settle_agent(table, key, unmeasured)
+    measured = [key for key in measured if "unmeasured" not in ROUTES[rows[key]["herdr_kind"]]]
     kinds = [rows[key]["herdr_kind"] for key in measured]
     known = list(dict.fromkeys(operator / rel for kind in kinds for rel in ROUTES[kind]["known"]))
     roots = list(dict.fromkeys(operator / rel for kind in kinds for rel in ROUTES[kind]["roots"]))
@@ -299,8 +311,8 @@ def prepare_local(runtime, report, table, rows, measured, operator, root):
     ready = []
     for key in measured:
         kind = rows[key]["herdr_kind"]
-        agent = {"id": key}
-        report["agents"].append(agent)
+        entry = ROUTES[kind]
+        agent = next(row for row in report["agents"] if row["id"] == key)
         if not executables[key]:
             cells.settle_agent(table, key, f"CLI not installed: {kind} is not on PATH")
             continue
@@ -309,30 +321,37 @@ def prepare_local(runtime, report, table, rows, measured, operator, root):
         environment = {**clean_env(), "HOME": str(operator), "TMPDIR": str(run / "agent-tmp")}
         _, version, _ = owner.run([str(launch), "--version"], env=environment, check=False)
         agent["version"] = version.strip()[:120]
-        if kind == "codex":
-            refusal = codex_login_refusal(operator / ".codex/auth.json")
-            if refusal:
-                agent["login"] = refusal
-                cells.settle_agent(table, key, refusal)
-                continue
-            codex_home = runtime.home / ".codex"
-            runtime.credential_roots.add(codex_home)
-            agent["private_configuration"] = prepare_overlay(CODEX_LOGIN_COPY, runtime.probe, operator,
-                                                             owner=owner, env=clean_env(), root=codex_home)["copies"]
         if kind == "claude" and not claude_trusts(operator, root):
             agent["trust"] = f"the measured repository {root} is not trusted in Claude"
             cells.settle_agent(table, key, f"the measured repository is not trusted in Claude; open Claude once in {root} and accept")
             continue
-        if kind == "claude":
-            code, output, _ = owner.run([str(launch), "auth", "status"], env=environment, check=False)
+        private = runtime.home / entry["config"] if entry["config"] else None
+        if entry["copies"]:
+            runtime.credential_roots.add(private)
+            recipe = {"id": key, "overlay": {"env": {}, "copies": entry["copies"], "settings": [],
+                                             "provenance": entry["provenance"]}}
             try:
-                logged_in = json.loads(output).get("loggedIn") is True
-            except ValueError:
-                logged_in = False
-            if code or not logged_in:
-                agent["login"] = "not logged in: run claude auth login yourself; the journey never logs in"
+                agent["private_configuration"] = prepare_overlay(recipe, runtime.probe, operator, owner=owner,
+                                                                 env=clean_env(), root=private)["copies"]
+            except CredentialSnapshotUnavailable as error:
+                # Another process has the login open; it is never ended for the journey.
+                agent["login"] = (f"{kind}'s login is open in another process ({error}); close that {kind} "
+                                  "yourself, then rerun; the journey never ends another session's agent")
                 cells.settle_agent(table, key, agent["login"])
                 continue
+
+        def status(args, launch=launch, environment=environment):
+            code, output, _ = owner.run([str(launch), *args], env=environment, check=False)
+            return code, output
+        refusal = entry["login"](private, status)
+        if refusal:
+            agent["login"] = refusal
+            cells.settle_agent(table, key, refusal)
+            # A login the run will not use leaves no copy behind.
+            for _, name in entry["copies"]:
+                for suffix in ("", "-wal", "-shm"):
+                    (private / (name + suffix)).unlink(missing_ok=True)
+            continue
         ready.append(key)
     return sandbox, guard, ready
 
@@ -469,10 +488,14 @@ def main(argv=None):
             daemon.wait(lambda rest: (rest.get("ui_state") or {}).get("agent_onboarding") == "pending",
                         KIT_SECONDS, "the first-run agent question")
             daemon.dispatch("agent_onboarding_apply", {"agents": ready, "finish": True})
-            wait_kit(runtime, [rows[key]["herdr_kind"] for key in ready])
+            for key, pieces in wait_kit(daemon, ready).items():
+                # The product's own answer: the agent cannot start as Hide sets it up.
+                cells.settle(table, key, "start", cells.FAIL, "the kit did not install " + "; ".join(pieces))
+                ready.remove(key)
             untrusted = repository(runtime, "repo-untrusted")
-            if "codex" in ready:
-                trust_codex(runtime.home / ".codex/config.toml", root)
+            for kind in {rows[key]["herdr_kind"] for key in ready} & TRUST.keys():
+                path, write = TRUST[kind]
+                write(runtime.home / path, root)
             if fixture_bin:
                 for key in ready:
                     ci.fixture_config(runtime, rows[key]["herdr_kind"])

@@ -4,7 +4,7 @@
 Usage: agent-journey-lane.py <report.json> --lane fixture|login
 
 The fixture lane passes only when every cell the stand-ins imitate passed for
-both agents. Either lane fails on a failed cell, an isolation, setup or
+each agent they imitate. Either lane fails on a failed cell, an isolation, setup or
 cleanup failure (the journey's exit 2), or a request budget overrun; the login
 lane also fails when an agent whose key is set is refused its login or its CLI
 is missing, as the job installed it. An agent with no key is a notice, and a turn the provider answered nothing because the key's day was
@@ -18,9 +18,9 @@ import json
 from pathlib import Path
 import sys
 
-AGENTS = ("claude-code", "codex")
-# What the stand-ins imitate (web/e2e/shims/live-check.h); the folder
-# question of a never-trusted repository is the login lane's.
+# The agents the stand-ins imitate (web/e2e/shims/live-check.h) and the cells
+# they pass; the folder question of a never-trusted repository is the login lane's.
+FIXTURE_AGENTS = ("claude-code", "codex")
 FIXTURE_CELLS = ("start", "reply", "letter", "sleep_wake", "resume")
 
 
@@ -60,13 +60,12 @@ def judge(report, lane):
         passed = False
         notes.append(annotation("error", "agent journey budget", failure))
     table = report.get("table", {})
-    for agent in AGENTS:
-        cells = table.get(agent, {})
+    for agent, cells in table.items():
         for name, cell in cells.items():
             if cell["status"] == "fail":
                 passed = False
                 notes.append(annotation("error", f"agent journey {agent}", f"{name}: {cell['reason']}"))
-        if lane == "fixture":
+        if lane == "fixture" and agent in FIXTURE_AGENTS:
             for name in FIXTURE_CELLS:
                 cell = cells.get(name, {"status": "absent", "reason": ""})
                 if cell["status"] != "pass":

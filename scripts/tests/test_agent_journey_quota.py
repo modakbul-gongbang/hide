@@ -62,12 +62,62 @@ class Quota(unittest.TestCase):
         self.assertTrue(quota.contract())
 
 
+FIXTURES = Path(__file__).resolve().parents[2] / "hide-agent-hooks/tests/fixtures/agy-errors"
+
+
+class Gemini(unittest.TestCase):
+    """agy's recorded error reports (hide-agent-hooks/tests/fixtures/agy-errors), read as the nightly agy turn reads them."""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.home = Path(folder.name)
+        (self.home / quota.AGY_LOGS).mkdir(parents=True)
+
+    def log(self, *lines):
+        (self.home / quota.AGY_LOGS / "cli-1.log").write_text("".join(line + "\n" for line in lines))
+
+    def test_only_a_spent_day_with_no_model_answer_leaves_the_turn_unmeasured(self):
+        spent = (FIXTURES / "quota-spent.txt").read_text().strip()
+        transcript = session({"type": "USER_INPUT"})
+        self.log("I1018 agent started", spent)
+        self.assertEqual(spent_quota("antigravity", [transcript], {"gemini": ROW}, self.home),
+                         ["GenerateRequestsPerDayPerProjectPerModel-FreeTier"])
+        # A turn the model answered, then ran out, is a failure.
+        answered = session({"type": "USER_INPUT"}, {"type": "PLANNER_RESPONSE"})
+        self.assertIsNone(spent_quota("antigravity", [answered], {"gemini": ROW}, self.home))
+
+    def test_a_quota_of_zero_another_quota_or_no_report_is_a_failure(self):
+        transcript = session({"type": "USER_INPUT"})
+        self.log((FIXTURES / "quota-zero.txt").read_text().strip())
+        self.assertIsNone(spent_quota("antigravity", [transcript], {"gemini": ROW}, self.home))
+        other = (FIXTURES / "quota-spent.txt").read_text().strip().replace(
+            "GenerateRequestsPerDayPerProjectPerModel-FreeTier", "GenerateContentInputTokensPerModelPerMinute-FreeTier")
+        self.log(other)
+        self.assertIsNone(spent_quota("antigravity", [transcript], {"gemini": ROW}, self.home))
+        self.log("E1018 errorreport.go:224] error getting token source")
+        self.assertIsNone(spent_quota("antigravity", [transcript], {"gemini": ROW}, self.home))
+
+
 class Requests(unittest.TestCase):
     def test_claude_counts_responses_by_message_id(self):
         path = session({"type": "assistant", "message": {"id": "a"}}, {"type": "assistant", "message": {"id": "a"}},
                        {"type": "assistant", "message": {"id": "b"}}, {"type": "user", "message": {"id": "c"}},
                        {"type": "assistant", "isApiErrorMessage": True, "message": {"id": "d"}})
         self.assertEqual(model_requests("claude", path), 2)
+
+    def test_grok_pi_omp_and_agy_count_their_own_response_records(self):
+        grok = session({"params": {"update": {"sessionUpdate": "turn_completed", "prompt_id": "p1", "usage": {"modelCalls": 2}}}},
+                       {"params": {"update": {"sessionUpdate": "turn_completed", "prompt_id": "p1", "usage": {"modelCalls": 2}}}},
+                       {"params": {"update": {"sessionUpdate": "turn_completed", "prompt_id": "p2", "usage": {"modelCalls": 1}}}},
+                       {"params": {"update": {"sessionUpdate": "agent_message_chunk"}}})
+        self.assertEqual(model_requests("grok", grok), 3)
+        pi = session({"type": "message", "message": {"role": "assistant"}}, {"type": "message", "message": {"role": "user"}},
+                     {"type": "message", "message": {"role": "assistant"}}, {"type": "session"})
+        self.assertEqual(model_requests("pi", pi), 2)
+        self.assertEqual(model_requests("omp", pi), 2)
+        agy = session({"type": "USER_INPUT"}, {"type": "PLANNER_RESPONSE"}, {"type": "SYSTEM_MESSAGE"}, {"type": "PLANNER_RESPONSE"})
+        self.assertEqual(model_requests("agy", agy), 2)
 
     def test_codex_counts_token_count_events(self):
         path = session(*([{"type": "event_msg", "payload": {"type": "token_count"}}] * 3),

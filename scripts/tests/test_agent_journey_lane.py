@@ -65,7 +65,7 @@ class Fixture(unittest.TestCase):
     def table(self, **override):
         cells = {name: {"status": "pass", "reason": ""} for name in lane.FIXTURE_CELLS}
         cells["start_untrusted"] = {"status": "not measured", "reason": "a stand-in has no folder question"}
-        return {agent: {**cells, **override} for agent in lane.AGENTS}
+        return {agent: {**cells, **override} for agent in lane.FIXTURE_AGENTS}
 
     def test_every_imitated_cell_passing_passes(self):
         self.assertEqual(lane.judge(report(self.table(), [], fixture=True), "fixture"), (True, []))

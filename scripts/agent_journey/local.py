@@ -7,9 +7,12 @@ arguments, so what the journey added is visible.
 
 The candidate daemon's kit installs Hide's hooks and Herdr's integration into
 the private daemon home as on a new machine. Claude keeps the operator's HOME
-for its keychain login and reads only the candidate's settings; Codex reads a
-private CODEX_HOME holding the candidate's hooks, a copy of the login and one
-trust entry for the disposable repository.
+for its keychain login and reads only the candidate's settings. Every other
+agent keeps the operator's HOME too and is pointed at its own folder in the
+private daemon home by the variable it documents for that (CODEX_HOME,
+GROK_HOME, PI_CODING_AGENT_DIR), which holds the candidate's hooks or
+extension and a copy of the operator's login; agy has no such variable, so it
+is not measured here.
 """
 
 import datetime
@@ -18,6 +21,8 @@ import os
 from pathlib import Path
 import re
 import shlex
+import sqlite3
+import time
 import tomllib
 
 from agent_live_check.protection import ProtectionError, private_directory, write_private
@@ -26,6 +31,11 @@ from agent_live_check.protection import ProtectionError, private_directory, writ
 # would rotate the operator's token (PRD D-32; Codex was seen refreshing every
 # 8 days, which it does not document).
 CODEX_LOGIN_DAYS = 7
+# An OAuth login copy whose access token expires sooner than this is not used,
+# for the same reason: the agent would refresh it inside the copy, and a
+# refresh that rotates the refresh token signs the operator's own agent out.
+# An hour covers a run's bounds.
+OAUTH_MARGIN_SECONDS = 3600
 
 ROUTES = {
     "claude": {
@@ -43,6 +53,9 @@ ROUTES = {
         "shared": {".claude.json": "json"},
         "roots": [".claude.json", ".claude"],
         "untrusted": "not measured: it would leave an entry in the operator's shared ~/.claude.json; the CI mode measures it",
+        "config": None,
+        "copies": [],
+        "login": lambda root, status: claude_login_refusal(*status(["auth", "status"])),
     },
     "codex": {
         "args": lambda home: [],
@@ -53,6 +66,69 @@ ROUTES = {
         "shared": {".codex/config.toml": "toml"},
         "roots": [".codex"],
         "untrusted": None,
+        "config": ".codex",
+        "copies": [[".codex/auth.json", "auth.json"]],
+        "provenance": "A private CODEX_HOME holding a copy of the login (docs/AI_PROVIDERS.md); a refresh stays in the copy.",
+        "login": lambda root, status: codex_login_refusal(root / "auth.json"),
+    },
+    "grok": {
+        "args": lambda home: [],
+        # Grok 1.0.52 reads its configuration, hooks, folder trust, login and
+        # sessions from GROK_HOME (Herdr's integration names it too).
+        "env": lambda home: {"GROK_HOME": str(home / ".grok")},
+        "unset": [],
+        "sessions": lambda operator, home: home,
+        "known": [".grok/config.toml", ".grok/trusted_folders.toml"],
+        "shared": {},
+        "roots": [".grok"],
+        "untrusted": None,
+        "config": ".grok",
+        "copies": [[".grok/auth.json", "auth.json"]],
+        "provenance": "A private GROK_HOME holding a copy of the login; a refresh stays in the copy.",
+        "login": lambda root, status: grok_login_refusal(root / "auth.json"),
+    },
+    "pi": {
+        "args": lambda home: [],
+        # Pi 1.0.4's agent folder (`pi --help`: PI_CODING_AGENT_DIR) holds its
+        # login, settings, extensions and sessions.
+        "env": lambda home: {"PI_CODING_AGENT_DIR": str(home / ".pi/agent")},
+        "unset": ["PI_CODING_AGENT_SESSION_DIR"],
+        "sessions": lambda operator, home: home,
+        "known": [".pi/agent/settings.json"],
+        "shared": {},
+        "roots": [".pi/agent"],
+        "untrusted": None,
+        "config": ".pi/agent",
+        "copies": [[".pi/agent/auth.json", "auth.json"]],
+        "provenance": "A private PI_CODING_AGENT_DIR holding a copy of the login; a refresh stays in the copy.",
+        "login": lambda root, status: pi_login_refusal(root / "auth.json"),
+    },
+    "omp": {
+        "args": lambda home: [],
+        # omp 18.7.0 reads the default profile's agent folder from
+        # PI_CODING_AGENT_DIR (its docs/environment-variables.md).
+        "env": lambda home: {"PI_CODING_AGENT_DIR": str(home / ".omp/agent")},
+        "unset": ["PI_CONFIG_DIR"],
+        "sessions": lambda operator, home: home,
+        "known": [".omp/agent/config.yml"],
+        "shared": {},
+        "roots": [".omp/agent"],
+        "untrusted": None,
+        "config": ".omp/agent",
+        # The login lives in agent.db, copied with its WAL only while no
+        # process has it open (agent_live_check/credential_snapshot.py).
+        "copies": [[".omp/agent/agent.db", "agent.db"], [".omp/agent/config.yml", "config.yml"]],
+        "provenance": "A private PI_CODING_AGENT_DIR holding a snapshot of agent.db and config.yml; a refresh stays in the copy.",
+        "login": lambda root, status: omp_login_refusal(root / "agent.db"),
+    },
+    "agy": {
+        # agy 1.4.0 has no variable or flag for its configuration folder and
+        # signs in through the keychain of the HOME it runs in, so the
+        # candidate's kit could reach it only through the operator's own
+        # ~/.gemini/config, whose hooks would run instead.
+        "unmeasured": ("agy reads its hooks only from ~/.gemini/config in the HOME its keychain sign-in needs, so the "
+                       "candidate's kit cannot reach it without the operator's own hooks running; the CI mode measures "
+                       "it; it closes once agy takes a configuration folder variable or a login kept in a private file"),
     },
 }
 
@@ -100,6 +176,87 @@ def codex_login_age(auth, now=None):
     return (now - when).total_seconds() / 86400
 
 
+def claude_login_refusal(code, output):
+    """Why Claude cannot be measured from `claude auth status`'s answer, or None."""
+    try:
+        logged_in = json.loads(output).get("loggedIn") is True
+    except (ValueError, AttributeError):
+        logged_in = False
+    return None if not code and logged_in else "not logged in: run claude auth login yourself; the journey never logs in"
+
+
+def expiry_refusal(cli, expiries, now=None):
+    """Why an OAuth login copy whose access tokens expire at `expiries` (Unix
+    seconds) must not be used, or None."""
+    if not expiries:
+        return f"login expiry unreadable; run {cli} once yourself, then rerun"
+    left = min(expiries) - (now if now is not None else time.time())
+    if left >= OAUTH_MARGIN_SECONDS:
+        return None
+    state = "expired" if left <= 0 else f"near refresh ({left / 3600:.1f} h left)"
+    return (f"login {state}: its copy would refresh inside the run and could sign your own {cli} out; "
+            f"run {cli} once yourself (sign in again if it asks), then rerun")
+
+
+def json_expiries(auth, field, scale):
+    """The `field` of each entry of a JSON login file, in Unix seconds; None
+    when the file is not there."""
+    if not auth.is_file():
+        return None
+    try:
+        entries = json.loads(auth.read_text()).values()
+        values = [entry[field] for entry in entries if isinstance(entry, dict) and field in entry]
+    except (OSError, ValueError, AttributeError):
+        return []
+    expiries = []
+    for value in values:
+        try:
+            expiries.append(datetime.datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+                            if isinstance(value, str) else float(value) / scale)
+        except (ValueError, TypeError):
+            return []
+    return expiries
+
+
+def grok_login_refusal(auth, now=None):
+    """Grok keeps one entry per account, each with an ISO `expires_at`."""
+    expiries = json_expiries(auth, "expires_at", 1)
+    if expiries is None:
+        return "not logged in: run grok login yourself; the journey never logs in"
+    return expiry_refusal("grok", expiries, now)
+
+
+def pi_login_refusal(auth, now=None):
+    """Pi keeps one entry per provider; an OAuth one has `expires` in ms."""
+    expiries = json_expiries(auth, "expires", 1000)
+    if expiries is None:
+        return "not logged in: sign in with /login in pi yourself; the journey never logs in"
+    return expiry_refusal("pi", expiries, now)
+
+
+def omp_login_refusal(database, now=None):
+    """omp keeps each credential as JSON in agent.db, an OAuth one with
+    `expires` in ms; read from the run's private copy, never the original."""
+    if not database.is_file():
+        return "not logged in: sign in with /login in omp yourself; the journey never logs in"
+    try:
+        connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        try:
+            rows = connection.execute("select data from auth_credentials where disabled_cause is null").fetchall()
+        finally:
+            connection.close()
+        values = [json.loads(data).get("expires") for (data,) in rows]
+    except (sqlite3.Error, ValueError, AttributeError, TypeError):
+        return expiry_refusal("omp", [], now)
+    if not rows:
+        return "not logged in: sign in with /login in omp yourself; the journey never logs in"
+    # An API key keeps no expiry and never refreshes.
+    expiries = [value / 1000 for value in values if isinstance(value, (int, float))]
+    if len(expiries) < len(values) and not expiries:
+        return None
+    return expiry_refusal("omp", expiries, now)
+
+
 def codex_login_refusal(auth, now=None):
     """Why the Codex login copy must not be used, or None."""
     if not auth.is_file():
@@ -127,6 +284,27 @@ def trust_codex(config, repository):
     replacement.unlink(missing_ok=True)
     write_private(replacement, (text + entry).encode())
     replacement.replace(config)
+
+
+def trust_grok(trusted, repository):
+    """One trust entry for the measured repository in the private Grok
+    folder trust (`trusted_folders.toml`), the form Grok 1.0.52 writes when
+    the operator trusts a folder: the operator's own Grok trusts the
+    measured repository the same way."""
+    text = trusted.read_text() if trusted.is_file() else ""
+    key = json.dumps(str(repository.resolve()))
+    if f"[folders.{key}]" in text:
+        return
+    entry = f"\n[folders.{key}]\ntrusted = true\ndecided_at = {int(time.time())}\n"
+    replacement = trusted.with_name(trusted.name + ".journey")
+    replacement.unlink(missing_ok=True)
+    write_private(replacement, (text + entry).encode())
+    replacement.replace(trusted)
+
+
+# The trust each agent's own file holds for the measured repository, written
+# in the run's private folder of that agent in either mode (PRD D-25).
+TRUST = {"codex": (".codex/config.toml", trust_codex), "grok": (".grok/trusted_folders.toml", trust_grok)}
 
 
 def allow_one_shot_references(sandbox, runtime):

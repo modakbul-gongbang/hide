@@ -14,7 +14,7 @@ CELLS = ("start", "start_untrusted", "reply", "integration", "guidance_memory", 
          "sleep_wake", "resume", "fork", "title", "usage")
 # What this cycle measures (PRD agent-journey-check D-20); every other declared
 # cell reads "not built in this cycle" until a later change builds it.
-BUILT_AGENTS = ("claude-code", "codex")
+BUILT_AGENTS = ("claude-code", "codex", "grok", "pi", "omp", "antigravity")
 BUILT_CELLS = ("start", "start_untrusted", "reply", "letter", "sleep_wake", "resume")
 # A cell that cannot be measured until another one passed.
 PREREQUISITE = {"reply": "start", "letter": "start", "sleep_wake": "start", "resume": "sleep_wake"}
@@ -247,12 +247,27 @@ def letter_verdict(shown, read, session, token):
     return status, ("delivered; " + reason) if status == PASS else reason
 
 
-def sleep_verdict(asleep, awake):
-    """`asleep`: the row's sleep states after Sleep; `awake`: rows after Wake."""
+def prompt_letter_verdict(shown, read, session, token, after):
+    """A letter the agent's prompt hook handed over with the next prompt
+    typed after it: Hide records it delivered and confirmed by the hook, and
+    the reply to that prompt, from `after` on, carries the token."""
+    if not isinstance(shown, dict):
+        return FAIL, "hide request show gave no letter"
+    if shown.get("state") != "delivered" or shown.get("hook_confirmed") is not True:
+        return FAIL, (f"letter state is {shown.get('state')} and hook confirmed {shown.get('hook_confirmed')}, "
+                      "not delivered by the prompt hook")
+    status, reason = reply_verdict(read, session, token, after)
+    return status, ("delivered with the next prompt; " + reason) if status == PASS else reason
+
+
+def sleep_verdict(asleep, awake, failure=None):
+    """`asleep`: the sleep states read after Sleep (the row's, or the sleeping
+    session's phases when Sleep closed the pane); `awake`: whether the agent
+    ran again after Wake; `failure`: why Wake said it did not."""
     if "sleeping" not in asleep:
         return FAIL, "row never read asleep after Sleep (" + ", ".join(map(str, asleep[-3:])) + ")"
     if not awake:
-        return FAIL, "row never woke after Wake"
+        return FAIL, "row never woke after Wake" + (f": {failure}" if failure else "")
     return PASS, "row read asleep after Sleep and running after Wake"
 
 
