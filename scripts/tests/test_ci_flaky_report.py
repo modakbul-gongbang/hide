@@ -1,6 +1,8 @@
 """What `scripts/ci-flaky-report.py` reads from a report and files as issues."""
+import contextlib
 from datetime import date
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -469,6 +471,16 @@ class NightlyFailures(unittest.TestCase):
         self.assertEqual(github.closed(), [2])
         self.assertIn(f"### Not measured\n\n- `{lane}`: {check}: provider quota exhausted: "
                       "GenerateRequestsPerDayPerProjectPerModel-FreeTier", summary.read_text())
+
+    def test_a_dry_run_lists_what_passed_without_measuring(self):
+        github = FakeGitHub([job(1, "agy contract / agy signed in (macos)", "success")],
+                            annotations={1: [{"title": "Not measured", "message": "check\nprovider quota exhausted (q)"}]})
+        args = r.argparse.Namespace(repo="o/r", run=str(RUN), attempt=None, lane_input="", dry_run=True)
+        with contextlib.redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(r.nightly(args, {}, github), 0)
+        self.assertEqual(out.getvalue(), "nothing to write\n\n### Not measured\n\n"
+                         "- `agy contract / agy signed in (macos)`: check: provider quota exhausted (q)\n")
+        self.assertEqual(github.writes, [])
 
     def test_a_lane_that_passed_without_measuring_is_no_last_green_nightly(self):
         github = self.package_failed()

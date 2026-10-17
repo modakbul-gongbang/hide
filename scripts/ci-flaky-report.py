@@ -660,6 +660,8 @@ class Nightly:
         return actions
 
     def apply(self, actions):
+        # Read before writing, so a GitHub error here leaves nothing half written.
+        unmeasured = self.unmeasured_lines()
         lines = ["### Nightly failures", ""]
         for action, number, payload in actions:
             if action == "open":
@@ -674,7 +676,6 @@ class Nightly:
                 lines.append(f"- closed #{number}")
         for line in lines[2:]:
             print(line[2:])
-        unmeasured = self.unmeasured_lines()
         for line in unmeasured[2:]:
             print(f"not measured: {line[2:]}")
         summary((lines if actions else lines + ["Nothing to write."]) + ([""] + unmeasured if unmeasured else []))
@@ -710,7 +711,8 @@ def nightly(args, env, call=gh):
     report_run = Nightly(repo, run, attempt, args.lane_input, call, Path(__file__).resolve().parents[1], date.today())
     actions = report_run.plan()
     if args.dry_run:
-        print("\n".join([describe(actions)] + report_run.unmeasured_lines()))
+        unmeasured = report_run.unmeasured_lines()
+        print(describe(actions) + ("\n\n" + "\n".join(unmeasured) if unmeasured else ""))
         return 0
     report_run.apply(actions)
     return 0

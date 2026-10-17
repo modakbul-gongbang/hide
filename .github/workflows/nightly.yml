@@ -18,8 +18,9 @@
 # expiry; it comments once per run attempt on an issue already open for the
 # same failure, opens at most 10 per run and lists the rest in one, and
 # closes a lane's issues when a scheduled run (or a hand run of `all`) passes
-# it. A run of any other branch writes no issue. docs/TESTING.md, "Nightly
-# failures", owns the policy.
+# it; a lane whose job passed with a `Not measured` warning has not passed,
+# and the report lists it. A run of any other branch writes no issue.
+# docs/TESTING.md, "Nightly failures", owns the policy.
 # Run it by hand from the Actions tab (workflow_dispatch); actual queue load
 # and completed jobs must be measured separately from this configured matrix.
 # A hand run picks `lane`: `all`, or one system's web and desktop suites, so
