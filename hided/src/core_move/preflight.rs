@@ -341,26 +341,28 @@ fn herdr_running(home: &Path, herdr: &Herdr<'_>, stop: &AtomicBool) -> Result<()
 /// `gh auth status` exits 0: the core reads GitHub with this machine's
 /// login once it runs here (PRD core-host-node-remote-core D-16).
 fn gh_signed_in(home: &Path, programs: &Programs, stop: &AtomicBool) -> Result<(), String> {
-    // `gh` runs with the PATH it was found on, which its git and credential
-    // helpers need; a stand-in is run as it is.
-    let (gh, path) = match &programs.gh {
-        Some(gh) => (gh.clone(), None),
+    // `gh` is found and run the way the core will run it, on the account's
+    // search with the login shell asked, which its git and credential
+    // helpers need too; a stand-in is run as it is.
+    let mut command = match &programs.gh {
+        Some(gh) => Command::new(gh),
         None => {
             let path = hide_platform::programs::account_path()
                 .ok_or("this account's PATH could not be read")?;
-            let gh = hide_platform::host::find_program(&path, "gh")
-                .ok_or("gh is not installed on this machine")?;
-            (gh, Some(path))
+            hide_platform::programs::command_on(Some(&path), "gh")
         }
     };
-    let mut command = Command::new(gh);
     command
         .args(["auth", "status"])
         .env(hide_platform::host::HOME_VARIABLE, home);
-    if let Some(path) = path {
-        command.env("PATH", path);
-    }
-    let finished = run(command, stop)?;
+    let finished = match hide_platform::process::run_to_end(&mut command, PROGRAM_WITHIN, stop) {
+        Err(hide_platform::process::RunFailure::Start(error))
+            if error.kind() == std::io::ErrorKind::NotFound =>
+        {
+            return Err("gh is not installed on this machine".to_owned());
+        }
+        other => other.map_err(|failure| format!("gh did not answer: {failure:?}"))?,
+    };
     if finished.code != Some(0) {
         return Err("gh is not signed in".to_owned());
     }

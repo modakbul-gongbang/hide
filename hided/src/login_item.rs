@@ -261,9 +261,12 @@ fn ensure_herdr(bin: &Path, started_within: Duration) -> String {
     }
     // Its panes' shells start with the server's environment, which launchd
     // gave the system's folders alone on `PATH`: the server gets the
-    // account's own search, as the desktop host gives the server it starts
-    // its children's.
-    let mut command = hide_platform::programs::command(bin);
+    // account's own search with the login shell asked, as the desktop host
+    // gives the server it starts its children's.
+    let mut command = hide_platform::programs::command_on(
+        hide_platform::programs::account_path().as_deref(),
+        bin,
+    );
     command.arg("server");
     if std::env::var_os("LANG").is_none()
         && std::env::var_os("LC_ALL").is_none()
