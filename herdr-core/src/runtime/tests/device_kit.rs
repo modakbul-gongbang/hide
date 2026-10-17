@@ -2547,3 +2547,51 @@ fn a_session_back_while_the_helper_link_starts_begins_its_wait_over() {
     let at = runtime.device_host_retries[DEVICE].at_unix_ms.unwrap();
     assert_eq!((at - before) / 1_000, 2);
 }
+
+/// Revoking the helper ends the device's terminals with its link: a pane the
+/// operator could type into reads unavailable at once, naming consent as the
+/// reason, instead of looking live while every key is dropped.
+#[test]
+fn revoking_the_helper_ends_the_devices_terminals_and_its_panes_say_why() {
+    let probe = device_runtime(None, None);
+    let shared = device_runtime(Some(granted(&probe)), None);
+    let mut runtime = shared.lock().unwrap();
+    let terminals = record_terminals(&mut runtime);
+    runtime.start_device_host(DEVICE);
+    let generation = runtime.device_host_generation(DEVICE);
+    runtime.ingest_host_established(
+        DEVICE,
+        generation,
+        Ok(hosts::HostReady::Dialed(established_with_terminals())),
+    );
+    runtime.ingest_remote_session(DEVICE, Ok(session_with_pane()));
+    report_terminal(&mut runtime, PANE, terminal_state("controlling", 1));
+    let band = |runtime: &Runtime| {
+        runtime.snapshot.terminal.headers[PANE]
+            .band
+            .as_ref()
+            .map(|band| band.kind.clone())
+    };
+    assert_eq!(band(&runtime), None);
+
+    runtime.set_host_consent(DEVICE, false);
+
+    assert_eq!(terminals.devices(), ["install:studio", "remove:studio"]);
+    let pane = runtime
+        .snapshot()
+        .terminal
+        .panes
+        .iter()
+        .find(|row| row.pane_id == PANE)
+        .expect("the pane stays projected")
+        .clone();
+    assert_eq!(pane.transport_state, "unavailable");
+    assert_eq!(band(&runtime).as_deref(), Some("helper_not_allowed"));
+
+    runtime.set_host_consent(DEVICE, true);
+    assert_eq!(
+        band(&runtime).as_deref(),
+        Some("reconnecting"),
+        "allowing it again is a link on its way"
+    );
+}

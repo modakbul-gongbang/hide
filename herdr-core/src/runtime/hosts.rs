@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use super::devices::{DeviceReach, Retiring};
 use super::*;
+use crate::agent_state::header::LinkWait;
 use crate::model::{DeviceHostSnapshot, HostConsent};
 use crate::node_access::NodeLink;
 use crate::remote::{
@@ -322,6 +323,12 @@ impl Runtime {
                 }
             }
             self.set_host_phase(device_id, HostPhase::NotAllowed);
+            // The terminals ride the link that is closing: the device's panes
+            // stop taking keys, so they read unavailable now and not only
+            // when the link's end is heard (it is ignored, its attempt is
+            // over).
+            self.end_device_terminals(device_id, "Hide's helper is not allowed on this device");
+            self.refresh_pane_headers();
             self.forget_device_kit_work(device_id);
             // A save held for the helper to become ready would otherwise go
             // out on its own if consent is given again later (B52).
@@ -569,26 +576,31 @@ impl Runtime {
     }
 
     fn set_host_phase(&mut self, device_id: &str, phase: HostPhase) {
-        let waiting = self.helper_link_returns_by_itself(device_id);
+        let waiting = self.helper_link_wait(device_id);
         self.device_host_entry(device_id).phase = phase;
-        // A pane of the device reads reconnecting only while the link comes
-        // back by itself, so its band follows the phase.
-        if waiting != self.helper_link_returns_by_itself(device_id) {
+        // A pane of the device says what its link waits for, so its band
+        // follows the phase.
+        if waiting != self.helper_link_wait(device_id) {
             self.refresh_pane_headers();
         }
     }
 
-    /// Whether the device's helper link is away and the core tries it again
-    /// without being asked: a pane of such a device waits, where one whose
-    /// link needs the operator (consent, a changed identity, an unsupported
-    /// device) is unavailable.
-    pub(super) fn helper_link_returns_by_itself(&self, device_id: &str) -> bool {
-        self.link_origin(device_id)
+    /// What the device's helper link waits for while it is away: the core
+    /// tries it again without being asked, or the operator has to allow the
+    /// helper. A changed identity or an unsupported device is neither, and
+    /// its panes stay unavailable.
+    pub(super) fn helper_link_wait(&self, device_id: &str) -> Option<LinkWait> {
+        if !self
+            .link_origin(device_id)
             .is_some_and(LinkOrigin::core_redials)
-            && matches!(
-                self.device_hosts.get(device_id).map(|host| &host.phase),
-                Some(HostPhase::Unavailable(_) | HostPhase::Connecting)
-            )
+        {
+            return None;
+        }
+        match self.device_hosts.get(device_id).map(|host| &host.phase) {
+            Some(HostPhase::Unavailable(_) | HostPhase::Connecting) => Some(LinkWait::Returns),
+            Some(HostPhase::NotAllowed) => Some(LinkWait::NeedsConsent),
+            _ => None,
+        }
     }
 
     /// The device's Herdr session answers again, so the machine is reachable:

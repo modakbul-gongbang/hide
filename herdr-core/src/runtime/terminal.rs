@@ -403,7 +403,7 @@ impl Runtime {
             .map(|pane| (pane.pane_id.as_str(), pane))
             .collect();
         for (workspace, offline) in local.chain(remote) {
-            let returns = self.helper_link_returns_by_itself(&workspace.device_id);
+            let wait = self.helper_link_wait(&workspace.device_id);
             for pane in workspace
                 .checkouts
                 .iter()
@@ -419,10 +419,9 @@ impl Runtime {
                 );
                 headers.insert(
                     pane.id.clone(),
-                    if returns {
-                        crate::agent_state::header::reconnecting(header)
-                    } else {
-                        header
+                    match wait {
+                        Some(wait) => crate::agent_state::header::waiting_on_link(header, wait),
+                        None => header,
                     },
                 );
             }

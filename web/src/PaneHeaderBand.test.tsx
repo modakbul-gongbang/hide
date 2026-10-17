@@ -434,3 +434,10 @@ it("words a pane waiting for its device's link as reconnecting, not as a failure
     expect(container.textContent).not.toContain("unavailable");
   } finally { await unmount(); }
 });
+
+it("tells a pane whose device helper is not allowed where to allow it", async () => {
+  const { container, unmount } = await mount({ working: false, band: { ...header.band!, kind: "helper_not_allowed", tone: "warning", reason: null, raised: undefined, action: null, more: 0 } });
+  try {
+    expect(container.textContent).toContain("helper not allowed · allow it in Settings > Devices");
+  } finally { await unmount(); }
+});
