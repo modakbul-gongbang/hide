@@ -282,14 +282,15 @@ test("hide browser: a selected View of a Workspace behind another answers input 
   await inDisplay(url, `window.received = { clicks: 0, inputs: 0 }; document.addEventListener("click", () => window.received.clicks++, true); document.addEventListener("input", () => window.received.inputs++, true); true`);
   const received = () => inDisplay<string>(url, `JSON.stringify([window.received, document.querySelector("output").textContent])`);
   // The operator goes to another Workspace; this one's View stays its area's
-  // selected View, and the host hides it behind the front one.
+  // selected View, and the host hides it behind the front one once the core's
+  // snapshot names that Workspace, which is after the click returns.
   const checkoutRow = (name: string) => shell!.locator("[data-project]", { hasText: name }).locator("[data-checkout]").first();
   await (await showProjectRow(shell!, checkoutRow("second-checkout"))).click();
   const viewVisible = () => app!.evaluate(({ BrowserWindow }, address) => BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
     const contents = (view as { webContents?: Electron.WebContents }).webContents;
     return contents && !contents.isDestroyed() && contents.getURL() === address ? [(view as Electron.View).getVisible()] : [];
   }), url);
-  expect(await viewVisible()).toEqual([false]);
+  await expect.poll(viewVisible).toEqual([false]);
 
   // The hidden page is still a visible document to Chromium, so the first
   // input is answered at once: nothing times out, and nothing is left to be
