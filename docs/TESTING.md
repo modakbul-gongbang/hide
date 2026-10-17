@@ -330,6 +330,7 @@ Its tests share a process with the other modules' under `cargo test`, so a test 
    `fs::copy` may make an APFS clone whose first execution stalls before `main`; copying its bytes keeps that clone-specific cost outside the protocol being tested without warming the helper or changing its deadline.
 9. **Retries are a classification.**
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
+   The one test it does not retry is the nightly's signed-in agy turn, which spends a provider's daily requests ([A real agent on CI](#a-real-agent-on-ci)).
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
    `scripts/install-nextest.sh` installs the pinned release on a runner; a lane that runs nextest several times keeps one JUnit report per run, and `scripts/ci-flaky-report.py` reads them all.
    The pin is at least 0.9.145, because an older nextest on macOS let a test started beside another inherit the other's output pipe, and reported the test whose pipe it held as leaking (LEAK) though it had left nothing running; `.config/nextest.toml` warns a local run on an older nextest, and on macOS with 0.9.145 or later a LEAK names a child the test left behind, which rule 7 forbids.
@@ -459,7 +460,12 @@ A table from a Windows or macOS runner's logs would need its own file and a lane
 A lane that signs a real agent in, like the nightly `agy contract` lane, proves only what the agent does before and around its model's answer; keep its real turn to the minimum.
 
 - An API key alone may not sign the agent in: agy 1.4.0 asked for a browser sign-in until its settings also named `"modelProvider": "gemini"` (2026-10-16).
-- A free-tier quota is counted per model per day across the key's project: 20 requests on 2026-10-16, so hand runs of the lane spend the nightly's turns and the next one fails with `429`.
+- A free-tier quota is counted per model per day across the key's project (20 requests on 2026-10-16), and every run that signs the agent in with that key spends it, hand runs included; budget the turns to it and say how in the workflow (`agy-contract.yml` spends 4 a night, and a passing turn prints how many model responses it took).
+- A turn the provider answered nothing because that day's requests were spent is not a result: the check still asserts what came before the model (the hooks, the letter), then writes a warning annotation titled `Not measured`, the check on its first line and `provider quota exhausted (<quota ids>)` with what was not reached after it, and passes, and the nightly report keeps its lane from passing (below).
+  It is not retried (`.config/nextest.toml`): a retry spends the requests again, and once they are spent it would pass a real first failure as flaky.
+  The codes that mean a spent day are data both this check and any other signed-in check read, `contracts/provider-quota.json`: the provider's error code and status, and the quota ids that count (for Gemini, `429`, `RESOURCE_EXHAUSTED` and the per-day request quota).
+  The rule is exact, so a broken setup cannot pass as a spent day: the agent's own structured error report, never its screen, carries that code and status, and every quota it names is one of those ids with a value above 0 (agy: `spent_quota` in `hide-agent-hooks/tests/it/agy_binary.rs`, with agy's recorded reports in `hide-agent-hooks/tests/fixtures/agy-errors/`).
+  A quota of 0 (a model the key is not served), any other quota (a per-minute limit, the tokens Hide's own context sends), a model that answered and then ran out, a 503 the agent's retries never got past and every other error fail; a check that signs another agent in adds that provider's row and writes the same annotation.
 - Assert what happens before the model answers (the hooks fired, the letter went in, a refused call carried Hide's reason) rather than what the model writes, and name the model in the workflow so a renamed one is one line to change.
 - Keep the turn's own bounds inside the test's hang guard (`.config/nextest.toml`), so a slow turn fails with the agent's report instead of being ended with nothing.
 
@@ -473,6 +479,7 @@ CI retries a failed test once, for classification and for the report, and for no
 
 - Playwright runs with `retries: 1` when `CI` is set (`web/playwright.config.ts`, `desktop/playwright.config.ts`), and the Rust workspace runs under `cargo nextest` with the `ci` profile's `retries = 1` (`.config/nextest.toml`, `scripts/verify-cargo.sh nextest`).
   Neither retries locally: a flaky test fails where it is written.
+  The nightly's signed-in agy turn is the one test CI does not retry: a retry spends the provider's daily requests again, and once they are spent it would pass a real first failure as flaky ([A real agent on CI](#a-real-agent-on-ci)).
 - A test that fails and passes its retry is flaky: the lane passes, the log marks it, and `scripts/ci-flaky-report.py` reads the tool's own report (Playwright's JSON, nextest's JUnit) and files it as an issue labelled `quarantine`, or comments on the open issue that already tracks it.
   The issue names the first run, the change and the system, and carries a deadline seven days out.
   The report step also sets its `flaky` output, and a lane that keeps its e2e logs for a failure keeps them for a flaky run too, under the same artifact name, because the first attempt's daemon, Herdr and input logs are the only evidence the issue gets; a run with no flaky and no failed test uploads nothing.
@@ -521,6 +528,7 @@ The nightly's `report` job (`scripts/ci-flaky-report.py --nightly`) is the one w
 - A scheduled run on main, or a hand run of `all`, that passes a lane closes that lane's issues with a comment naming the commit and the run; a skipped or cancelled lane closes nothing.
 - One run opens at most 10 issues; the rest, with the count of failed tests a lane had no annotation room for, go into one issue, `nightly: N more failures in run <id>`, which the next scheduled run closes as it files its own.
 - A run of any other branch writes no issue.
+- A check that passed without measuring (a `Not measured` warning annotation, [A real agent on CI](#a-real-agent-on-ci)) passes its job, but its lane is not green: it closes no issue, is no lane's last green nightly, and the report lists it under "Not measured" in its job summary.
 - The report fails its job when GitHub does, so a failure it could not file shows as a red report job rather than a silence.
   `--dry-run` with `--repo` and `--run` prints what it would write for any finished run and writes nothing.
 

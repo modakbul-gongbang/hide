@@ -154,6 +154,8 @@ READERS = (
     ("contracts/agent-adapters.json", {"rust", "checks", "web-e2e", "desktop-e2e"}, {"hide-agent-adapter"}),
     # hided's `cli_contract` test.
     ("contracts/hide-cli.json", {"rust"}, {"hided"}),
+    # hide-agent-hooks' agy_binary test, which the agy contract also runs.
+    ("contracts/provider-quota.json", {"rust"}, {"hide-agent-hooks"}),
     # hide-agent-adapter's contract test.
     ("contracts/usage-coverage.json", {"rust"}, {"hide-agent-adapter"}),
 )
