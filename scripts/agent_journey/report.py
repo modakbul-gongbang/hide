@@ -57,6 +57,9 @@ def markdown(report):
         if agent.get("spawn"):
             lines.append(f"- route: `{text(json.dumps(agent['spawn']['route']))}`")
         lines.append("")
+    if report.get("hide_ai_requests"):
+        lines.extend(["## Hide AI", "", "The candidate's own model requests, outside every agent's budget: "
+                      + text(", ".join(f"{provider} {count}" for provider, count in report["hide_ai_requests"].items())), ""])
     if report.get("product_findings"):
         lines.extend(["## Product findings", ""])
         lines.extend(f"- {text(finding)}" for finding in report["product_findings"])

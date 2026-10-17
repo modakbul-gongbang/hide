@@ -192,7 +192,8 @@ class Journey:
         CLI's own wait running out while the spawn continues, so the same intent
         is asked again until it answers (it converges on one agent)."""
         flag = self.row["prompt_flag"]
-        native = [*self.route["args"], *self.model_args, flag, prompt_text]
+        # The route's arguments are the wrapper's, on every start of the agent.
+        native = [*self.model_args, flag, prompt_text]
         args = ["agent", "spawn", "--parent", "here", "--name", name, "--intent", name,
                 "--kind", self.kind, "--repo", str(repository),
                 "--branch", branch, "--path", str(path), "--", *native]

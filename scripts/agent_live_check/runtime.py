@@ -11,7 +11,7 @@ import time
 import urllib.request
 import zipfile
 
-from .processes import MAX_OUTPUT, OwnedProcesses, ProcessError
+from .processes import COMMAND_SECONDS, MAX_OUTPUT, OwnedProcesses, ProcessError
 from .authentication import require_no_login
 from .protection import ProtectionError, beneath, private_directory, validate_isolation, write_private
 from .system import READY, WINDOWS, PaneShell, exe, git, home_env, remove_tree, temp_env, tool_path
@@ -359,23 +359,26 @@ class Runtime:
         original_cancelled = self.owner.cancelled.is_set()
         self.owner.cancelled.clear()
         original_deadline = self.owner.deadline
-        self.owner.deadline = time.monotonic() + 30
+        # Room for each step below at its own cap, on a loaded runner too.
+        self.owner.deadline = time.monotonic() + 60
         try:
             for workspace in list(self.workspaces):
                 try:
                     self.close_workspace(workspace)
                 except Exception as error:
-                    failures.append(str(error))
+                    failures.append(f"workspace close {workspace}: {error}")
             if (self.state / "hided.json").exists():
                 try:
-                    self.owner.run([str(self.hide), "stop"], env=self.daemon_env, seconds=10)
+                    # `hide stop` gives hided 5 s to stop, then kills it and confirms;
+                    # a command's longest wait (COMMAND_SECONDS) leaves room for both.
+                    self.owner.run([str(self.hide), "stop"], env=self.daemon_env, seconds=COMMAND_SECONDS)
                 except Exception as error:
-                    failures.append(str(error))
+                    failures.append(f"hide stop: {error}")
             if self.started:
                 try:
                     self.command(["server", "stop"])
                 except Exception as error:
-                    failures.append(str(error))
+                    failures.append(f"herdr server stop: {error}")
             try:
                 self.owner.close()
                 # A later empty close cannot erase a prior missing or failed
