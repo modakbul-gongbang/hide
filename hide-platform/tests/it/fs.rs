@@ -281,7 +281,10 @@ fn a_link_or_a_file_where_an_owned_folder_belongs_is_refused_and_left_as_it_is()
     link::create_link(&target, &planted).unwrap();
     let error = private::own_dir(&planted).unwrap_err();
     assert_eq!(error.kind(), ErrorKind::PermissionDenied);
-    assert!(error.to_string().contains("link"), "{error}");
+    assert!(
+        error.to_string().ends_with("is a link or not a folder"),
+        "{error}"
+    );
     assert!(
         fs::symlink_metadata(&planted)
             .unwrap()
