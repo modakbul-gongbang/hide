@@ -159,26 +159,34 @@ fn set_core_log_aside(state_dir: &Path) -> std::io::Result<bool> {
     hide_platform::process::set_output_aside(&log, &log.with_extension("log.1"), CORE_LOG_LIMIT)
 }
 
-/// Looks at the core's output once, for the log; answers whether a later
-/// look can do anything, which a system that sets no output aside cannot.
-fn look_at_core_log(state_dir: &Path) -> bool {
-    match set_core_log_aside(state_dir) {
-        Ok(false) => true,
-        Ok(true) => {
+/// What the last look at the core's output found: a failure is logged when
+/// it first happens or changes, not at every look while it lasts.
+#[derive(Default)]
+struct LastLook {
+    failure: Option<String>,
+}
+
+impl LastLook {
+    /// Looks at the core's output once, for the log; answers whether a later
+    /// look can do anything, which a system that sets no output aside cannot.
+    fn look(&mut self, state_dir: &Path) -> bool {
+        let outcome = set_core_log_aside(state_dir);
+        if let Ok(true) = outcome {
             herdr_core::diagnostic!(json!({
                 "component": "login_item",
                 "kind": "core_log.rotated",
             }));
-            true
         }
-        Err(error) => {
+        let failure = outcome.as_ref().err().map(ToString::to_string);
+        if failure.is_some() && failure != self.failure {
             herdr_core::diagnostic!(json!({
                 "component": "login_item",
                 "kind": "core_log.rotate_failed",
-                "message": error.to_string(),
+                "message": failure,
             }));
-            error.kind() != std::io::ErrorKind::Unsupported
         }
+        self.failure = failure;
+        !matches!(outcome, Err(error) if error.kind() == std::io::ErrorKind::Unsupported)
     }
 }
 
@@ -187,14 +195,15 @@ fn look_at_core_log(state_dir: &Path) -> bool {
 /// [`CORE_LOG_LOOK_EVERY`] on a thread of its own, which ends with the
 /// process.
 fn keep_core_log_within_limit(state_dir: PathBuf) {
-    if !look_at_core_log(&state_dir) {
+    let mut last = LastLook::default();
+    if !last.look(&state_dir) {
         return;
     }
     #[allow(clippy::disallowed_methods)] // a production period, not a wait for a state
     let looks = move || {
         loop {
             std::thread::sleep(CORE_LOG_LOOK_EVERY);
-            if !look_at_core_log(&state_dir) {
+            if !last.look(&state_dir) {
                 return;
             }
         }

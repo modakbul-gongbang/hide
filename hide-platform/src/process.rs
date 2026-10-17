@@ -2235,26 +2235,59 @@ mod sys {
             return Ok(false);
         }
         let output_too = file_id_of(&io::stdout()).is_ok_and(|id| id == at_log);
-        std::fs::rename(log, aside)?;
-        let fresh = std::fs::OpenOptions::new()
-            .append(true)
-            .create_new(true)
-            .mode(0o600)
-            .open(log)?;
         let mut onto = vec![libc::STDERR_FILENO];
         if output_too {
             onto.push(libc::STDOUT_FILENO);
         }
-        for descriptor in onto {
-            // SAFETY: `fresh` is open for the call, and `descriptor` is a
-            // standard stream this process holds; `dup2` replaces it in one
-            // step, so a write from another thread goes to one file or the
-            // other.
-            if unsafe { libc::dup2(fresh.as_raw_fd(), descriptor) } < 0 {
-                return Err(io::Error::last_os_error());
+        std::fs::rename(log, aside)?;
+        // Every step after the rename that fails puts the file back at `log`
+        // with the streams on it, so the next ask finds it as before and
+        // tries again, rather than this process writing on, uncapped, to a
+        // file no ask can name.
+        let fresh = match std::fs::OpenOptions::new()
+            .append(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(log)
+        {
+            Ok(fresh) => fresh,
+            Err(error) => return Err(put_back(aside, log, error)),
+        };
+        for (moved, descriptor) in onto.iter().enumerate() {
+            if let Err(error) = redirect(&fresh, *descriptor) {
+                for descriptor in &onto[..moved] {
+                    let _ = redirect(&error_output, *descriptor);
+                }
+                drop(fresh);
+                let _ = std::fs::remove_file(log);
+                return Err(put_back(aside, log, error));
             }
         }
         Ok(true)
+    }
+
+    /// `descriptor` (a standard stream) now writes to `file`. `dup2`
+    /// replaces it in one step, so a write from another thread goes to one
+    /// file or the other.
+    fn redirect(file: &std::fs::File, descriptor: libc::c_int) -> io::Result<()> {
+        // SAFETY: `file` is open for the call, and `descriptor` is a
+        // standard stream this process holds.
+        if unsafe { libc::dup2(file.as_raw_fd(), descriptor) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Names the file set aside `log` again after `error`, and answers
+    /// `error`, or both when that fails too.
+    fn put_back(aside: &Path, log: &Path, error: io::Error) -> io::Error {
+        match std::fs::rename(aside, log) {
+            Ok(()) => error,
+            Err(back) => io::Error::new(
+                error.kind(),
+                format!("{error}; the output stays at {} ({back})", aside.display()),
+            ),
+        }
     }
 
     /// Every pid `/proc` lists now.

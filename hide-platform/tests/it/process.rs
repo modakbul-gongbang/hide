@@ -287,6 +287,18 @@ fn child_role() {
                 set_output_aside(&log, &aside, OUTPUT_LIMIT).unwrap()
             );
         }
+        // As `output_aside`, where the name to set the output aside under is
+        // taken by a folder at the first ask.
+        "output_aside_blocked" => {
+            let log = PathBuf::from(std::env::var_os(OUTPUT_LOG).unwrap());
+            let aside = log.with_extension("log.1");
+            let first = set_output_aside(&log, &aside, OUTPUT_LIMIT);
+            eprintln!("STILL-HERE");
+            std::fs::remove_dir_all(&aside).unwrap();
+            let second = set_output_aside(&log, &aside, OUTPUT_LIMIT).unwrap();
+            println!("FIRST {} SECOND {second}", first.is_err());
+            eprintln!("AFTER-ERROR");
+        }
         "login_env" => {
             for (key, _) in std::env::vars_os() {
                 println!("ENVKEY {}", key.to_string_lossy().to_uppercase());
@@ -1705,6 +1717,33 @@ fn output_appended_to_a_file_is_set_aside_past_its_limit_and_goes_on_in_a_new_on
     }
     assert!(!now.contains('~'), "{now}");
     assert!(hide_platform::fs::private::is_private(&log).unwrap());
+}
+
+/// A set-aside that fails leaves the output at the file it was, so the next
+/// ask finds it there and sets it aside then.
+#[cfg(unix)]
+#[test]
+fn output_whose_set_aside_failed_is_set_aside_by_the_next_ask() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("core.log");
+    let aside = dir.path().join("core.log.1");
+    std::fs::create_dir_all(aside.join("taken")).unwrap();
+    std::fs::write(&log, vec![b'~'; OUTPUT_LIMIT as usize + 1]).unwrap();
+    let appended = || std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+    let status = role_command("output_aside_blocked")
+        .env(OUTPUT_LOG, &log)
+        .stdout(appended())
+        .stderr(appended())
+        .status()
+        .unwrap();
+    assert!(status.success());
+
+    let before = std::fs::read_to_string(&aside).unwrap();
+    assert!(before.contains("STILL-HERE"), "{before}");
+    assert!(!before.contains("AFTER"), "{before}");
+    let now = std::fs::read_to_string(&log).unwrap();
+    assert!(now.contains("FIRST true SECOND true"), "{now}");
+    assert!(now.contains("AFTER-ERROR"), "{now}");
 }
 
 /// Output that is not appended to that file, such as a pipe, is left where
