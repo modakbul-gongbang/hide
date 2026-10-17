@@ -1104,8 +1104,11 @@ fn a_node_pane_s_hide_memory_reads_for_the_node_s_session() {
             )
             .expect("a caller on any linked device");
         assert_eq!(
-            prepared.reader,
-            Some(("claude".to_owned(), "node-session".to_owned()))
+            prepared.caller,
+            crate::memory_command::MemoryCaller::Agent(Some((
+                "claude".to_owned(),
+                "node-session".to_owned()
+            )))
         );
         assert_eq!(prepared.checkout_path, path);
         assert_eq!(prepared.database, runtime.memory_database_path());

@@ -4,12 +4,14 @@
 //! now contradicts it. The report holds the card's current revision out of
 //! the hooks and the background checks until the reporting session is
 //! analyzed past the point it reported at, an operator releases it, or seven
-//! days pass. A revision is reported once, ever: `stale_reports` keeps that
-//! apart from the hold, which is deleted, reason and all, when it ends.
+//! days pass. A revision has one report: `stale_reports` keeps it apart from
+//! the hold, which is deleted, reason and all, when it ends, so the analysis,
+//! the deadline and an agent's release leave the report spent. Only a
+//! person's release gives it back, for a false report to be undone.
 
 use super::*;
 
-/// The hold and the one-report record. A hold names the revision it holds;
+/// The hold and the report record. A hold names the revision it holds;
 /// the trigger deletes it the moment the card's text or state changes
 /// (edited, replaced, forgotten, undone), whichever write path did it (B12).
 pub(crate) const TABLES: &str = r#"
@@ -105,6 +107,25 @@ impl StaleRefusal {
             Self::ReceiptsFull => "memory_stale_receipts_full",
             Self::SessionLimit => "memory_stale_session_limit",
             Self::ProjectLimit => "memory_stale_project_limit",
+        }
+    }
+}
+
+/// What a release does to the released revision's one report.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ReleasedReport {
+    /// A person released it: the revision may be reported once more.
+    GivenBack,
+    /// An agent released it, or a caller Hide cannot tell from one: the
+    /// revision stays reported.
+    Spent,
+}
+
+impl ReleasedReport {
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::GivenBack => "given_back",
+            Self::Spent => "spent",
         }
     }
 }
@@ -249,18 +270,29 @@ impl MemoryStore {
     }
 
     /// Ends card `number`'s hold at once (B11); `None` when it holds none.
-    /// The revision stays reported, so it is not held again (D-10).
+    /// `report` says whether the revision's report goes with it; spent, the
+    /// revision is not held again (D-10).
     pub fn release_hold(
         &mut self,
         project_id: &str,
         number: u64,
         now_unix_ms: u64,
+        report: ReleasedReport,
     ) -> Result<Option<EndedHold>, MemoryError> {
         self.require_writer()?;
         let transaction = self.connection.transaction()?;
+        let filter = format!("i.project_id=?1 AND i.number=?2 AND {}", held(3));
+        if report == ReleasedReport::GivenBack {
+            transaction.execute(
+                &format!(
+                    "DELETE FROM stale_reports WHERE (item_id,revision) IN (SELECT h.item_id,h.revision FROM card_holds h JOIN memory_items i ON i.id=h.item_id WHERE {filter})"
+                ),
+                params![project_id, number, now_unix_ms],
+            )?;
+        }
         let ended = end_holds(
             &transaction,
-            &format!("i.project_id=?1 AND i.number=?2 AND {}", held(3)),
+            &filter,
             params![project_id, number, now_unix_ms],
         )?;
         transaction.commit()?;
@@ -750,8 +782,9 @@ mod tests {
     }
 
     #[test]
-    fn a_card_revision_is_reported_once_through_release_and_expiry() {
-        // B5, B11, D-09, D-10.
+    fn an_agents_release_and_the_deadline_leave_the_revisions_report_spent() {
+        // B5, B11, D-09, D-10: one report per revision, which only a
+        // person's release gives back.
         let mut fixture = fixture(&["Write commit messages in Korean", "Run tests with nextest"]);
         fixture.give("s1", 1);
         fixture.give("s2", 1);
@@ -762,7 +795,7 @@ mod tests {
         );
         let released = fixture
             .store
-            .release_hold(&fixture.project, 1, now_ms())
+            .release_hold(&fixture.project, 1, now_ms(), ReleasedReport::Spent)
             .unwrap()
             .unwrap();
         assert_eq!((released.number, released.session_id.as_str()), (1, "s1"));
@@ -771,7 +804,7 @@ mod tests {
         assert_eq!(
             fixture
                 .store
-                .release_hold(&fixture.project, 1, now_ms())
+                .release_hold(&fixture.project, 1, now_ms(), ReleasedReport::Spent)
                 .unwrap(),
             None
         );
@@ -783,9 +816,55 @@ mod tests {
         fixture.give("s1", 2);
         held(fixture.report_at("s1", 2, Some(100), now_ms() - 8 * DAY));
         assert_eq!(
+            fixture
+                .store
+                .release_hold(&fixture.project, 2, now_ms(), ReleasedReport::GivenBack)
+                .unwrap(),
+            None,
+            "an expired hold has nothing left to release"
+        );
+        assert_eq!(
             fixture.report("s1", 2),
             StaleOutcome::Refused(StaleRefusal::AlreadyReported),
             "an expired report still spent the revision's one report"
+        );
+    }
+
+    #[test]
+    fn a_persons_release_gives_the_revision_one_report_back() {
+        // D-10 as amended: a false report a person undid can be made again,
+        // once, by any session the revision was given to.
+        let mut fixture = fixture(&["Write commit messages in Korean"]);
+        fixture.give("s1", 1);
+        fixture.give("s2", 1);
+        held(fixture.report("s1", 1));
+        let released = fixture
+            .store
+            .release_hold(&fixture.project, 1, now_ms(), ReleasedReport::GivenBack)
+            .unwrap()
+            .unwrap();
+        assert_eq!((released.number, released.session_id.as_str()), (1, "s1"));
+        assert_eq!(fixture.index(), [1]);
+        assert_eq!(fixture.stored_reasons(), 0);
+
+        let again = held(fixture.report("s2", 1));
+        assert_eq!(again.session_id, "s2");
+        assert!(fixture.index().is_empty());
+        for session in ["s1", "s2"] {
+            assert_eq!(
+                fixture.report(session, 1),
+                StaleOutcome::Refused(StaleRefusal::AlreadyReported),
+                "the given-back report is one report again"
+            );
+        }
+        fixture
+            .store
+            .release_hold(&fixture.project, 1, now_ms(), ReleasedReport::Spent)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            fixture.report("s1", 1),
+            StaleOutcome::Refused(StaleRefusal::AlreadyReported)
         );
     }
 
@@ -847,7 +926,7 @@ mod tests {
         );
         fixture
             .store
-            .release_hold(&fixture.project, 1, now_ms())
+            .release_hold(&fixture.project, 1, now_ms(), ReleasedReport::Spent)
             .unwrap();
         held(fixture.report("p3", 11));
     }
@@ -882,6 +961,19 @@ mod tests {
         assert!(fixture.index().is_empty(), "a receipt read is no analysis");
         assert_eq!(fixture.analyzed_to("s1", 101), [1]);
         assert_eq!(fixture.index(), [1], "nothing replaced it, so it is back");
+        assert_eq!(
+            fixture
+                .store
+                .release_hold(&fixture.project, 1, now_ms(), ReleasedReport::GivenBack)
+                .unwrap(),
+            None,
+            "a revived card holds nothing a person could release"
+        );
+        assert_eq!(
+            fixture.report("s1", 1),
+            StaleOutcome::Refused(StaleRefusal::AlreadyReported),
+            "the revival spent the revision's report"
+        );
         assert!(
             fixture.analyzed_to("s1", 10_000).is_empty(),
             "a report whose place is unknown waits for its deadline"
