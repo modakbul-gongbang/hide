@@ -736,7 +736,7 @@ fn label_refusal(reason: String) -> HostError {
     let code = match reason.as_str() {
         "session_file_missing" => ErrorCode::NotFound,
         "opencode_db_busy" | "opencode_db_changed" => ErrorCode::Busy,
-        "session_kind_unsupported" => ErrorCode::Unsupported,
+        "session_kind_unsupported" | "opencode_db_schema_unknown" => ErrorCode::Unsupported,
         reason if reason.starts_with("session_capacity:") => ErrorCode::TooLarge,
         _ => ErrorCode::Io,
     };
