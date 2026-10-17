@@ -55,6 +55,11 @@ class Login(unittest.TestCase):
                 self.assertFalse(passed)
                 self.assertIn("::error title=agent journey::the journey exited 2: isolation, setup or cleanup failed", notes)
 
+    def test_a_reason_with_a_line_break_cannot_start_a_workflow_command(self):
+        passed, notes = lane.judge(report({}, [{"id": "codex", "login": "refused: 100%\n::stop-commands::x"}]), "login")
+        self.assertFalse(passed)
+        self.assertEqual(notes, ["::error title=agent journey codex::login refused: refused: 100%25%0A::stop-commands::x"])
+
 
 class Fixture(unittest.TestCase):
     def table(self, **override):

@@ -362,6 +362,7 @@ Hide records folder trust for each worktree it spawns an agent into, and must re
 A Codex entry there is an isolation failure (exit 2); a Claude one is reported by key, and one left after the cleanup is listed as a product finding.
 Every exit, a stop and the deadline included, ends the agents, panes, Herdr and `hided` and confirms it, and then removes the run's `journey/<run-id>-<agent>` branches and worktrees: each one only while its worktree is under the run and its start commit matches the run's record, read at the cleanup for a spawn that never answered, since that name is the run's alone.
 A branch that moved or a worktree outside the run is kept and named, and fails the run.
+A run refuses to start (exit 2) while one of its branch names is already in the repository, as a rerun under the same `--run-dir` name finds an earlier run's leftover, so its cleanup never takes that branch for its own.
 Never run a cargo build or test while it runs: either relinks `target/debug` under the running `hided`.
 
 ### The CI lanes
@@ -372,7 +373,7 @@ Windows has neither lane yet: the harness under the journey is Unix-only, and [I
   The stand-in runs the hook commands the kit installed and writes each CLI's session file format, so a change that breaks the journey's verdicts, the hooks' path into Hide or the cleanup fails it; its report is marked `fixture` with what a stand-in cannot show, and is never a release's agent evidence.
   `pr.yml` runs it on Linux when the journey's code or the shims change (`scripts/ci-plan.py`), `nightly.yml` and `release.yml` every time.
 - The signed-in lane (`login`, nightly and release) signs each agent in with the CI account's key: `HIDE_CLAUDE_API_KEY` as Claude's `ANTHROPIC_API_KEY`, `HIDE_CODEX_API_KEY` through `codex login --with-api-key`.
-  An agent without its secret reads `not measured: not configured (<secret>)` and leaves a notice; the key is kept under the run's probe, which the cleanup removes, and no report or artifact carries it.
+  An agent without its secret reads `not measured: not configured (<secret>)` and leaves a notice; the key is kept under the run's probe, which the cleanup removes, and every report, evidence file, pane capture and log the run writes has the key and the last 20 characters Claude's key question shows of it replaced.
   A failed cell, an isolation, setup or cleanup failure, a request budget overrun, or a refused login or a missing CLI for an agent whose secret is set fails the lane; a turn the provider answered nothing because the key's day was spent is `not measured: provider quota exhausted (<quota ids>)` with a `Not measured` warning, by the rule `contracts/provider-quota.json` keeps ([TESTING.md: A real agent on CI](TESTING.md#a-real-agent-on-ci)), and Claude Code and Codex have no row there yet, so every refusal of theirs, a per-minute rate limit included, fails.
 `scripts/agent-journey-lane.py` turns a report into the lane's verdict and its annotations, and the lane keeps the report as an artifact.
 

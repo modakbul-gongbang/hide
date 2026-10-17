@@ -12,7 +12,7 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from agent_journey import ci
-from agent_journey.cli import budget_failures, leftover_copies, remove_created
+from agent_journey.cli import budget_failures, leftover_copies, remove_created, taken_branches
 from agent_journey.local import claude_session_folders
 from agent_journey.report import markdown
 
@@ -88,6 +88,11 @@ class RepositoryCleanup(unittest.TestCase):
                                    "journey/r1-pi": "worktree_outside_the_run"})
         self.assertTrue(self.elsewhere.is_dir())
 
+    def test_a_rerun_finds_a_branch_an_earlier_run_of_the_same_name_left(self):
+        # The run refuses to start on it, so its cleanup never takes it for its own.
+        git(self.root, "branch", "journey/r1-codex")
+        self.assertEqual(taken_branches(self.root, BRANCHES), ["journey/r1-codex"])
+
     def test_a_worktree_folder_already_gone_with_the_probe_is_still_unregistered(self):
         start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
         subprocess.run(["/bin/rm", "-r", str(self.probe / "worktrees")], check=True)
@@ -95,6 +100,14 @@ class RepositoryCleanup(unittest.TestCase):
             {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
         self.assertEqual(result["kept"], [])
         self.assertEqual(self.branches(), ["main"])
+
+
+class Redaction(unittest.TestCase):
+    def test_each_key_and_the_tail_claude_shows_of_it_are_replaced(self):
+        key = "sk-ant-" + "a1b2c3d4" * 6
+        with mock.patch.dict(os.environ, {"HIDE_CLAUDE_API_KEY": key, "HIDE_CODEX_API_KEY": ""}, clear=False):
+            text = f"key {key} approve ...{key[-20:]}? other".encode()
+            self.assertEqual(ci.redact(text), b"key [redacted] approve ...[redacted]? other")
 
 
 class LeftoversAndReport(unittest.TestCase):

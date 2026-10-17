@@ -44,6 +44,18 @@ FIXTURE_LIMITS = [
 ]
 
 
+def redact(data):
+    """`data` with each CI key, and the last 20 characters Claude's key
+    question shows of it, replaced, for anything the run writes where an
+    artifact may carry it."""
+    for login in LOGINS.values():
+        secret = os.environ.get(login["secret"], "").encode()
+        for value in (secret, secret[-20:]) if len(secret) > 20 else (secret,):
+            if value:
+                data = data.replace(value, b"[redacted]")
+    return data
+
+
 def executable(fixture_bin, kind):
     """The program a pane's `claude` or `codex` runs, or None when it is not installed."""
     if fixture_bin:

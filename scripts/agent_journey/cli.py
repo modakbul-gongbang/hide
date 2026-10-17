@@ -147,6 +147,13 @@ def claude_trusts(operator, root):
     return (projects.get(str(root)) or {}).get("hasTrustDialogAccepted") is True
 
 
+def taken_branches(root, branches):
+    """Which of `branches` the measured repository already has."""
+    return [branch for branch in branches
+            if not subprocess.run(["/usr/bin/git", "-C", str(root), "rev-parse", "--verify", "-q", "refs/heads/" + branch],
+                                  capture_output=True, timeout=15).returncode]
+
+
 def plain_git(env, root, *args):
     """Git in the measured repository, outside the owner: the repository
     cleanup runs after the owner closed, and after a stop or the deadline."""
@@ -422,6 +429,10 @@ def main(argv=None):
     rows = {row["id"]: row for row in contract}
     table = cells.plan(contract, selected)
     measured = [key for key in selected if key in cells.BUILT_AGENTS]
+    # The cleanup deletes the run's branch names, so none may be there before it starts.
+    taken = taken_branches(root, [f"journey/{run_id}-{key}" for key in measured])
+    if taken:
+        refuse(f"journey_branch_exists: {', '.join(taken)} is in {root}; remove it or choose another --run-dir")
     report = {"format": 1, "mode": args.mode, "fixture": bool(fixture_bin), "selected": selected, "models": models,
               "herdr": {}, "agents": [], "table": table, "systems": systems(args.mode), "configuration": {},
               **({"fixture_limits": ci.FIXTURE_LIMITS} if fixture_bin else {}),
@@ -503,7 +514,7 @@ def main(argv=None):
             log = runtime.home / "config/herdr/herdr-server.log"
             if log.is_file() and not log.is_symlink():
                 with open(log, "rb") as stream:
-                    write_private(run / "herdr-server.log", stream.read(1024 * 1024))
+                    write_private(run / "herdr-server.log", ci.redact(stream.read(1024 * 1024)))
         if local:
             # Before the cleanup, which removes the trust the candidate recorded with its worktrees.
             check_operator_trust(report, operator, run, "during")

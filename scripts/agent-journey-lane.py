@@ -24,8 +24,15 @@ AGENTS = ("claude-code", "codex")
 FIXTURE_CELLS = ("start", "reply", "letter", "sleep_wake", "resume")
 
 
-def annotation(level, title, message):
-    return f"::{level} title={title}::{message}"
+def escaped(text):
+    """A workflow command's text with GitHub's escapes, so a reason's line
+    break or `::` cannot start a command of its own."""
+    return str(text).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def annotation(level, title, *lines):
+    """One annotation; its lines, each escaped, join as the message's lines."""
+    return f"::{level} title={escaped(title).replace(':', '%3A').replace(',', '%2C')}::" + "%0A".join(map(escaped, lines))
 
 
 def judge(report, lane):
@@ -82,8 +89,8 @@ def judge(report, lane):
             # report reads a `Not measured` annotation (docs/TESTING.md, A real agent on CI).
             unmeasured = [name for name, cell in table.get(agent["id"], {}).items()
                           if cell["status"] == "not measured" and cell["reason"].startswith("provider quota exhausted")]
-            notes.append(annotation("warning", "Not measured",
-                                    f"agent journey {agent['id']}%0Aprovider quota exhausted ({', '.join(agent['quota'])}): "
+            notes.append(annotation("warning", "Not measured", f"agent journey {agent['id']}",
+                                    f"provider quota exhausted ({', '.join(agent['quota'])}): "
                                     f"{', '.join(unmeasured)} not reached"))
     return passed, notes
 

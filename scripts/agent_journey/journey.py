@@ -17,6 +17,7 @@ from agent_live_check.processes import ProcessError
 from agent_live_check.protection import write_private
 
 from . import cells
+from .ci import redact
 from .quota import model_requests, spent_quota
 
 SPAWN_SECONDS = 150
@@ -82,7 +83,7 @@ class Journey:
     def evidence(self, name, value):
         path = self.run / f"{self.id}-{name}.json"
         path.unlink(missing_ok=True)
-        write_private(path, (json.dumps(value, indent=2, ensure_ascii=False, default=str) + "\n").encode())
+        write_private(path, redact((json.dumps(value, indent=2, ensure_ascii=False, default=str) + "\n").encode()))
         return path.name
 
     def capture(self, name):
@@ -96,7 +97,7 @@ class Journey:
             return None
         path = self.run / f"{self.id}-{name}-pane.txt"
         path.unlink(missing_ok=True)
-        write_private(path, text.encode())
+        write_private(path, redact(text.encode()))
         return path.name
 
     def settle(self, name, verdict, evidence=None):

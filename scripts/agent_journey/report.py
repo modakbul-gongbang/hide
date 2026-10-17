@@ -5,6 +5,7 @@ import json
 from agent_live_check.protection import write_private
 
 from .cells import CELLS
+from .ci import redact
 
 
 def text(value):
@@ -70,5 +71,5 @@ def markdown(report):
 
 
 def save(run, report):
-    write_private(run / "report.json", (json.dumps(report, indent=2, ensure_ascii=False, default=str) + "\n").encode())
-    write_private(run / "report.md", markdown(report).encode())
+    write_private(run / "report.json", redact((json.dumps(report, indent=2, ensure_ascii=False, default=str) + "\n").encode()))
+    write_private(run / "report.md", redact(markdown(report).encode()))
