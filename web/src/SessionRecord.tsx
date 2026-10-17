@@ -98,9 +98,12 @@ export function SessionRecord({ actions, target, frame }: { actions: Actions; ta
     if (!shown || parent) return null;
     const key = workKey(shown.session);
     const localId = localDeviceId(state.rest);
-    const rows = [...everyAgent(state.rest, state.agents).values()];
-    const pane = rows.find((row) => { const session = sessionOfAgentOn(row, localId); return session !== null && workKey(session) === key; })?.lineage_parent_pane_id;
-    return pane ? rows.find((row) => row.pane_id === pane)?.identity_label || null : null;
+    const rows = everyAgent(state.rest, state.agents);
+    for (const row of rows.values()) {
+      const session = sessionOfAgentOn(row, localId);
+      if (session && workKey(session) === key) return (row.lineage_parent_pane_id ? rows.get(row.lineage_parent_pane_id)?.identity_label : null) || null;
+    }
+    return null;
   });
   const descendants = useMemo(() => (shown ? recordTree(shown).slice(1) : []), [shown]);
   const wasConnected = useRef(connected);

@@ -27,7 +27,7 @@ it("draws each task state as a checkbox, with `!` and words only where the box d
   // A checklist task's states (sessionWork.taskState), not an agent's, spelled as one string so the
   // core's guard against a shell-side agent state vocabulary (axes_no_state_name_array_remains_in_the_shell) reads no array.
   const states = "done working question blocked unfinished review ci_failed".split(" ") as TaskState[];
-  const asked = states.slice(2, 4);
+  const asked = "question blocked".split(" ") as TaskState[];
   await act(async () => root.render(<TooltipProvider>
     {states.map((state) => <div key={state} data-case={state}><TaskMark state={state} live /><TaskWord state={state} live prShown /></div>)}
     {asked.map((state) => <div key={state} data-case={`ended-${state}`}><TaskMark state={state} live={false} /><TaskWord state={state} live={false} prShown /></div>)}

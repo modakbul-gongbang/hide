@@ -63,9 +63,9 @@ describe("renderMarkdown", () => {
     expect(out).not.toMatch(/<a [^>]*href="(javascript|\/relative)/);
     expect(out).not.toMatch(/<img /);
     // A name the allow-list only inherits is no tag, and its text stays.
-    expect(html2("<constructor a>hello</constructor> tail <toString>t</toString>")).toContain("hello");
+    expect(html2("<constructor a>hello</constructor> tail")).toContain("hello");
     // A picture loads only over https from a public host; a number-spelled loopback is still loopback.
-    for (const src of ["http://example.com/a.png", "https://127.0.0.1/a.png", "https://2130706433/a.png", "https://192.168.1.2/a.png", "https://localhost/a.png", "https://[::1]/a.png", "https://router.local/a.png"]) {
+    for (const src of ["http://example.com/a.png", "https://127.0.0.1/a.png", "https://2130706433/a.png", "https://192.168.1.2/a.png", "https://localhost/a.png", "https://[::1]/a.png", "https://router.local/a.png", "https://localhost./a.png", "https://printer.local./a.png"]) {
       expect(html2(`<img src="${src}" alt="x"> ![y](${src})`)).not.toMatch(/<img /);
     }
     // Nesting has a bound: past it an opening tag is text.

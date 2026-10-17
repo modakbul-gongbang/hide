@@ -255,7 +255,8 @@ function webAddress(raw: string): string | null {
  * A picture's address, which the card loads by itself as it opens: https on a
  * public host only, so a body cannot make the operator's machine ask this
  * computer or its network for anything. The parser has already turned a
- * number-spelled address into dotted form.
+ * number-spelled address into dotted form. A public name that resolves to a
+ * private address is past what a name can tell.
  */
 function imageAddress(raw: string): string | null {
   const url = parsedAddress(raw);
@@ -263,7 +264,8 @@ function imageAddress(raw: string): string | null {
 }
 
 function privateHost(hostname: string): boolean {
-  const name = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  // A trailing dot names the same host (`localhost.`), so it is read without one.
+  const name = hostname.replace(/\.+$/, "").replace(/^\[|\]$/g, "").toLowerCase();
   if (name === "localhost" || /\.(localhost|local|internal|lan|home)$/.test(name)) return true;
   if (name.includes(":")) return name === "::" || name === "::1" || /^(fc|fd|fe8|fe9|fea|feb)/.test(name) || name.startsWith("::ffff:");
   const v4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(name);
