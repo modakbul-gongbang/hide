@@ -44,9 +44,9 @@ describe("the first-run agent choice", () => {
   });
 
   it("draws the initials of an agent the kit lists but the shell bundles no mark for, never an invented logo", () => {
-    const markup = renderToStaticMarkup(createElement(AgentLogo, { agent: "kiro", label: "Kiro" }));
-    expect(markup).toContain('data-agent-monogram="kiro"');
-    expect(markup).toContain(">KI<");
+    const markup = renderToStaticMarkup(createElement(AgentLogo, { agent: "no-such-agent", label: "No Such Agent" }));
+    expect(markup).toContain('data-agent-monogram="no-such-agent"');
+    expect(markup).toContain(">NS<");
     expect(markup).not.toContain("<img");
   });
 
