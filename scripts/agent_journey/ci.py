@@ -11,10 +11,11 @@ route table is local mode's. With `--fixture-bin` the compiled stand-ins of
 import json
 import os
 from pathlib import Path
-import shlex
 import shutil
 
 from agent_live_check.protection import ProtectionError, private_directory, write_private
+from agent_live_check.runtime import clean_env
+from agent_live_check.system import WINDOWS, home_env, launcher, temp_env
 
 from . import cells
 from .local import QUIET
@@ -93,7 +94,7 @@ def not_configured(kind, fixture_bin, fake=False):
 
 def route_names(kind, fixture_bin, fake_env=None):
     """The environment CI mode adds to an agent, by name only (its values are paths or a key)."""
-    names = ["HOME", "HIDE_STATE_DIR", "PATH", *QUIET, *LOGINS[kind]["env"]]
+    names = [*home_env(Path()), "HIDE_STATE_DIR", "PATH", *QUIET, *LOGINS[kind]["env"]]
     if fixture_bin:
         names.append("HIDE_E2E_JOURNEY")
     elif fake_env is not None:
@@ -114,22 +115,16 @@ def wrapper(runtime, program, kind, path, journey_config=None, fake_env=None):
     with the runner's PATH behind the candidate's `hide` and its key, or the
     fake model's environment (fake_lane.py) in place of a key."""
     private_directory(runtime.bin)
-    target = runtime.bin / kind
-    environment = {"HOME": str(runtime.home), "HIDE_STATE_DIR": str(runtime.state),
+    environment = {**home_env(runtime.home), "HIDE_STATE_DIR": str(runtime.state),
                    "PATH": os.pathsep.join((str(runtime.bin), path)), **QUIET,
                    **{name: str(runtime.home / relative) for name, relative in LOGINS[kind]["env"].items()}}
     if journey_config:
         environment["HIDE_E2E_JOURNEY"] = str(journey_config)
     environment.update(fake_env or {})
-    lines = ["#!/bin/sh", "unset CLAUDE_CONFIG_DIR"]
-    lines.append("export " + " ".join(f"{key}={shlex.quote(value)}" for key, value in environment.items()))
     key_env = LOGINS[kind]["key_env"]
-    if key_env and not journey_config and fake_env is None:
-        lines.append(f"{key_env}=$(cat {shlex.quote(str(key_file(runtime, kind)))}) && export {key_env}")
-    lines.append("exec " + shlex.quote(str(program)) + ' "$@"')
-    write_private(target, ("\n".join(lines) + "\n").encode())
-    target.chmod(0o700)
-    return target
+    keyed = key_env and not journey_config and fake_env is None
+    return launcher(runtime.bin / kind, [program], environment=environment, unset=["CLAUDE_CONFIG_DIR"],
+                    file_variables=[(key_env, key_file(runtime, kind))] if keyed else [])
 
 
 def login(runtime, kind, launch, root):
@@ -153,9 +148,11 @@ def login(runtime, kind, launch, root):
     if kind != "codex":
         # The key in the agent's environment is the whole login.
         return None
-    environment = {"HOME": str(runtime.home), "PATH": runtime.env["PATH"], "TMPDIR": runtime.env["TMPDIR"]}
-    command = f"{shlex.quote(str(launch))} login --with-api-key < {shlex.quote(str(key_file(runtime, kind)))}"
-    code, _, error = runtime.owner.run(["/bin/sh", "-c", command], env=environment, check=False)
+    environment = {**clean_env(), **home_env(runtime.home), "PATH": runtime.env["PATH"],
+                   **temp_env(runtime.run / "agent-tmp")}
+    with open(key_file(runtime, kind), "rb") as key:
+        code, _, error = runtime.owner.run([str(launch), "login", "--with-api-key"], env=environment,
+                                           check=False, stdin=key)
     if code:
         return "codex login --with-api-key refused: " + error.strip()[:200]
     code, output, error = runtime.owner.run([str(launch), "login", "status"], env=environment, check=False)
@@ -167,7 +164,8 @@ def claude_settings(home, root, secret):
     write_private(home / ".claude.json", json.dumps({
         "hasCompletedOnboarding": True,
         "customApiKeyResponses": {"approved": [secret[-20:]], "rejected": []},
-        "projects": {str(root): {"hasTrustDialogAccepted": True}},
+        # Claude Code names a Windows folder with `/` between names (docs/agent-hooks.md).
+        "projects": {root.as_posix() if WINDOWS else str(root): {"hasTrustDialogAccepted": True}},
     }).encode())
 
 

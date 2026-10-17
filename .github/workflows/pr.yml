@@ -576,15 +576,16 @@ jobs:
       issues: write
 
   # The agent journey on the compiled Claude and Codex stand-ins, keyless, on
-  # Linux, for a change to the journey's code or the stand-ins; the nightly
-  # and a release run it on every system, with the signed-in lane.
+  # Linux, and its process jobs, private files and pane commands on Windows,
+  # for a change to the journey's code or the stand-ins; the nightly and a
+  # release run it on every system, with the signed-in lane.
   agent-journey:
     name: agent journey
     needs: plan
     if: contains(fromJSON(needs.plan.outputs.lanes), 'agent-journey')
     uses: ./.github/workflows/agent-journey.yml
     with:
-      systems: '["linux"]'
+      systems: '["linux","windows"]'
     permissions:
       contents: read
 

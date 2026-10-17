@@ -48,6 +48,14 @@ impl CreatedTabCheckout {
     }
 }
 
+/// The checkout a `reveal_path` names (`Runtime::reveal_checkout`).
+struct RevealCheckout {
+    path: String,
+    device: String,
+    /// The core brings it forward; a device session's checkout it does not.
+    comes_forward: bool,
+}
+
 /// How a path is read before it is compared with a checkout's: this machine's
 /// own paths resolve links and trailing separators on its file system, a
 /// device's are its own strings, which this machine's files cannot speak for.
@@ -5440,19 +5448,29 @@ impl Runtime {
     /// checkout switch, then the panel appear, then the tree move, and a
     /// refusal partway would leave the screen in a state nobody asked for.
     pub(super) fn reveal_path(&mut self, payload: RevealPathPayload) -> bool {
-        if self
-            .reveal_checkout_path(&payload.workspace_id, &payload.checkout_id)
-            .is_none()
-        {
-            self.set_error(
-                "reveal.unknown_checkout",
-                format!(
-                    "Checkout {} is not registered, so {} was not revealed",
-                    payload.checkout_id, payload.path
-                ),
-                false,
-            );
-            return true;
+        match self.reveal_checkout(&payload.workspace_id, &payload.checkout_id) {
+            None => {
+                self.set_error(
+                    "reveal.unknown_checkout",
+                    format!(
+                        "Checkout {} is not registered, so {} was not revealed",
+                        payload.checkout_id, payload.path
+                    ),
+                    false,
+                );
+                return true;
+            }
+            Some(RevealCheckout {
+                comes_forward: false,
+                device,
+                ..
+            }) if self.front_checkout()
+                != Some((payload.workspace_id.as_str(), payload.checkout_id.as_str())) =>
+            {
+                self.reveal_when_in_front(device, payload);
+                return true;
+            }
+            Some(_) => {}
         }
         if payload.is_directory {
             self.settle_reveal_path(&payload, None);
@@ -5509,19 +5527,66 @@ impl Runtime {
         true
     }
 
-    fn reveal_checkout_path(&self, workspace_id: &str, checkout_id: &str) -> Option<String> {
-        self.snapshot
+    /// The checkout a reveal names, wherever the catalog carries it: one the
+    /// navigator lists comes forward with the reveal (`focus_checkout`); one
+    /// of a device's Herdr session, a node's own checkout among them, is that
+    /// session's to bring forward, so the reveal moves no focus of the core's
+    /// and one behind waits for that Herdr (`reveal_when_in_front`).
+    fn reveal_checkout(&self, workspace_id: &str, checkout_id: &str) -> Option<RevealCheckout> {
+        let (workspace, checkout) = self.catalog_checkout(workspace_id, checkout_id)?;
+        let comes_forward = self
+            .snapshot
             .navigator
             .workspaces
             .iter()
-            .find(|workspace| workspace.id == workspace_id)
-            .and_then(|workspace| {
-                workspace
-                    .checkouts
-                    .iter()
-                    .find(|checkout| checkout.id == checkout_id)
-                    .map(|checkout| checkout.path.clone())
-            })
+            .any(|workspace| workspace.id == workspace_id);
+        Some(RevealCheckout {
+            path: checkout.path.clone(),
+            device: workspace.device_id.clone(),
+            comes_forward,
+        })
+    }
+
+    /// A reveal into a device session's checkout that is not in front there,
+    /// as a path clicked on the Overview names: the device's Herdr is asked
+    /// to bring the checkout forward, with the device, and the reveal runs
+    /// once the sync sees it land (`attach_reveal`), so the click ends where
+    /// one on this machine's checkout does. It dies with the request
+    /// (`PendingChoice`); without View areas nothing waits, and the reveal is
+    /// refused before anything moves.
+    fn reveal_when_in_front(&mut self, device: String, payload: RevealPathPayload) {
+        if !self.separate_view_areas() {
+            self.set_error(
+                "reveal.not_in_front",
+                format!(
+                    "Checkout {} is not in front on its device, so {} was not revealed",
+                    payload.checkout_id, payload.path
+                ),
+                false,
+            );
+            return;
+        }
+        let request_id = format!("reveal:{}:{}", unix_milliseconds(), payload.checkout_id);
+        let error_before = self.snapshot.status.last_error.clone();
+        self.request_remote_control(super::RemoteControlPayload {
+            target_id: device.clone(),
+            request_id: request_id.clone(),
+            report_pane_focus_outcome: false,
+            focus_device: true,
+            request: super::RemoteControlRequest::FocusWorkspace {
+                workspace_id: payload.workspace_id.clone(),
+                checkout_id: Some(payload.checkout_id.clone()),
+            },
+        });
+        let checkout = payload.checkout_id.clone();
+        if !self.attach_reveal(&device, &request_id, payload)
+            && self.snapshot.status.last_error == error_before
+        {
+            self.push_diagnostic(
+                "reveal.not_waiting",
+                format!("The reveal into checkout {checkout} on {device} was not kept waiting"),
+            );
+        }
     }
 
     /// A revealed file's read landed: the reveal settles now.
@@ -5547,8 +5612,11 @@ impl Runtime {
         payload: &RevealPathPayload,
         prepared: Option<super::editor::PreparedFileTab>,
     ) {
-        let Some(checkout_path) =
-            self.reveal_checkout_path(&payload.workspace_id, &payload.checkout_id)
+        let Some(RevealCheckout {
+            path: checkout_path,
+            comes_forward,
+            ..
+        }) = self.reveal_checkout(&payload.workspace_id, &payload.checkout_id)
         else {
             self.set_error(
                 "reveal.unknown_checkout",
@@ -5567,8 +5635,9 @@ impl Runtime {
                 .as_ref()
                 == Some(key)
         });
-        if self.snapshot.navigator.focused_checkout_id.as_deref()
-            != Some(payload.checkout_id.as_str())
+        if comes_forward
+            && self.snapshot.navigator.focused_checkout_id.as_deref()
+                != Some(payload.checkout_id.as_str())
         {
             self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
         }

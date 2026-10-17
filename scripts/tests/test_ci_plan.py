@@ -392,6 +392,14 @@ class NamedPaths(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn("agent-journey", self.lanes(path))
                 self.assertIn("rust", self.lanes(path))
+        # The live check the journey runs and the web e2e drives, and its
+        # Windows forms' test, which only the journey's Windows job runs.
+        for path in ("scripts/agent_live_check/processes.py", "scripts/agent_live_check/windows.py",
+                     "scripts/agent-live-check.py"):
+            with self.subTest(path=path):
+                self.assertEqual(self.lanes(path), {"policy", "web-e2e", "agent-journey"})
+        self.assertEqual(self.lanes("scripts/tests/test_agent_live_windows.py"), {"policy", "agent-journey"})
+        self.assertEqual(self.lanes("scripts/tests/test_agent_live_protection.py"), {"policy"})
         self.assertNotIn("agent-journey", self.lanes("hide-session/src/lib.rs"))
 
     def test_desktop_e2e_helpers_run_the_desktop_suites_and_windows_unit_tests(self):

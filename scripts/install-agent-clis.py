@@ -39,6 +39,15 @@ def table():
     return rows
 
 
+def bash():
+    """The bash on PATH: on Windows, Git Bash. A bare `bash` would be looked
+    up in System32 first, where the WSL launcher is."""
+    program = shutil.which("bash")
+    if not program:
+        raise SystemExit("bash is not on PATH")
+    return program
+
+
 def run(argv, env=None):
     """A command whose output goes to stderr, so stdout carries only the programs."""
     result = subprocess.run(argv, env={**os.environ, **(env or {})}, stdout=sys.stderr, timeout=600)
@@ -64,7 +73,8 @@ def grok(row, prefix):
     """Grok's installer takes the version as its argument and the folder as
     GROK_BIN_DIR; on Windows it runs under Git Bash in the same form."""
     folder = prefix / "grok"
-    run(["bash", "-c", f'curl -fsSL {GROK_INSTALLER} | bash -s "$0"', row["version"]], {"GROK_BIN_DIR": str(folder)})
+    run([bash(), "-c", f'curl -fsSL {GROK_INSTALLER} | bash -s "$0"', row["version"]],
+        {"GROK_BIN_DIR": folder.as_posix() if WINDOWS else str(folder)})
     return folder / ("grok.exe" if WINDOWS else "grok")
 
 
@@ -83,7 +93,7 @@ def omp(row, prefix):
 def agy(row, prefix):
     """agy's installer takes no version (scripts/install-agy.sh)."""
     del row, prefix
-    found = subprocess.run(["bash", str(CHECKOUT / "scripts/install-agy.sh")], capture_output=True, text=True,
+    found = subprocess.run([bash(), str(CHECKOUT / "scripts/install-agy.sh")], capture_output=True, text=True,
                            timeout=600)
     sys.stderr.write(found.stderr)
     if found.returncode:

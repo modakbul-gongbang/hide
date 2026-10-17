@@ -77,7 +77,10 @@ pub mod workspace_views;
 mod worktrees;
 mod zoneinfo;
 
-pub use ai::{hide_ai_asks, hide_ai_ready_here, hide_ai_settings_path, stored_hide_ai_settings};
+pub use ai::{
+    hide_ai_asks, hide_ai_asks_of_stored, hide_ai_ready_here, hide_ai_settings_path,
+    stored_hide_ai_settings,
+};
 pub use handle::Core;
 pub use model::{
     CoreOptions, DeviceRegistration, LinkOrigin, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload,

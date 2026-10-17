@@ -11,7 +11,6 @@ import datetime
 import json
 import os
 from pathlib import Path
-import shlex
 import shutil
 import signal
 import subprocess
@@ -29,6 +28,7 @@ from agent_live_check.protection import (ConfigGuard, ProtectionError, beneath, 
                                          write_private)
 from agent_live_check.runtime import Runtime, clean_env
 from agent_live_check.sandbox import WriteSandbox
+from agent_live_check.system import STOP_SIGNALS, WINDOWS, exe, git as git_program, launcher
 
 from . import ci, clis, cells, fake_lane, fake_model, omp_state, quota
 from .controller import Controller
@@ -93,7 +93,7 @@ def leftover_copies(checkout, run):
 
 def measured_repository(checkout):
     """The main repository of the checkout the journey runs from (PRD D-43)."""
-    common = subprocess.run(["/usr/bin/git", "-C", str(checkout), "rev-parse", "--path-format=absolute",
+    common = subprocess.run([git_program(), "-C", str(checkout), "rev-parse", "--path-format=absolute",
                              "--git-common-dir"], capture_output=True, text=True, timeout=15)
     if common.returncode:
         refuse("measured_repository_unreadable: run the journey from a Git checkout")
@@ -106,9 +106,9 @@ def measured_repository(checkout):
 def journey_leftovers(root, checkout, run):
     """Branches and worktrees an uncatchable kill left in the measured
     repository: named for the operator, never reused or removed."""
-    branches = subprocess.run(["/usr/bin/git", "-C", str(root), "for-each-ref", "--format=%(refname:short)",
+    branches = subprocess.run([git_program(), "-C", str(root), "for-each-ref", "--format=%(refname:short)",
                                "refs/heads/journey/"], capture_output=True, text=True, timeout=15).stdout.split()
-    listed = subprocess.run(["/usr/bin/git", "-C", str(root), "worktree", "list", "--porcelain"],
+    listed = subprocess.run([git_program(), "-C", str(root), "worktree", "list", "--porcelain"],
                             capture_output=True, text=True, timeout=15).stdout
     runs = (checkout / "agents/runs").resolve()
     worktrees = [line.removeprefix("worktree ") for line in listed.splitlines() if line.startswith("worktree ")
@@ -153,14 +153,14 @@ def claude_trusts(operator, root):
 def taken_branches(root, branches):
     """Which of `branches` the measured repository already has."""
     return [branch for branch in branches
-            if not subprocess.run(["/usr/bin/git", "-C", str(root), "rev-parse", "--verify", "-q", "refs/heads/" + branch],
+            if not subprocess.run([git_program(), "-C", str(root), "rev-parse", "--verify", "-q", "refs/heads/" + branch],
                                   capture_output=True, timeout=15).returncode]
 
 
 def plain_git(env, root, *args):
     """Git in the measured repository, outside the owner: the repository
     cleanup runs after the owner closed, and after a stop or the deadline."""
-    result = subprocess.run(["/usr/bin/git", "-C", str(root), *args], env=env, capture_output=True, text=True,
+    result = subprocess.run([git_program(), "-C", str(root), *args], env=env, capture_output=True, text=True,
                             timeout=15)
     return result.returncode, result.stdout, result.stderr
 
@@ -225,7 +225,7 @@ def remove_created(runtime, root, created, branches):
 
 def git(runtime, args, cwd):
     env = {**runtime.env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
-    runtime.owner.run(["/usr/bin/git", *args], env=env, cwd=cwd)
+    runtime.owner.run([git_program(), *args], env=env, cwd=cwd)
 
 
 def repository(runtime, name):
@@ -245,12 +245,13 @@ def package(runtime):
     Only a daemon running from a package installs the kit (hide-kit
     `bundled_kit_dir`), so this run's binaries are cloned into a private
     `hide.app/Contents/Resources` under the probe, which goes with the run.
-    The operator's installed app is never read or started.
+    The operator's installed app is never read or started. On Windows the
+    pinned Herdr's ConPTY runtime goes beside it, as the package carries it.
     """
     resources = runtime.probe / "package/hide.app/Contents/Resources"
     private_directory(resources)
     for name, source in (("hided", runtime.hided), ("hide", runtime.hide),
-                         ("hide-agent-hooks", runtime.checkout / "target/debug/hide-agent-hooks"),
+                         ("hide-agent-hooks", runtime.checkout / "target/debug" / exe("hide-agent-hooks")),
                          ("herdr", runtime.herdr_bin)):
         if not source.is_file():
             refuse(f"build_this_worktrees_{name.replace('-', '_')}_first")
@@ -258,9 +259,11 @@ def package(runtime):
         if sys.platform == "darwin":
             runtime.owner.run(["/bin/cp", "-c", str(source), str(resources / name)], env=runtime.env, seconds=30)
         else:
-            shutil.copyfile(source, resources / name)
-            (resources / name).chmod(0o700)
-    runtime.hided, runtime.hide = resources / "hided", resources / "hide"
+            shutil.copyfile(source, resources / exe(name))
+            (resources / exe(name)).chmod(0o700)
+    if WINDOWS:
+        shutil.copytree(runtime.herdr_bin.parent / "conpty", resources / "conpty")
+    runtime.hided, runtime.hide = resources / exe("hided"), resources / exe("hide")
     return resources
 
 
@@ -454,8 +457,6 @@ def main(argv=None):
     fake = args.fake_model
     if local and sys.platform != "darwin":
         refuse("local_mode_runs_on_macos_only: it needs sandbox-exec and the keychain logins; the CI layer measures other systems")
-    if not local and sys.platform not in ("darwin", "linux"):
-        refuse("ci_mode_not_built_for_this_system_yet: it runs on Linux and macOS")
     fixture_bin = args.fixture_bin.resolve() if args.fixture_bin else None
     contract = load_contract(checkout)
     # A signed-in CI run reads which refusals leave a turn unmeasured before
@@ -489,7 +490,7 @@ def main(argv=None):
     herdr = args.herdr_bin or default_herdr(checkout, operator)
     if not herdr.is_file():
         refuse("pinned_herdr_missing: run zsh scripts/fetch-herdr-runtime.sh, or pass --herdr-bin")
-    reader = checkout / "target/debug/examples/journey_conversation"
+    reader = checkout / "target/debug/examples" / exe("journey_conversation")
     if not reader.is_file():
         refuse("build_the_reader_first: bash scripts/verify-cargo.sh build -p hide-session --example journey_conversation")
     slug = ("agent-journey-" + datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%S")
@@ -519,7 +520,7 @@ def main(argv=None):
         cells.settle_agent(table, key, reason)
     owner = OwnedProcesses(diagnostics=run / "process-diagnostics")
     previous = {signum: signal.signal(signum, lambda *_: owner.cancelled.set())
-                for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP)}
+                for signum in STOP_SIGNALS}
     runtime = guard = daemon = None
     # One fake model per agent, so each one's log counts that agent's requests alone.
     servers = {}
@@ -537,8 +538,7 @@ def main(argv=None):
             sessions = runtime.home / relative
             if sessions.is_symlink():
                 sessions.unlink()
-        write_private(runtime.bin / "hide", ("#!/bin/sh\nexec " + shlex.quote(str(runtime.hide)) + ' "$@"\n').encode())
-        (runtime.bin / "hide").chmod(0o700)
+        launcher(runtime.bin / "hide", [runtime.hide])
         if local or fake:
             # Before hided starts, which reads the file once.
             disable_hide_ai(runtime.home)

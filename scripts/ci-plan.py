@@ -237,7 +237,17 @@ JOURNEY_LANES = {"agent-journey"}
 # Files inside a crate the journey runs as its own tools: Hide's conversation
 # reader and Codex's app-server stand-in.
 JOURNEY_CRATE_FILES = ("hide-session/examples/journey_conversation.rs", "hide-agent-hooks/tests/fixtures/fake-codex.py")
+# The live check's code, which the journey runs and `agent-live-check.spec.ts`
+# drives in the web e2e; its unit tests are `policy`'s.
+LIVE_CHECK_LANES = {"web-e2e"} | JOURNEY_LANES
+# Script tests that also run on another system than `policy`'s Linux, in
+# these lanes: `agent-journey.yml` runs the live check's Windows forms on Windows.
+SYSTEM_TESTS = (
+    ("scripts/tests/test_agent_live_windows.py", JOURNEY_LANES),
+)
 NAMED_LANES = (
+    ("scripts/agent_live_check/*", LIVE_CHECK_LANES),
+    ("scripts/agent-live-check.py", LIVE_CHECK_LANES),
     ("web/e2e/shims/claude-shim.c", WEB_E2E_LANES | JOURNEY_LANES),
     ("web/e2e/shims/live-check.h", WEB_E2E_LANES | JOURNEY_LANES),
     # The journey's controller builds the desktop e2e's spawn provider.
@@ -286,6 +296,9 @@ NAMED_LANES = (
 def named_lanes(path):
     """The lanes a named path needs, or None when no rule names it."""
     name = path.as_posix()
+    for pattern, lanes in SYSTEM_TESTS:
+        if fnmatchcase(name, pattern):
+            return set(lanes), f"script test that also runs on another system: {name}"
     if any(fnmatchcase(name, pattern) for pattern in POLICY_ONLY):
         return set(), f"named path, no lane reads it: {name}"
     # Documentation below a folder no rule claims (a crate's own README is

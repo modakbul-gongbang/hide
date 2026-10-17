@@ -15,6 +15,7 @@ import time
 
 from agent_live_check.processes import ProcessError
 from agent_live_check.protection import write_private
+from agent_live_check.system import git
 
 from . import cells
 from .ci import redact
@@ -47,7 +48,7 @@ LETTER_PROMPT = "Reply with exactly the token on the second line of the letter a
 def created_branch(runtime, repository, branch, worktree):
     """What a spawn made in the measured repository: the branch, the commit it
     started at, and its worktree; the cleanup deletes only what still matches."""
-    code, out, _ = runtime.owner.run(["/usr/bin/git", "-C", str(repository), "rev-parse", "--verify", "-q",
+    code, out, _ = runtime.owner.run([git(), "-C", str(repository), "rev-parse", "--verify", "-q",
                                       "refs/heads/" + branch], env=git_env(runtime), check=False)
     return {"branch": branch, "start": out.strip() if not code else None, "worktree": str(worktree)}
 

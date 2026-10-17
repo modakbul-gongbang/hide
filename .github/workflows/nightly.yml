@@ -125,18 +125,19 @@ jobs:
     secrets:
       HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
 
-  # The agent journey: the stand-ins, the pinned CLIs against the fake model
-  # and each agent whose CI key is set signed in, agy on the night's system
-  # of its quota rotation, on Linux and macOS (one system's on that system's
-  # hand run); docs/VERIFICATION.md, Agent journey.
+  # The agent journey: the stand-ins on Linux and macOS, the Windows forms,
+  # the pinned CLIs against the fake model and each agent whose CI key is set
+  # signed in on all three systems, agy on the night's system of its quota
+  # rotation (one system's on that system's hand run); docs/VERIFICATION.md,
+  # Agent journey.
   agent-journey:
     name: agent journey
-    if: ${{ inputs.lane != 'windows' && inputs.lane != 'agy' }}
+    if: ${{ inputs.lane != 'agy' }}
     uses: ./.github/workflows/agent-journey.yml
     permissions:
       contents: read
     with:
-      systems: ${{ inputs.lane == 'linux' && '["linux"]' || inputs.lane == 'macos' && '["macos"]' || '["linux","macos"]' }}
+      systems: ${{ inputs.lane == 'linux' && '["linux"]' || inputs.lane == 'macos' && '["macos"]' || inputs.lane == 'windows' && '["windows"]' || '["linux","macos","windows"]' }}
       live: true
       fake: true
       agy: rotation

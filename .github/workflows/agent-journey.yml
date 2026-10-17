@@ -5,37 +5,42 @@
 # `fixture` runs the compiled stand-ins of `web/e2e/shims` in place of Claude
 # Code and Codex, with no key, and proves the journey's isolation, spawn,
 # verdicts, report and cleanup; it passes only when every cell a stand-in
-# imitates passed. `pr.yml` runs it when the journey's code or the shims
-# change, `nightly.yml` and `release.yml` every time.
+# imitates passed. It runs on Linux and macOS only (docs/INSTALL.md, What
+# each system supports).
+# `windows-forms` runs the journey's Windows process jobs, private files and
+# pane shell commands on Windows itself. `pr.yml` runs both when the
+# journey's code or the shims change, `nightly.yml` and `release.yml` every time.
 #
 # With `fake`, the `fake` job runs the real CLIs at the versions
 # contracts/agent-clis.json pins, with Hide's real kit, answered by the
-# journey's fake model (scripts/agent_journey/fake_model.py) and no key; its
-# report is marked apart from a signed-in one and proves no provider. It
-# passes only when every built cell passes for Claude Code and Codex, the
-# agents the stand-ins imitate, and no agent's cell fails.
+# journey's fake model (scripts/agent_journey/fake_model.py) and no key, on
+# every system named; its report is marked apart from a signed-in one and
+# proves no provider. It passes only when every built cell passes for Claude
+# Code and Codex, the agents the stand-ins imitate, and no agent's cell fails.
 #
 # With `live`, the `login` job runs the real CLIs, pinned the same way, in the
 # runner's disposable HOME, signed in with the CI account's keys
 # (`HIDE_CLAUDE_API_KEY`, `HIDE_CODEX_API_KEY`, `HIDE_AGY_API_KEY`,
-# `HIDE_GROK_API_KEY`, `HIDE_PI_API_KEY`, `HIDE_OMP_API_KEY`). An agent without its key reads "not configured" and
-# leaves a notice, a provider quota refusal leaves a warning; neither fails
-# the job. A failed cell, an isolation or cleanup failure, a request budget
-# overrun, or a refused login or missing CLI with the key set does. agy's key
-# has 20 requests a day for its model across the CI account (agy-contract.yml
-# spends 4 of them a night), so agy is measured only on the system `agy`
-# names, or the night's system of its rotation, and reads "not measured"
-# with that reason elsewhere (docs/VERIFICATION.md, Agent journey).
+# `HIDE_GROK_API_KEY`, `HIDE_PI_API_KEY`, `HIDE_OMP_API_KEY`). An agent
+# without its key reads "not configured" and leaves a notice, a provider
+# quota refusal leaves a warning; neither fails the job. A failed cell, an
+# isolation or cleanup failure, a request budget overrun, or a refused login
+# or missing CLI with the key set does. agy's key has 20 requests a day for
+# its model across the CI account (agy-contract.yml spends 4 of them a
+# night), so agy is measured only on the system `agy` names, or the night's
+# system of its rotation, and reads "not measured" with that reason
+# elsewhere (docs/VERIFICATION.md, Agent journey). omp is not installed on
+# Windows yet and reads "not measured" there with that reason.
 # A CLI that answers another version than the pin is named in a warning.
-# Its report is never a release's agent evidence when it
-# came from the stand-ins (`skills/release/SKILL.md`).
+# Its report is never a release's agent evidence when it came from the
+# stand-ins (`skills/release/SKILL.md`).
 name: agent journey
 
 on:
   workflow_call:
     inputs:
       systems:
-        description: The systems to run, as a JSON array of `linux` and `macos`.
+        description: The systems to run, as a JSON array of `linux`, `macos` and `windows`.
         type: string
         required: true
       live:
@@ -72,12 +77,16 @@ permissions:
 jobs:
   fixture:
     name: agent journey stand-ins (${{ matrix.system }})
+    # A Windows-only run leaves no system for the stand-ins.
+    if: ${{ inputs.systems != '["windows"]' }}
     runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15"}')[matrix.system] }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
         system: ${{ fromJSON(inputs.systems) }}
+        exclude:
+          - system: windows
     defaults:
       run:
         shell: bash
@@ -134,10 +143,33 @@ jobs:
             ${{ env.RUN_DIR }}/*.log
           if-no-files-found: warn
 
+  windows-forms:
+    name: agent journey Windows forms
+    if: ${{ contains(fromJSON(inputs.systems), 'windows') }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Process jobs, private files and pane shell commands on Windows
+        # scripts/tests/test_agent_live_windows.py: an owner that dies takes
+        # its children's trees with it, each cap is the Unix guardian's and a
+        # crossed one is named, and the files and commands the journey
+        # writes work on Windows itself.
+        timeout-minutes: 10
+        run: python -m unittest scripts/tests/test_agent_live_windows.py -v
+
   fake:
     name: agent journey fake model (${{ matrix.system }})
     if: ${{ inputs.fake }}
-    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15"}')[matrix.system] }}
+    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15","windows":"windows-latest"}')[matrix.system] }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -147,9 +179,16 @@ jobs:
       run:
         shell: bash
     env:
-      HERDR_PLATFORM: ${{ fromJSON('{"linux":"linux-x86_64","macos":"macos-aarch64"}')[matrix.system] }}
+      HERDR_PLATFORM: ${{ fromJSON('{"linux":"linux-x86_64","macos":"macos-aarch64","windows":"windows-x86_64"}')[matrix.system] }}
       RUN_DIR: agents/runs/agent-journey-fake-${{ matrix.system }}
+      # The journey needs Python 3.12; Windows names it python.
+      PYTHON: ${{ matrix.system == 'windows' && 'python' || 'python3' }}
+      # omp's Windows installer form is not set yet (scripts/install-agent-clis.py).
+      KINDS: ${{ matrix.system == 'windows' && 'claude codex grok pi agy' || 'claude codex grok pi omp agy' }}
     steps:
+      - name: Keep line endings as committed
+        if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
@@ -160,13 +199,17 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        if: runner.os == 'Windows'
+        with:
+          python-version: "3.12"
       - name: Install zsh on Linux
         if: runner.os == 'Linux'
         timeout-minutes: 5
         run: sudo apt-get install -y --no-install-recommends zsh
       - name: Install the pinned agent CLIs
         timeout-minutes: 10
-        run: python3 scripts/install-agent-clis.py claude codex grok pi omp agy
+        run: '"$PYTHON" scripts/install-agent-clis.py $KINDS'
       - name: Build hided, hide, the hooks and Hide's conversation reader
         timeout-minutes: 25
         run: |
@@ -175,17 +218,24 @@ jobs:
       - name: Fetch the pinned Herdr runtime
         id: herdr
         timeout-minutes: 5
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")" >> "$GITHUB_OUTPUT"
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          else
+            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
+          fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: The journey against the fake model
         timeout-minutes: 40
         run: |
           set +e
-          python3 scripts/agent-journey-check.py --mode ci --fake-model \
-            --agents claude-code,codex,grok,pi,omp,antigravity \
+          args=(--agents claude-code,codex,grok,pi,omp,antigravity)
+          [[ "$RUNNER_OS" == Windows ]] && args+=(--unmeasured "omp=omp is not installed on Windows yet: scripts/install-agent-clis.py has no form of its Windows installer (install.ps1 -Binary -Ref)")
+          "$PYTHON" scripts/agent-journey-check.py --mode ci --fake-model "${args[@]}" \
             --herdr-bin "${{ steps.herdr.outputs.bin }}" --run-dir "$RUN_DIR"
           echo "journey exit $?"
       - name: The lane's verdict
-        run: python3 scripts/agent-journey-lane.py "$RUN_DIR/report.json" --lane fake
+        run: '"$PYTHON" scripts/agent-journey-lane.py "$RUN_DIR/report.json" --lane fake'
       - name: Keep the report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
@@ -202,7 +252,7 @@ jobs:
   login:
     name: agent journey signed in (${{ matrix.system }})
     if: ${{ inputs.live }}
-    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15"}')[matrix.system] }}
+    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15","windows":"windows-latest"}')[matrix.system] }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -212,13 +262,18 @@ jobs:
       run:
         shell: bash
     env:
-      HERDR_PLATFORM: ${{ fromJSON('{"linux":"linux-x86_64","macos":"macos-aarch64"}')[matrix.system] }}
+      HERDR_PLATFORM: ${{ fromJSON('{"linux":"linux-x86_64","macos":"macos-aarch64","windows":"windows-x86_64"}')[matrix.system] }}
       RUN_DIR: agents/runs/agent-journey-login-${{ matrix.system }}
+      # The journey needs Python 3.12; Windows names it python.
+      PYTHON: ${{ matrix.system == 'windows' && 'python' || 'python3' }}
       HAS_KEYS: ${{ secrets.HIDE_CLAUDE_API_KEY != '' || secrets.HIDE_CODEX_API_KEY != '' || secrets.HIDE_AGY_API_KEY != '' || secrets.HIDE_GROK_API_KEY != '' || secrets.HIDE_PI_API_KEY != '' || secrets.HIDE_OMP_API_KEY != '' }}
     steps:
       - name: Not configured without the CI account's keys
         if: ${{ env.HAS_KEYS != 'true' }}
         run: echo "::notice title=agent journey signed in::not configured (no HIDE_CLAUDE_API_KEY, HIDE_CODEX_API_KEY, HIDE_AGY_API_KEY, HIDE_GROK_API_KEY, HIDE_PI_API_KEY or HIDE_OMP_API_KEY secret); the signed-in journey stays unproven"
+      - name: Keep line endings as committed
+        if: ${{ env.HAS_KEYS == 'true' && runner.os == 'Windows' }}
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         if: ${{ env.HAS_KEYS == 'true' }}
         with:
@@ -233,12 +288,16 @@ jobs:
         if: ${{ env.HAS_KEYS == 'true' }}
         with:
           node-version: 22
+      - uses: actions/setup-python@v5
+        if: ${{ env.HAS_KEYS == 'true' && runner.os == 'Windows' }}
+        with:
+          python-version: "3.12"
       - name: Install zsh on Linux
         if: ${{ env.HAS_KEYS == 'true' && runner.os == 'Linux' }}
         run: sudo apt-get install -y --no-install-recommends zsh
       - name: Choose the agents this leg signs in
         # Each agent whose key is set, at its pinned version; agy only on the
-        # systems its daily quota measures tonight.
+        # systems its daily quota measures tonight, omp not on Windows yet.
         if: ${{ env.HAS_KEYS == 'true' }}
         id: agents
         env:
@@ -252,9 +311,15 @@ jobs:
           SYSTEM: ${{ matrix.system }}
         run: |
           kinds=()
-          for pair in claude:$HAS_CLAUDE codex:$HAS_CODEX grok:$HAS_GROK pi:$HAS_PI omp:$HAS_OMP; do
+          for pair in claude:$HAS_CLAUDE codex:$HAS_CODEX grok:$HAS_GROK pi:$HAS_PI; do
             [[ "${pair#*:}" == true ]] && kinds+=("${pair%%:*}")
           done
+          omp=""
+          if [[ "$HAS_OMP" == true && "$SYSTEM" == windows ]]; then
+            omp="omp is not installed on Windows yet: scripts/install-agent-clis.py has no form of its Windows installer (install.ps1 -Binary -Ref)"
+          elif [[ "$HAS_OMP" == true ]]; then
+            kinds+=(omp)
+          fi
           rotation=(linux macos windows)
           case "$AGY_PLAN" in
             rotation)
@@ -264,21 +329,22 @@ jobs:
             *) agy_system=$AGY_PLAN
               why="this run measures it on $agy_system only, so the night's and this run's requests stay within the key's 20 a day" ;;
           esac
-          unmeasured=""
+          agy=""
           if [[ "$HAS_AGY" == true && "$agy_system" == "$SYSTEM" ]]; then
             kinds+=(agy)
           elif [[ "$HAS_AGY" == true ]]; then
-            unmeasured=$why
+            agy=$why
           fi
           echo "kinds=${kinds[*]}" >> "$GITHUB_OUTPUT"
-          echo "unmeasured=$unmeasured" >> "$GITHUB_OUTPUT"
+          echo "agy=$agy" >> "$GITHUB_OUTPUT"
+          echo "omp=$omp" >> "$GITHUB_OUTPUT"
       - name: Install the pinned agent CLIs
         # contracts/agent-clis.json, so a night measures the versions the
         # adapters were verified against; the step and the report name the
         # version each answered with, so a red night says which CLI changed.
         if: ${{ env.HAS_KEYS == 'true' && steps.agents.outputs.kinds != '' }}
         timeout-minutes: 10
-        run: python3 scripts/install-agent-clis.py ${{ steps.agents.outputs.kinds }}
+        run: '"$PYTHON" scripts/install-agent-clis.py ${{ steps.agents.outputs.kinds }}'
       - name: Build hided, hide, the hooks and Hide's conversation reader
         if: ${{ env.HAS_KEYS == 'true' }}
         timeout-minutes: 25
@@ -289,7 +355,15 @@ jobs:
         if: ${{ env.HAS_KEYS == 'true' }}
         id: herdr
         timeout-minutes: 5
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")" >> "$GITHUB_OUTPUT"
+        # Assigned first, so a failed fetch fails this step rather than
+        # handing the next one an empty path.
+        run: |
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          else
+            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
+          fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: The journey, signed in with the CI keys
         # The keys reach only this step; the journey keeps each one under the
         # run's probe, which its cleanup removes, and the report names them only.
@@ -302,18 +376,20 @@ jobs:
           HIDE_GROK_API_KEY: ${{ secrets.HIDE_GROK_API_KEY }}
           HIDE_PI_API_KEY: ${{ secrets.HIDE_PI_API_KEY }}
           HIDE_OMP_API_KEY: ${{ secrets.HIDE_OMP_API_KEY }}
-          AGY_UNMEASURED: ${{ steps.agents.outputs.unmeasured }}
+          AGY_UNMEASURED: ${{ steps.agents.outputs.agy }}
+          OMP_UNMEASURED: ${{ steps.agents.outputs.omp }}
         run: |
           set +e
           # The model agy-contract.yml signs agy in with, so both spend one quota.
           args=(--model antigravity=gemini-3.8-flash-medium)
           [[ -n "$AGY_UNMEASURED" ]] && args+=(--unmeasured "antigravity=$AGY_UNMEASURED")
-          python3 scripts/agent-journey-check.py --mode ci "${args[@]}" \
+          [[ -n "$OMP_UNMEASURED" ]] && args+=(--unmeasured "omp=$OMP_UNMEASURED")
+          "$PYTHON" scripts/agent-journey-check.py --mode ci "${args[@]}" \
             --herdr-bin "${{ steps.herdr.outputs.bin }}" --run-dir "$RUN_DIR"
           echo "journey exit $?"
       - name: The lane's verdict
         if: ${{ env.HAS_KEYS == 'true' }}
-        run: python3 scripts/agent-journey-lane.py "$RUN_DIR/report.json" --lane login
+        run: '"$PYTHON" scripts/agent-journey-lane.py "$RUN_DIR/report.json" --lane login'
       - name: Keep the report
         if: ${{ env.HAS_KEYS == 'true' && !cancelled() }}
         uses: actions/upload-artifact@v7

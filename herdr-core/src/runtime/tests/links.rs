@@ -767,6 +767,54 @@ fn opening_a_pull_request_reads_its_sessions_on_the_panels_own_revision() {
     drop(worker);
 }
 
+/// A project of a node that dials this core lives in that node's session,
+/// and its link record is the core's like this machine's: the PR card of one
+/// of its pull requests opens the record's panel.
+#[test]
+fn a_nodes_project_opens_its_link_record_on_its_pr_card() {
+    let mut runtime = links_runtime(vec![pull_request(7, "4-task", &[])], true);
+    let mut project = runtime.snapshot.navigator.workspaces.remove(0);
+    project.device_id = "mbp".into();
+    let mut node = super::device_catalog::connected_status("mbp");
+    node.session = Some(super::device_catalog::session(vec![project]));
+    runtime.snapshot.status.remote.push(node);
+
+    // No worker: the read fails in place, on the node's project's panel.
+    assert!(runtime.dispatch_json(&open_event(serde_json::json!({"kind": "pr", "number": 7}))));
+    let panel = runtime
+        .snapshot
+        .link_panel
+        .clone()
+        .expect("the panel opens");
+    assert_eq!(panel.workspace_id, "w");
+    assert_eq!(panel.failure.as_deref(), Some("links_worker_unavailable"));
+
+    // With the worker: the record answers with the pull request the node's
+    // GitHub read listed, as it does for this machine's project.
+    let github = std::mem::take(&mut runtime.github);
+    runtime.device_github.insert("mbp".into(), github);
+    let shared = Arc::new(Mutex::new(runtime));
+    let worker = super::super::links::spawn_worker(&shared, ChangeNotifier::noop())
+        .expect("the link worker starts");
+    assert!(
+        shared
+            .lock()
+            .unwrap()
+            .dispatch_json(&open_event(serde_json::json!({"kind": "pr", "number": 7})))
+    );
+    wait(&shared, "the node's record", |runtime| {
+        runtime
+            .snapshot
+            .link_panel
+            .as_ref()
+            .is_some_and(|panel| !panel.loading && panel.pr.is_some())
+    });
+    let panel = shared.lock().unwrap().snapshot.link_panel.clone().unwrap();
+    assert_eq!(panel.failure, None);
+    assert_eq!(panel.pr.unwrap().branch, "4-task");
+    drop(worker);
+}
+
 #[test]
 fn an_answer_for_a_superseded_read_is_dropped_and_a_failure_keeps_the_lines() {
     let mut runtime = links_runtime(vec![pull_request(7, "4-task", &[])], true);
