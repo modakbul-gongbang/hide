@@ -430,7 +430,7 @@ A run that plans every lane a pull request can plan starts at most 25 jobs, two 
 | `desktop e2e` | 2 | the only macOS lane of the desktop app's own changes, in two shards that build in place, because the whole suite outgrew one job's step cap ([Balancing the e2e shards](#balancing-the-e2e-shards)) |
 | `package` (Windows, Linux, macOS) | 3 | `package.yml`'s jobs, planned only for what goes into a package; before the lane its Windows and Linux jobs ran on the same paths outside `verify` |
 
-The common runs are smaller: a `herdr-core` or `hided` change starts 19 jobs with two on macOS (the `desktop e2e` shards), a web shell change 14 with two on macOS, a desktop-only change 7 with two on macOS, a `hide-platform` change 20 with three on macOS, a `hide-kit` or `hide-agent-hooks` change 23 with three on macOS (the `desktop e2e` shards and `package`), and a documentation change 3, as does a push that reuses the pull request's last green run.
+The common runs are smaller: a `herdr-core` or `hided` change starts 19 jobs with two on macOS (the `desktop e2e` shards), a web shell change 14 with two on macOS, a desktop-only change 7 with two on macOS (8 for `desktop/src/main`, which adds `windows check`), a `hide-platform` change 20 with three on macOS, a `hide-kit` or `hide-agent-hooks` change 23 with three on macOS (the `desktop e2e` shards and `package`), and a documentation change 3, as does a push that reuses the pull request's last green run.
 The median wall time and the share of runs whose Linux shards waited more than 10 minutes come from a measurement of the pull request runs after a change merges, taken the way issue #561 took its baseline; they are not in this guide because a pull request cannot prove them.
 The `plan` job's summary lists each lane with the paths that chose it.
 
@@ -466,7 +466,8 @@ With `--no-deps` the order is still the config's: the one worker runs the projec
 What `--no-deps` gives up is the skip: a background test that fails its retry too no longer skips the shard's focus tests, which still run and report, while the lane fails as before.
 
 A table is its system's and suite's: per-test costs differ by system (symlinks, process and terminal tests), so a lane on another system that runs several shards records its own.
-Refresh a table when a shard's time drifts from the others in a run, when the plan warns, or after tests were added or renamed in bulk:
+Refresh a table when a shard's time drifts from the others in a run, when the plan warns, after tests were added or renamed in bulk, or when tests the table records at 0 because the lane skipped them start to run (the Factory specs while `FACTORY_OPEN` is off): no warning sees those.
+Refresh it this way:
 
 1. Download the logs of the lane's jobs (the Linux `web e2e` shards, the macOS `desktop e2e` shards) of about twenty recent successful runs (`gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`) into a directory outside the repository.
 2. `bash scripts/verify-web.sh <web|desktop> e2e --list --reporter=list > list.txt`, then `python3 scripts/e2e-shard.py durations --list list.txt <logs>... > <web|desktop>/e2e/shard-durations.json`; it keeps only the listed tests, takes a passing retry as its test, records 0 for a test the logs only skipped, and names the listed tests no log has a passing or skipped line for (they keep the median).
