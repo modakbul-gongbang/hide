@@ -21,6 +21,7 @@ import shlex
 import tomllib
 
 from agent_live_check.protection import ProtectionError, private_directory, write_private
+from agent_live_check.system import WINDOWS
 
 # A Codex login copy older than this is not used: a refresh inside the copy
 # would rotate the operator's token (PRD D-32; Codex was seen refreshing every
@@ -134,10 +135,12 @@ def trust_codex(config, repository):
 
     Codex reads a linked worktree under its main repository's trust, so the
     worktrees the spawns make start at the composer. The resolved path is the
-    one Codex compares (/private/... on macOS).
+    one Codex compares (/private/... on macOS, in lower case on Windows,
+    where Codex compares folders without case; docs/agent-hooks.md).
     """
     text = config.read_text() if config.is_file() else ""
-    entry = f'\n[projects.{json.dumps(str(repository.resolve()))}]\ntrust_level = "trusted"\n'
+    path = str(repository.resolve())
+    entry = f'\n[projects.{json.dumps(path.lower() if WINDOWS else path)}]\ntrust_level = "trusted"\n'
     if entry in text:
         return
     replacement = config.with_name(config.name + ".journey")

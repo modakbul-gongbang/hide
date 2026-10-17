@@ -125,17 +125,18 @@ jobs:
     secrets:
       HIDE_AGY_API_KEY: ${{ secrets.HIDE_AGY_API_KEY }}
 
-  # The agent journey: the stand-ins and, when the CI account's keys are set,
-  # Claude Code and Codex signed in, on Linux and macOS (one system's on that
-  # system's hand run); docs/VERIFICATION.md, Agent journey.
+  # The agent journey: the stand-ins on Linux and macOS, the Windows forms,
+  # and, when the CI account's keys are set, Claude Code and Codex signed in
+  # on all three systems (one system's on that system's hand run);
+  # docs/VERIFICATION.md, Agent journey.
   agent-journey:
     name: agent journey
-    if: ${{ inputs.lane != 'windows' && inputs.lane != 'agy' }}
+    if: ${{ inputs.lane != 'agy' }}
     uses: ./.github/workflows/agent-journey.yml
     permissions:
       contents: read
     with:
-      systems: ${{ inputs.lane == 'linux' && '["linux"]' || inputs.lane == 'macos' && '["macos"]' || '["linux","macos"]' }}
+      systems: ${{ inputs.lane == 'linux' && '["linux"]' || inputs.lane == 'macos' && '["macos"]' || inputs.lane == 'windows' && '["windows"]' || '["linux","macos","windows"]' }}
       live: true
     secrets:
       HIDE_CLAUDE_API_KEY: ${{ secrets.HIDE_CLAUDE_API_KEY }}
