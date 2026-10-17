@@ -169,21 +169,19 @@ def registered_worktrees(env, root):
     return found
 
 
-def remove_created(runtime, root, created, run_id):
+def remove_created(runtime, root, created, branches):
     """Deletes the worktrees and branches this run made, each only while its
     name and start commit still match the run's record; anything else stays
     and is named. A branch the record lacks a start for (a spawn that raised
-    or was stopped) and one under the run's `journey/<run_id>-` name the
-    record lacks are read now: that name is this run's alone."""
+    or was stopped) and one of the run's own `journey/<run_id>-<agent>` names
+    the record lacks are read now: that name is this run's alone."""
     removed, kept = [], []
     env = {**runtime.env, "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull}
-    code, out, err = plain_git(env, root, "for-each-ref", "--format=%(refname:short)", f"refs/heads/journey/{run_id}-*")
-    if code:
-        raise ProtectionError("branch_list_failed: " + err.strip()[:200])
     worktrees = registered_worktrees(env, root)
     items = [dict(item) for item in created]
-    for branch in out.split():
-        if not any(item["branch"] == branch for item in items):
+    for branch in branches:
+        code, _, _ = plain_git(env, root, "rev-parse", "--verify", "-q", "refs/heads/" + branch)
+        if not code and not any(item["branch"] == branch for item in items):
             path = next((path for path, name in worktrees.items() if name == branch), None)
             items.append({"branch": branch, "start": None, "worktree": path, "swept": True})
     probe = runtime.probe.resolve()
@@ -524,9 +522,11 @@ def main(argv=None):
         if runtime:
             # After every process ended, so no agent still writes in a worktree.
             try:
-                report["repository_cleanup"] = remove_created(runtime, root, report["created"], run_id)
+                report["repository_cleanup"] = remove_created(runtime, root, report["created"],
+                                                              [f"journey/{run_id}-{key}" for key in measured])
             except Exception as error:
-                report["repository_cleanup"] = {"removed": [], "kept": report["created"], "failure": str(error)}
+                report["repository_cleanup"] = {"removed": [], "failure": str(error), "kept": [
+                    {**item, "reason": "cleanup_failed: " + str(error)[:200]} for item in report["created"]]}
         if guard:
             try:
                 report["configuration"] = guard.finish()

@@ -187,10 +187,11 @@ def operator_trust(operator, run):
 def claude_session_folders(operator, run):
     """The folders Claude keeps in the operator's ~/.claude/projects for a
     path of this run, by exact path: Claude names each after its working
-    folder with every character but a letter or digit as `-`."""
+    folder with every character but a letter or digit as `-`, and an agent
+    works in the run's probe."""
     projects = operator / ".claude/projects"
     if not projects.is_dir():
         return []
     prefixes = {re.sub(r"[^A-Za-z0-9]", "-", str(path)) for path in (run.absolute(), run.resolve())}
     return sorted(str(entry) for entry in projects.iterdir()
-                  if any(entry.name == prefix or entry.name.startswith(prefix + "-") for prefix in prefixes))
+                  if any(entry.name == prefix or entry.name.startswith(prefix + "-probe-") for prefix in prefixes))

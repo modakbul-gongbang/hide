@@ -26,6 +26,10 @@ def git(root, *args):
                           capture_output=True, text=True).stdout.strip()
 
 
+# The branch names of a run `r1` that measured these agents.
+BRANCHES = ["journey/r1-claude-code", "journey/r1-codex", "journey/r1-pi"]
+
+
 class RepositoryCleanup(unittest.TestCase):
     """The cleanup runs after the run's owner closed, so it takes no owner."""
 
@@ -50,7 +54,7 @@ class RepositoryCleanup(unittest.TestCase):
     def test_a_recorded_branch_goes_with_its_worktree(self):
         start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
         result = remove_created(self.runtime, self.root, [
-            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], "r1")
+            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
         self.assertEqual(result["kept"], [])
         self.assertEqual(self.branches(), ["main"])
         self.assertNotIn(str(self.probe), git(self.root, "worktree", "list"))
@@ -58,7 +62,7 @@ class RepositoryCleanup(unittest.TestCase):
     def test_a_spawn_that_raised_before_its_start_was_read_is_still_removed(self):
         self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
         result = remove_created(self.runtime, self.root, [
-            {"branch": "journey/r1-codex", "start": None, "worktree": str(self.probe / "worktrees/codex")}], "r1")
+            {"branch": "journey/r1-codex", "start": None, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
         self.assertEqual(result["kept"], [])
         self.assertTrue(result["removed"][0]["start_read_at_cleanup"])
         self.assertEqual(self.branches(), ["main"])
@@ -66,17 +70,19 @@ class RepositoryCleanup(unittest.TestCase):
     def test_a_branch_of_this_run_the_record_lacks_is_swept_and_another_runs_stays(self):
         self.worktree("journey/r1-claude-code", self.probe / "worktrees/claude-code")
         git(self.root, "branch", "journey/r2-codex")
-        result = remove_created(self.runtime, self.root, [], "r1")
+        # A sibling run whose name begins with this one's.
+        git(self.root, "branch", "journey/r1-2-codex")
+        result = remove_created(self.runtime, self.root, [], BRANCHES)
         self.assertEqual([item["branch"] for item in result["removed"]], ["journey/r1-claude-code"])
         self.assertTrue(result["removed"][0]["swept"])
-        self.assertEqual(sorted(self.branches()), ["journey/r2-codex", "main"])
+        self.assertEqual(sorted(self.branches()), ["journey/r1-2-codex", "journey/r2-codex", "main"])
 
     def test_a_moved_branch_and_a_worktree_outside_the_run_are_kept_and_named(self):
         start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
         git(self.probe / "worktrees/codex", "commit", "-q", "--allow-empty", "-m", "someone else's")
         self.worktree("journey/r1-pi", self.elsewhere)
         result = remove_created(self.runtime, self.root, [
-            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], "r1")
+            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
         reasons = {item["branch"]: item["reason"] for item in result["kept"]}
         self.assertEqual(reasons, {"journey/r1-codex": "branch_moved_since_the_run_made_it",
                                    "journey/r1-pi": "worktree_outside_the_run"})
@@ -86,7 +92,7 @@ class RepositoryCleanup(unittest.TestCase):
         start = self.worktree("journey/r1-codex", self.probe / "worktrees/codex")
         subprocess.run(["/bin/rm", "-r", str(self.probe / "worktrees")], check=True)
         result = remove_created(self.runtime, self.root, [
-            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], "r1")
+            {"branch": "journey/r1-codex", "start": start, "worktree": str(self.probe / "worktrees/codex")}], BRANCHES)
         self.assertEqual(result["kept"], [])
         self.assertEqual(self.branches(), ["main"])
 
@@ -112,7 +118,9 @@ class LeftoversAndReport(unittest.TestCase):
         # Claude's folder name: every character but a letter or digit as `-`.
         encoded = re.sub("[^A-Za-z0-9]", "-", str(run))
         other = re.sub("[^A-Za-z0-9]", "-", str(run.with_name("agent-journey-y")))
-        for name in (encoded + "-probe-worktrees-claude-code", other + "-probe-worktrees-codex", "-elsewhere"):
+        sibling = re.sub("[^A-Za-z0-9]", "-", str(run.with_name("agent-journey-x-2")))
+        for name in (encoded + "-probe-worktrees-claude-code", other + "-probe-worktrees-codex",
+                     sibling + "-probe-worktrees-codex", "-elsewhere"):
             (projects / name).mkdir(parents=True)
         self.assertEqual(claude_session_folders(self.base / "home", run),
                          [str(projects / (encoded + "-probe-worktrees-claude-code"))])

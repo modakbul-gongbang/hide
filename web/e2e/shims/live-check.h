@@ -223,7 +223,7 @@ static void journey_hooks(const char *event, const char *payload, char *output, 
     fcntl(in[1], F_SETFL, fcntl(in[1], F_GETFL) | O_NONBLOCK);
     const char *at = payload;
     size_t left = strlen(payload);
-    int writing = in[1], reading = out[0], timed_out = 0;
+    int writing = in[1], reading = out[0], timed_out = 0, failed = 0;
     struct timespec started;
     clock_gettime(CLOCK_MONOTONIC, &started);
     if (!left) { close(writing); writing = -1; }
@@ -234,9 +234,11 @@ static void journey_hooks(const char *event, const char *payload, char *output, 
       struct pollfd fds[2] = {{reading, POLLIN, 0}, {writing, POLLOUT, 0}};
       int ready = poll(fds, writing >= 0 ? 2 : 1, (int)remaining);
       if (ready < 0 && errno == EINTR) continue;
-      if (ready <= 0) { timed_out = ready == 0; break; }
+      if (ready <= 0) { timed_out = ready == 0; failed = ready < 0; break; }
       if (writing >= 0 && fds[1].revents) {
-        ssize_t wrote = (fds[1].revents & POLLOUT) ? write(writing, at, left) : -1;
+        ssize_t wrote = -1;
+        errno = EPIPE; /* an error or hang-up without room to write */
+        if (fds[1].revents & POLLOUT) wrote = write(writing, at, left);
         if (wrote > 0) { at += wrote; left -= (size_t)wrote; }
         else if (wrote < 0 && (errno == EAGAIN || errno == EINTR)) { /* poll again */ }
         else left = 0; /* the hook closed its input */
@@ -253,11 +255,12 @@ static void journey_hooks(const char *event, const char *payload, char *output, 
     if (writing >= 0) close(writing);
     if (reading >= 0) close(reading);
     output[used] = 0;
-    if (timed_out) kill(child, SIGKILL);
+    if (timed_out || failed) kill(child, SIGKILL);
     int status = 0;
     while (waitpid(child, &status, 0) < 0 && errno == EINTR) {}
     if (log) {
       if (timed_out) fprintf(log, "%s hook %d timed out after %d s\n", event, i, JOURNEY_HOOK_SECONDS);
+      else if (failed) fprintf(log, "%s hook %d poll failed, killed\n", event, i);
       else fprintf(log, "%s hook %d exit %d\n", event, i, WIFEXITED(status) ? WEXITSTATUS(status) : -1);
       fclose(log);
     }

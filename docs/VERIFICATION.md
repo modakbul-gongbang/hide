@@ -360,7 +360,7 @@ Claude keeps the operator's HOME for its keychain sign-in and reads only the can
 The journey writes no operator file; the entries Claude itself leaves for the run's paths are left alone and listed: in `~/.claude.json` by key, in `~/.claude/projects` by exact folder path.
 Hide records folder trust for each worktree it spawns an agent into, and must record Codex's only in the private `CODEX_HOME` the agent reads: before the cleanup and after it the journey reads the operator's `~/.codex/config.toml` and `~/.claude.json` for trust entries naming a path of the run.
 A Codex entry there is an isolation failure (exit 2); a Claude one is reported by key, and one left after the cleanup is listed as a product finding.
-Every exit, a stop and the deadline included, ends the agents, panes, Herdr and `hided` and confirms it, and then removes the run's `journey/<run-id>-*` branches and worktrees: each one only while its worktree is under the run and its start commit matches the run's record, read at the cleanup for a spawn that never answered, since that name is the run's alone.
+Every exit, a stop and the deadline included, ends the agents, panes, Herdr and `hided` and confirms it, and then removes the run's `journey/<run-id>-<agent>` branches and worktrees: each one only while its worktree is under the run and its start commit matches the run's record, read at the cleanup for a spawn that never answered, since that name is the run's alone.
 A branch that moved or a worktree outside the run is kept and named, and fails the run.
 Never run a cargo build or test while it runs: either relinks `target/debug` under the running `hided`.
 
