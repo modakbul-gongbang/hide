@@ -1,12 +1,13 @@
-// The product shots on the introduction site (site/index.html, the three
-// pillars): the story of its one-night timeline, drawn by the shell's own
-// components. Everything is the gallery's frozen sidebar fixture with its
-// invented text replaced, never a second projection: the groups, counts and
-// tree shape are what the core wrote for that fixture, and only the words and
-// agent kinds a visitor reads are English and match the page. No name here is
-// a person, a machine or a path of anyone's.
+// The product shots on the introduction site (site/index.html, the hero and
+// the three pillars): the story of its one-night timeline, drawn by the
+// shell's own components. Everything is the gallery's frozen sidebar fixture
+// with its invented text replaced, never a second projection: the groups,
+// counts and tree shape are what the core wrote for that fixture, and only the
+// words and agent kinds a visitor reads are English and match the page. No
+// name here is a person, a machine or a path of anyone's.
 
-import type { AgentRow, Checkout, Device, SnapshotRest, Workspace } from "../snapshot";
+import type { PrBoard } from "../agentScope";
+import type { AgentRow, Checkout, Device, PullRequest, SnapshotRest, Workspace } from "../snapshot";
 import type { MobileState } from "../mobileSettings";
 import { EMPTY_GALLERY_SCOPE } from "./agentScopes";
 import { REFERENCE_FOLDS, sidebarScene } from "./sceneData";
@@ -18,14 +19,14 @@ const ref = (number: number) => `#${number}`;
 type Words = { title: string; kind: string; detail?: string; pull?: [number, string] };
 
 const AGENT_WORDS: Record<string, Words> = {
-  a3: { title: `Approve ${ref(431)} and ${ref(432)}?`, kind: "claude", detail: "Both checked by Claude Code. Tests pass." },
+  a3: { title: `Approve ${ref(431)} and ${ref(436)}?`, kind: "claude", detail: "Both checked by Claude Code. Tests pass." },
   q1: { title: `${ref(433)}: CSV or XLSX for the export?`, kind: "claude", detail: "A product call the lead won't make for you." },
   q2: { title: "Fix the test that broke the export", kind: "opencode" },
   e1: { title: "Task detail API", kind: "codex" },
   tn1: { title: "Tidy the meeting notes", kind: "claude" },
   a1: { title: "Split the invoice export in three", kind: "claude", pull: [431, "Export invoices as CSV"] },
   a1c1: { title: "Export invoices as CSV", kind: "codex" },
-  a1c2: { title: `Check ${ref(431)} and ${ref(432)}`, kind: "claude" },
+  a1c2: { title: `Check ${ref(431)} and ${ref(436)}`, kind: "claude" },
   a1c3: { title: "Sort the export by date", kind: "codex", pull: [432, "Sort the export by date"] },
   a1g1: { title: "Find why the test broke", kind: "opencode" },
   a1g2: { title: "Add a test for sorted output", kind: "opencode" },
@@ -172,3 +173,131 @@ export function landingDevices(nowMs: number, width: number): { rest: SnapshotRe
   };
   return { rest, agents: scene.agents, mobile };
 }
+
+/**
+ * Which group of the hero's PRs tool each pull request state goes in, and the
+ * agent the row names for it: the core's own states for the story's pull
+ * requests, so the list agrees with the marks the sidebar draws for them.
+ */
+const HERO_PULL_GROUPS: Record<PullRequest["state"], PrBoard["rows"][number]["group"] | null> = { mergeable: "needs_you", failed: "working", pending: "working", merged: "merged", draft: null, closed: null };
+const HERO_PULL_AGENTS: Record<number, string> = { 431: "a3", 436: "a3", 432: "a1g1" };
+
+/** The PRs tool's width in the hero, narrow enough that the two terminals beside it read whole. */
+const HERO_LANE_WIDTH = 360;
+
+/** The two panes the hero shows side by side, of the billing-app main checkout's one Agent tab. */
+export const HERO_PANES = ["a1", "a3"] as const;
+
+/**
+ * The hero: the attention shot's window with the billing-app main checkout in
+ * front, its lead and the agent asking to merge side by side, and the PRs tool
+ * pinned beside them listing what those agents opened.
+ */
+export function landingWorkspace(nowMs: number, width: number): { rest: SnapshotRest; agents: AgentRow[] } {
+  const scene = landingSidebar(nowMs, [], width);
+  const navigator = scene.rest.navigator!;
+  const project = navigator.workspaces!.find((row) => row.id === "hide")!;
+  const main = project.checkouts[0]!;
+  const tab = main.tabs[0]!;
+  const story = scene.agents.flatMap((row) => (row.request?.pull_requests ?? []).map((pull, index) => ({ pull, row, state: row.state.pr?.pulls.find((one) => one.index === index)?.state })));
+  const listed = story.flatMap(({ pull, row, state }) => {
+    const group = state ? HERO_PULL_GROUPS[state] : null;
+    return state && group ? [{ pull, state, group, agent: HERO_PULL_AGENTS[pull.number] ?? row.pane_id }] : [];
+  });
+  const pulls: PullRequest[] = listed.map(({ pull, state }) => ({
+    number: pull.number, title: pull.title, url: pull.url, badge: pull.badge, review: pull.review ?? null, is_draft: false, checks: pull.checks,
+    head_branch: pull.head_branch, base_branch: "main", closing_issues: [], state, created_at_unix_ms: nowMs - 40 * 60_000, updated_at_unix_ms: nowMs - 2 * 60_000,
+    ...(state === "merged" ? { merged_at_unix_ms: nowMs - 9 * 60_000 } : {}),
+  }));
+  const groups = (["needs_you", "working", "merged"] as const).map((group) => ({ group, numbers: listed.filter((item) => item.group === group).map((item) => item.pull.number) }));
+  const prs: PrBoard = {
+    rows: listed.map(({ pull, state, group, agent }) => ({
+      number: pull.number, group, fold: null,
+      reason: group === "needs_you" ? { kind: "merge" } : group === "merged" ? { kind: "merged", since_unix_ms: nowMs - 9 * 60_000 } : state === "failed" ? { kind: "failed", since_unix_ms: nowMs - 12 * 60_000 } : { kind: "working", since_unix_ms: nowMs - 6 * 60_000 },
+      agents: [{ pane_id: agent, occurrence: 0 }], agent_pane: agent, checkout_id: main.id, checkout_ids: [main.id], issue: null,
+    })),
+    groups,
+    needs_you: groups[0]!.numbers.length,
+  };
+  const github = { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: nowMs - 60_000, unavailable_reason: null };
+  // A pane's header reads the title its agent row carries.
+  const titled = { ...tab, panes: tab.panes.map((pane) => ({ ...pane, identity_label: scene.agents.find((row) => row.pane_id === pane.id)?.identity_label ?? pane.identity_label })) };
+  const front: Workspace = { ...project, is_git: true, pull_requests: pulls, agent_scope: { ...project.agent_scope, prs }, checkouts: project.checkouts.map((checkout) => (checkout === main ? { ...checkout, github, tabs: [titled] } : checkout)) };
+  const rest: SnapshotRest = {
+    ...scene.rest,
+    navigator: { ...navigator, focused_workspace_id: project.id, focused_checkout_id: main.id, workspaces: navigator.workspaces!.map((row) => (row === project ? front : row)) },
+    pane_layouts: [{ workspace_id: project.id, tab_id: tab.id!, focused_pane_id: HERO_PANES[1], zoomed: false, root: { type: "split", direction: "right", ratio: 0.5, first: { type: "pane", pane_id: HERO_PANES[0] }, second: { type: "pane", pane_id: HERO_PANES[1] } } }],
+    workspace_view: {
+      agent_layout: { root: { area: { id: "g1", active: tab.id, displays: [{ id: tab.id! }] } }, active_area: "g1", canvases: {}, limits: { areas: 4, depth: 3, displays: 64 }, display_count: 1 },
+      device_id: "local", path: main.path, tool: "prs", last_tool: "prs", prs: { only_checkout: false }, pinned: true, tree: false, lane_width: HERO_LANE_WIDTH, tree_width: null, lane_called: 0, lane_calls: 0,
+      layout: { root: { area: { id: "v1", active: null, displays: [] } }, active_area: "v1", limits: { areas: 4, depth: 3, displays: 32 }, display_count: 0 },
+    },
+    terminal: { headers: { a1: { working: true, band: null } } },
+  };
+  return { rest, agents: scene.agents };
+}
+
+const CLAUDE = "\x1b[38;2;215;119;87m";
+const DIM = "\x1b[90m";
+const BOLD = "\x1b[1m";
+const GREEN = "\x1b[32m";
+const RESET = "\x1b[0m";
+const lines = (...rows: string[]) => rows.join("\r\n");
+
+/**
+ * What each hero pane's terminal shows: an agent CLI's own screen, as its
+ * program would draw it, over the page's story. `RULE` is drawn across the
+ * pane's width when it is written; the lead's screen starts two rows down,
+ * under the row of its child that asks.
+ */
+export const RULE = "{rule}";
+export const HERO_TERMINALS: Record<(typeof HERO_PANES)[number], string> = {
+  a1: lines(
+    "",
+    "",
+    `${CLAUDE}✻${RESET} ${BOLD}Claude Code${RESET}`,
+    `  ${DIM}~/billing-app · main${RESET}`,
+    "",
+    `${DIM}>${RESET} Split the invoice export in three`,
+    "",
+    "● Three parts, one Codex worker each.",
+    "",
+    `● ${BOLD}Bash${RESET}(hide agent spawn …)`,
+    `  ${DIM}⎿${RESET}  Export invoices as CSV`,
+    `● ${BOLD}Bash${RESET}(hide agent spawn …)`,
+    `  ${DIM}⎿${RESET}  Sort the export by date`,
+    `● ${BOLD}Bash${RESET}(hide agent spawn …)`,
+    `  ${DIM}⎿${RESET}  Add the export button`,
+    "",
+    "● The workers report back to me, and I",
+    "  check each pull request before you.",
+    "",
+    `${CLAUDE}✻ Waiting on 3 workers… ${DIM}(6m 12s)${RESET}`,
+    "",
+    `${DIM}${RULE}${RESET}`,
+    `${DIM}>${RESET} `,
+    `${DIM}${RULE}${RESET}`,
+    `  ${DIM}⏵⏵ accept edits on${RESET}`,
+  ),
+  a3: lines(
+    "",
+    `${CLAUDE}✻${RESET} ${BOLD}Claude Code${RESET}`,
+    `  ${DIM}~/billing-app · main${RESET}`,
+    "",
+    `${DIM}>${RESET} Check #431 and #436, then ask me`,
+    "",
+    `● ${BOLD}Bash${RESET}(pnpm test export)`,
+    `  ${DIM}⎿${RESET}  ${GREEN}38 passed${RESET}`,
+    "",
+    "● Both pull requests are ready:",
+    "  #431 Export invoices as CSV",
+    "  #436 Add the export button",
+    "",
+    `${DIM}${RULE}${RESET}`,
+    ` ${BOLD}Merge both into main?${RESET}`,
+    "",
+    ` ${CLAUDE}❯ 1. Yes, merge both${RESET}`,
+    "   2. Only #431",
+    "   3. Not yet",
+  ),
+};

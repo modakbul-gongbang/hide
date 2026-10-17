@@ -5,7 +5,7 @@
 // Each shot is photographed in Dark and Light at 2x and written as a lossy
 // WebP, so the images can be remade whenever the UI changes:
 //
-//   node scripts/capture-site-shots.mjs [attention|agents|core ...]
+//   node scripts/capture-site-shots.mjs [hero|attention|agents|core ...]
 //
 // It starts this checkout's web dev server and a headless Chromium, both
 // closed on every exit. Encoding needs `cwebp` (libwebp: `brew install webp`,
@@ -27,6 +27,7 @@ const WEBP_QUALITY = '90';
  * without sideways scrolling. A shot that already fits a phone has none.
  */
 const SHOTS = {
+  hero: {width: 1456, height: 900, ready: waitForTerminals},
   attention: {width: 428, height: 740},
   agents: {width: 960, height: 840, ready: openLeadTree, narrow: {width: 420, height: 780, ready: scrollProjectIntoView}},
   core: {width: 1040, height: 640, narrow: {width: 400, height: 660}},
@@ -34,6 +35,12 @@ const SHOTS = {
 
 const root = fs.realpathSync(execFileSync('git', ['rev-parse', '--show-toplevel'], {encoding: 'utf8'}).trim());
 const out = path.join(root, 'site', 'assets', 'shots');
+
+/** The hero writes its terminals once each has fitted its pane; the shot waits for that and the frame that draws it. */
+async function waitForTerminals(page) {
+  await page.locator('[data-landing-terminals="written"]').waitFor();
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+}
 
 /** The project list scrolls under the raised groups; the agents shot starts at the project whose tree it shows. */
 async function scrollProjectIntoView(page) {
@@ -82,7 +89,9 @@ async function main(names) {
     await server.listen();
     const origin = server.resolvedUrls?.local?.[0]?.replace(/\/$/, '');
     if (!origin) throw new Error('The web dev server did not report an address');
-    const browser = await chromium.launch();
+    // Headless Chromium draws xterm's WebGL canvas blank at 2x, so WebGL is off and the
+    // hero's terminals use xterm's DOM renderer, the one the app falls back to (terminalRenderer.ts).
+    const browser = await chromium.launch({args: ['--disable-3d-apis']});
     cleanup.push(() => browser.close());
 
     fs.mkdirSync(out, {recursive: true});
