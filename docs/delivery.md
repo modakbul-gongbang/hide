@@ -526,10 +526,11 @@ Fork agent records the wait once the fork's agent has started: the source is reg
 The source's consent is the wait, so a fork whose source closed while the fork rested still names it as its origin.
 
 A wait ends without a registration when its pane closes (`pane_closed`), when its agent ends and Herdr no longer lists the agent's name in the pane (`agent_ended`), or when another session shows in that pane (`pane_taken`).
-A bind the ledger refuses ends the wait with that refusal, such as `parent_unavailable` for a spawn whose parent registration ended, so nothing is asked again for an agent that cannot be registered.
+A bind the ledger refuses ends the wait with that refusal, such as `parent_unavailable` for a spawn whose parent registration ended, and so does a registration that cannot be made of the agent as Herdr shows it, so nothing is asked again for an agent that cannot be registered.
 Each end is logged as `identity_wait.ended` with the wait and the reason, and nothing reaches the screen.
 An agent's absence is judged only by an agent list read after the wait was recorded, because a list asked before may predate the agent's start.
-A settle the store could not take is logged as `identity_wait.settle_failed` and tried once more on the next connection, as the spawn's names are.
+A settle that failed, such as one the store did not take while a core move held its effects, is logged as `identity_wait.settle_failed` and asked again at the next agent list, as a failed token write is; a settle converges, so a repeat binds or ends the wait once, and a queued settle is never asked twice.
+A core move carries each wait with the machine it names (`node_migration::KEYS`), so that machine's lineage writer judges it under its new id.
 At most 64 waits are held at once: a spawn past that answers `identity_waits_full`, whose next action is to give one of the waiting agents a first prompt or close its pane, and a fork past it is logged as `registration_failed` with that code.
 The waits ride on the existing one-second agent refresh, with no timer, no Herdr read of their own and no work under `Mutex<Runtime>`; an unchanged list with unchanged waits plans nothing.
 A ledger with no wait writes no `identity_waits` field, and a build from before waits ignores the field.

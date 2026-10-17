@@ -72,7 +72,7 @@ pub(crate) enum Step {
 #[derive(Clone, Debug)]
 pub(crate) enum Settle {
     Bind(Box<AgentRecord>),
-    End(&'static str),
+    End(String),
 }
 
 /// The step each wait on `device` takes for `agents`, one of Herdr's agent
@@ -150,12 +150,18 @@ pub(crate) fn settle(
         )
     };
     let settle = match step {
-        Step::End(reason) => Settle::End(reason),
+        Step::End(reason) => Settle::End(reason.into()),
         Step::Bind(agent) => {
             let Some(wait) = ledger.identity_waits.iter().find(|wait| wait.id == id) else {
                 return Ok(json!({"settled": "absent"}));
             };
-            Settle::Bind(Box::new(owed_record(&ledger, wait, &agent, &context)?))
+            // A registration that cannot be made of the agent as it shows
+            // ends the wait, as a bind the ledger refuses does: asking again
+            // meets the same agent.
+            match owed_record(&ledger, wait, &agent, &context) {
+                Ok(record) => Settle::Bind(Box::new(record)),
+                Err(reason) => Settle::End(reason),
+            }
         }
     };
     let answer = client.submit(
@@ -166,7 +172,15 @@ pub(crate) fn settle(
         Duration::from_secs(5),
     )?;
     if let Some(agent) = answer["bound"].as_str() {
-        super::executor::publish_tokens(&client, context.connector.as_ref(), agent)?;
+        // The lineage writer's own plan writes the same tokens when this
+        // first write fails; the registration it describes is made.
+        if let Err(error) =
+            super::executor::publish_tokens(&client, context.connector.as_ref(), agent)
+        {
+            crate::diagnostic!(json!({
+                "component": "lineage", "kind": "write_failed", "agent_id": agent, "message": error,
+            }));
+        }
     }
     Ok(answer)
 }

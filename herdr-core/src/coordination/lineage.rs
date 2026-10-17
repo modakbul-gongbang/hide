@@ -78,8 +78,10 @@ pub(crate) struct Writer {
     // list read after it can tell a wait whose agent is gone.
     known_waits: HashSet<String>,
     observed_waits: Option<u64>,
-    // One settle per wait per connection, as for names.
+    // The waits whose settle is queued or done; a settle that failed comes
+    // back on `unsettled` and is asked again at the next observation.
     attempted_waits: HashSet<String>,
+    unsettled: mpsc::Receiver<String>,
 }
 
 impl Writer {
@@ -90,6 +92,7 @@ impl Writer {
     ) -> Result<Self, String> {
         let (sender, receiver) = mpsc::sync_channel::<Batch>(1);
         let (done, completed) = mpsc::sync_channel(super::AGENT_LIMIT * 2);
+        let (failed_settle, unsettled) = mpsc::sync_channel(super::identity_wait::LIMIT);
         let stopping = Arc::new(AtomicBool::new(false));
         let stop = stopping.clone();
         let queued = Arc::new(AtomicBool::new(false));
@@ -153,11 +156,15 @@ impl Writer {
                                 "wait": id, "reason": answer["ended"], "device": worker_device,
                             })),
                             Ok(_) => {}
-                            // Asked again on the next connection, as a name is.
-                            Err(error) => crate::diagnostic!(json!({
-                                "component": "identity_wait", "kind": "identity_wait.settle_failed",
-                                "wait": id, "detail": error, "device": worker_device,
-                            })),
+                            // Asked again at the next observation: a settle
+                            // converges, so a repeat binds or ends it once.
+                            Err(error) => {
+                                crate::diagnostic!(json!({
+                                    "component": "identity_wait", "kind": "identity_wait.settle_failed",
+                                    "wait": id, "detail": error, "device": worker_device,
+                                }));
+                                let _ = failed_settle.try_send(id);
+                            }
                         }
                     }
                 }
@@ -184,15 +191,16 @@ impl Writer {
             known_waits: HashSet::new(),
             observed_waits: None,
             attempted_waits: HashSet::new(),
+            unsettled,
         })
     }
 
-    /// Failed targets get one new attempt on a new authoritative connection.
+    /// Failed names get one new attempt on a new authoritative connection,
+    /// and every wait is judged again by its first agent list.
     pub(crate) fn reconnected(&mut self) {
         self.observed_names = None;
         self.attempted_names.clear();
         self.observed_waits = None;
-        self.attempted_waits.clear();
     }
 
     /// Plans and queues the token writes this server's panes still need:
@@ -230,11 +238,16 @@ impl Writer {
                 failed = true;
             }
         }
+        let mut unsettled = false;
+        while let Ok(id) = self.unsettled.try_recv() {
+            unsettled |= self.attempted_waits.remove(&id);
+        }
         let waits_version = waits_on(ledger, &self.device);
         if !changed
             && !names_changed
             && !self.pending_names
             && !failed
+            && !unsettled
             && !self.pending_retry
             && self.acknowledged.is_empty()
             && self.observed_registrations == Some(placements(ledger))
@@ -826,6 +839,7 @@ mod tests {
     struct TestBatches {
         receiver: mpsc::Receiver<Batch>,
         queued: Arc<AtomicBool>,
+        unsettled: mpsc::SyncSender<String>,
     }
     impl TestBatches {
         fn try_recv(&self) -> Result<Batch, mpsc::TryRecvError> {
@@ -844,9 +858,11 @@ mod tests {
     fn writer_fixture() -> WriterFixture {
         let (sender, receiver) = mpsc::sync_channel(1);
         let queued = Arc::new(AtomicBool::new(false));
+        let (failed_settle, unsettled) = mpsc::sync_channel(super::super::identity_wait::LIMIT);
         let batches = TestBatches {
             receiver,
             queued: queued.clone(),
+            unsettled: failed_settle,
         };
         let (done, completed) = mpsc::sync_channel(super::super::AGENT_LIMIT * 2);
         let parent = record("agent-1", "w1:p1", "parent", None);
@@ -878,6 +894,7 @@ mod tests {
                 known_waits: HashSet::new(),
                 observed_waits: None,
                 attempted_waits: HashSet::new(),
+                unsettled,
             },
             batches,
             done,
@@ -1064,6 +1081,58 @@ mod tests {
         );
         assert!(batches.try_recv().is_err());
         assert_eq!(writer.in_flight.len(), 1);
+    }
+
+    /// A settle that failed (a store that held its effects, a timeout) is
+    /// asked again at the next observation rather than holding the wait from
+    /// its end; one that is queued is never asked twice.
+    #[test]
+    fn a_failed_settle_is_asked_again_at_the_next_observation() {
+        let (mut writer, batches, _, _, _) = writer_fixture();
+        let ledger = Arc::new(Ledger {
+            next_id: 2,
+            identity_waits: vec![super::super::identity_wait::IdentityWait {
+                id: "wait-1".into(),
+                machine: crate::node::TEST_NODE.into(),
+                pane: "w9:p1".into(),
+                name: "fork-w1-p1-1-1".into(),
+                kind: "codex".into(),
+                owed: super::super::identity_wait::Owed::Fork {
+                    origin: "agent-1".into(),
+                },
+            }],
+            ..Default::default()
+        });
+        let observe = |writer: &mut Writer, changed| {
+            writer.observe(
+                &ledger,
+                &[],
+                &|_| false,
+                &BTreeMap::new(),
+                changed,
+                Instant::now(),
+            )
+        };
+        let settles = |batch: Batch| {
+            batch
+                .waits
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>()
+        };
+        // The first list predates nothing it can judge; the next one ends it.
+        observe(&mut writer, true);
+        assert!(batches.try_recv().is_err());
+        observe(&mut writer, false);
+        assert_eq!(settles(batches.try_recv().unwrap()), ["wait-1"]);
+        observe(&mut writer, false);
+        assert!(
+            batches.try_recv().is_err(),
+            "a queued settle is not asked twice"
+        );
+        batches.unsettled.send("wait-1".into()).unwrap();
+        observe(&mut writer, false);
+        assert_eq!(settles(batches.try_recv().unwrap()), ["wait-1"]);
     }
 
     /// B13: metadata observations and unrelated durable publications do not
