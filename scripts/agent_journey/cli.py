@@ -487,6 +487,13 @@ def main(argv=None):
         if not separator or key not in selected or not reason.strip() or key in unmeasured:
             refuse("invalid_unmeasured")
         unmeasured[key] = reason.strip()
+    if fixture_bin:
+        # The stand-ins imitate Claude Code and Codex only (web/e2e/shims/live-check.h).
+        for key in selected:
+            if key in cells.BUILT_AGENTS and key not in ci.FIXTURE_AGENTS and key not in unmeasured:
+                if args.agents:
+                    refuse(f"fixture_bin_imitates_claude_code_and_codex_only: {key}")
+                unmeasured[key] = ci.FIXTURE_ONLY
     herdr = args.herdr_bin or default_herdr(checkout, operator)
     if not herdr.is_file():
         refuse("pinned_herdr_missing: run zsh scripts/fetch-herdr-runtime.sh, or pass --herdr-bin")

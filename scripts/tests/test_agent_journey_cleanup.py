@@ -135,7 +135,9 @@ class LocalStarts(unittest.TestCase):
 
     def test_hide_ai_is_off_in_the_candidates_private_home(self):
         disable_hide_ai(self.base / "home")
-        settings = self.base / "home/Library/Application Support/hide/ai.json"
+        # The system's state folder under a home, as hide_platform::host::state_dir_under names it.
+        state = {"darwin": "Library/Application Support", "win32": "AppData/Local"}.get(sys.platform, ".local/state")
+        settings = self.base / "home" / state / "hide/ai.json"
         self.assertEqual(json.loads(settings.read_text()), {"enabled": False})
         self.assertEqual(settings.stat().st_mode & 0o777, 0o600)
 

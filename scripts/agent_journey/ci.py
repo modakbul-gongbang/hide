@@ -46,6 +46,8 @@ FIXTURE_UNTRUSTED = "not measured: a stand-in has no folder question; the login 
 # The agents the stand-ins imitate (web/e2e/shims/live-check.h) and the cells
 # they pass, so the fixture lane passes only when each passed.
 FIXTURE_AGENTS = ("claude-code", "codex")
+# Why the stand-in lane leaves every other agent unstarted.
+FIXTURE_ONLY = "a stand-in imitates Claude Code and Codex only; the fake model lane measures this agent"
 FIXTURE_CELLS = tuple(name for name in cells.BUILT_CELLS if name != "start_untrusted")
 
 # What a fixture stand-in cannot show, said in its report (PRD B27).
